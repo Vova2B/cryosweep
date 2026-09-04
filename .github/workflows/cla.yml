@@ -32,7 +32,15 @@ jobs:
           github.event_name == 'pull_request_target' ||
           contains(github.event.comment.body, 'I have read the cryosweep CLA') ||
           github.event.comment.body == 'recheck'
-        uses: contributor-assistant/github-action@v2.6.1
+        # Pinned to a commit SHA, not a tag: git tags are mutable, so `@v2.6.1` lets
+        # whoever owns that repository swap the code this workflow runs, silently and
+        # at any time. That matters more here than almost anywhere else in the tree --
+        # this job triggers on `pull_request_target` and `issue_comment` (so ANY commenter
+        # can fire it, with no write access) and it holds `contents: write`. This is the
+        # tj-actions/changed-files failure mode from March 2025, where retargeted version
+        # tags leaked secrets from thousands of repos; SHA-pinned repos were unaffected.
+        # Dependabot (.github/dependabot.yml) proposes moves so the pin cannot rot.
+        uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08  # v2.6.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
