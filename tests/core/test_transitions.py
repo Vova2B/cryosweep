@@ -62,6 +62,24 @@ def test_locate_lambda_rejects_monotone_tail():
     loc = tr.locate_lambda(T, cp)
     assert loc["interior"] is False           # no interior bump
 
+
+def test_locate_lambda_declines_a_residual_that_is_only_rounding():
+    """A quartic that fits a featureless curve to machine precision leaves a residual made
+    entirely of IEEE-754 rounding: measured 8.9e-16 on the curve above, 3.4e-16 of the
+    signal. Its argmax is arbitrary, so whether it lands interior is decided by the BLAS,
+    not by the data -- that exact curve declined on macOS/Accelerate and reported an
+    interior bump on Linux/OpenBLAS (first CI run, 2026-09-04).
+
+    The platform coin flip cannot be asserted portably, so force the interior case: a bump
+    a few ULPs tall, at an interior index. Whatever the platform, four units in the last
+    place is not a phase transition."""
+    T = np.linspace(2.0, 20.0, 40)
+    cp = tr.background(T, 0.01, 3e-4)
+    cp[20] += 4.0 * np.spacing(cp[20])
+    loc = tr.locate_lambda(T, cp)
+    assert loc["interior"] is False
+    assert loc["Tc_seed"] is None
+
 def test_locate_jump_finds_step():
     T = np.linspace(2.0, 20.0, 40)
     cp = tr.background(T, 0.01, 2e-4) + tr.jump_step(T, Tc=12.0, dC=0.5)

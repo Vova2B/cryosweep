@@ -93,8 +93,26 @@ def locate_lambda(T, cp):
         out["Tc_seed"] = float(T[j]) if w.sum() <= 0 else float(np.sum(T[lo:hi] * w) / np.sum(w))
         return out
     i = int(np.argmax(resid))
-    interior = 0 < i < (T.size - 1) and resid[i] >= resid[0] and resid[i] >= resid[-1]
-    out["interior"] = bool(interior)
+    # The detrend fallback, gated on the residual being RESOLVED at all. Being the interior
+    # argmax proves nothing when the quartic fits to machine precision: the residual is then
+    # pure IEEE-754 rounding (measured 8.9e-16 on a featureless synthetic curve -- 3.4e-16 of
+    # the signal), its argmax is arbitrary, and which side of the endpoint comparison it lands
+    # on is decided by the BLAS rather than by the data. That curve declined on
+    # macOS/Accelerate and reported an interior bump on Linux/OpenBLAS (first CI run).
+    # The floor is ABSOLUTE, relative to the data span, and that is load-bearing: it cannot be
+    # replaced by a scatter-relative test, because 2*MAD is computed from the same rounding
+    # noise and noise-vs-noise stays a coin flip. It sits ~7 orders above float64 resolution
+    # and ~6 below any real anomaly, so nothing physical is near it.
+    # Deliberately NOT also requiring the raw-Cp branch's 2-sigma prominence: this branch must
+    # still surface WEAK broad candidates, because fit_transition's job is to adjudicate them
+    # and decline with a "broad feature unresolved" advisory. Silencing them here would make
+    # a real-but-unresolvable feature vanish without comment instead of being reported as
+    # unresolved -- measured: it suppresses that advisory on a 0.6-amplitude bump in 0.4 noise.
+    span = float(cp.max() - cp.min())
+    resolved = float(np.abs(resid).max()) > 1e-9 * span if span > 0 else False
+    interior = bool(0 < i < (T.size - 1) and resolved
+                    and resid[i] >= resid[0] and resid[i] >= resid[-1])
+    out["interior"] = interior
     if not interior:
         return out
     lo, hi = max(0, i - 2), min(T.size, i + 3)
