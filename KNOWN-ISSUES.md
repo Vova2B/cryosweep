@@ -37,14 +37,21 @@ the reader not to read the discontinuity as a result.
 `1e-11-2.5e-7` — matplotlib's scale and offset concatenated. The headline value the docs
 advertise (R_H = −2.5e−7 m³/C) cannot be recovered from the plot.
 
-**4. A legend can be placed over the data.** `examples/magnetization_vsm_multifield.dat`,
-`inverse_chi`: the 7-entry legend sits centre-right with five curves running behind it. The
-existing legend-overflow rule relocates only above a size threshold and does not test whether
-the chosen anchor is occupied.
+**4. A legend can be placed over the data.** *FIXED 2026-09-04 (43e5e48): default legend
+placement now scores all nine inside positions against the measured data/text/inset occupancy
+and relocates outside when nothing inside is clear — on this reproducer the legend leaves the
+data at 9 pt and at GUI font size alike. The nine matplotlib positions are also selectable
+directly (GUI "Legend loc"), so a user who can see the right spot can pin it.*
+`examples/magnetization_vsm_multifield.dat`, `inverse_chi`: the 7-entry legend sat
+centre-right with five curves running behind it; the old rule relocated only above a size
+threshold and never tested whether the chosen anchor was occupied.
 
-**5. Small legends are relocated far outside-right.** `thermal_transport.dat` and
-`ac_susceptibility.dat` spend 20–25 % of canvas width on a **two-entry** legend, squeezing the
-panels.
+**5. Small legends are relocated far outside-right.** *FIXED 2026-09-04 (43e5e48): the
+unconditional outside-right rule is gone — both reproducers now keep full canvas width with
+the legend inside (TTO upper-right, ACMS in the clear band between the plateaus). A file
+whose data genuinely fills the panel still relocates, measured rather than assumed.*
+`thermal_transport.dat` and `ac_susceptibility.dat` spent 20–25 % of canvas width on a
+**two-entry** legend, squeezing the panels.
 
 **6. No top headroom.** The κ peak (`thermal_transport.dat`, panel a) and the χ′ high-T plateau
 (`ac_susceptibility.dat`, top panel) touch the axes frame.
@@ -80,15 +87,20 @@ is exactly what you want after a render returns `data.plot: null` with
 
 ## Display (found in the all-kinds pass)
 
-**11. Legend entries can overprint each other.** `heat_capacity.dat`, `hc_full_cp_t`: the "Cp"
-and "Dulong-Petit" labels are drawn on top of one another. Otherwise the strongest figure the
-project produces — Debye-Einstein overlay, Dulong-Petit asymptote and a correctly-placed low-T
-inset — so this one line of overlap is what keeps it out of the README.
+**11. Legend entries can overprint each other.** *FIXED 2026-09-04 (43e5e48): text artists
+are obstacles to the occupancy chooser, and on this figure no inside position clears the
+Dulong-Petit label, the data plateau, and the inset at once — so the legend relocates
+outside-right and every label reads cleanly at both 9 pt and GUI font size.*
+`heat_capacity.dat`, `hc_full_cp_t`: the "Cp" and "Dulong-Petit" labels were drawn on top of
+one another — on the strongest figure the project produces.
 
-**12. The legend lists artists that were never drawn.** `heat_capacity.dat`,
-`hc_entropy_vs_t`: "S magnetic" appears with a dashed swatch although this sample has no
-magnetic entropy and no dashed curve exists. The reader looks for a curve that is not there.
-Legend entries should be built from the artists actually added to the axes.
+**12. The legend lists artists that were never drawn.** *FIXED 2026-09-04 (43e5e48): the
+single-axis entropy path — taken exactly when the analyzer ruled magnetic entropy unresolved —
+no longer draws the flat-zero "S magnetic" curve, so neither the invisible line nor its legend
+entry exists. Display-only: `entropy_magnetic` still reaches the CSV and JSON, and the
+per-field magnetic overlays (explicit opt-ins) are untouched.*
+`heat_capacity.dat`, `hc_entropy_vs_t`: "S magnetic" appeared with a dashed swatch although no
+visible dashed curve existed, sending the reader hunting for a curve that was not there.
 
 **13. The `vsm_mh` low-field panel does not rescale its y-axis.**
 `magnetization_vsm_multifield.dat`: the right-hand "low field" panel inherits the full-range
