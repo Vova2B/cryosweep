@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cryosweep"
-version = "0.2.0"
+version = "0.2.1"
 description = "Agent-drivable analysis of Quantum Design PPMS/MPMS measurement files: VSM, AC susceptibility, thermal transport, resistivity, heat capacity and Hall."
 readme = "README.md"
 # Name only, matching CITATION.cff (which carries the ORCID). No personal e-mail address:

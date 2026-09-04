@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.2.1 — 2026-09-04
+
+### Fixed
+
+- The version disagreed with itself. `pyproject.toml` and `CITATION.cff` were
+  bumped to 0.2.0 while `cryosweep_core/__init__.py` was left at 0.1.0 and the
+  CHANGELOG had no 0.2.0 entry, so `cryosweep --version` reported the wrong
+  number and `test_version_consistency` failed. **0.2.0 was released with that
+  inconsistency**; its archive reports 0.1.0 and does not pass its own test
+  suite. This release is the corrected one — prefer it over 0.2.0.
+
+## 0.2.0 — 2026-09-04
+
+First *published* release. 0.1.0 was tagged but never released, and it predates
+the fixes below — which is why the DOI is minted here rather than there.
+
+### Fixed
+
+- **Golden fixtures were being LF-normalised**, so byte-exact comparisons passed
+  in the working tree that wrote them and failed in every fresh clone
+  (`*.golden -text` in `.gitattributes`).
+- **A residual made of pure rounding was reported as a lambda anomaly.** On a
+  featureless curve the quartic fits to machine precision, so the linear-algebra
+  backend decided whether a phase transition existed: it declined on macOS and
+  fired on Linux. Now gated on an absolute floor relative to the data span.
+- Numeric oracles compare by tolerance rather than serialized text, which had
+  pinned them to one machine's BLAS.
+
+### Changed
+
+- **Qt is an optional extra.** `pip install cryosweep` gives the core and CLI
+  with no Qt at all; `pip install 'cryosweep[gui]'` adds the desktop app. The
+  dependency is `PySide6-Essentials` rather than the `PySide6` meta-package,
+  which drags in 175 MB of Addons this codebase never imports.
+- `cryosweep-gui` without the extra prints how to install it instead of raising
+  a ModuleNotFoundError traceback.
+- Every GitHub Action is pinned to a commit SHA, with Dependabot proposing moves
+  so the pins cannot rot. CI runs Python 3.11 and 3.12.
+- README links are absolute, so they resolve on PyPI instead of 404-ing, and the
+  README now shows the application.
+
+### Added
+
+- Release publishing to PyPI via Trusted Publishing (OIDC, no stored token).
+- `.zenodo.json`, so the DOI record carries the author and ORCID.
+
 ## 0.1.0 — 2026-09-04
 
 First public release. There is no public history before this version, so this
