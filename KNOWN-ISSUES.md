@@ -18,7 +18,14 @@ here that is scheduled rather than merely recorded is in [ROADMAP.md](ROADMAP.md
 
 ## Display
 
-**1. An inset can be drawn on top of the main curve.**
+**1. An inset can be drawn on top of the main curve.** *FIXED 2026-09-04 (89d39ab): the low-T
+inset is now placed by the same measured-occupancy machinery as the legend — corners in the
+shipped preference order, then an anchor grid, then a bounded least-bad corner that may graze
+a midsection but never hide a curve's terminal point. On this reproducer the inset moves to
+the clear band between the curve and the Tc annotation and every point is visible; on
+`hall_temperature_dependence.dat` it stays in its shipped lower-right corner. When no position
+qualifies, the inset is dropped and the figure says so ("low-T inset omitted"), because a
+supplement must never hide the primary data — silently or otherwise.*
 `examples/resistivity_superconductor.dat`, default `resistivity_rho_t`: the low-T inset covers
 155–295 K of the main axes, hiding **55 of 157 points on each of the two bridges** (110 total,
 35 % of each curve). The curve appears to stop at 155 K and reappear as a stub at the right
