@@ -1,0 +1,24 @@
+{
+  "title": "cryosweep",
+  "upload_type": "software",
+  "version": "0.2.0",
+  "license": "polyform-noncommercial-1.0.0",
+  "creators": [
+    {
+      "name": "Buturlim, Volodymyr",
+      "orcid": "0000-0001-8851-2489"
+    }
+  ],
+  "description": "Analysis of Quantum Design PPMS and MPMS measurement files: magnetization (VSM, QD and MPMS formats), AC susceptibility, thermal transport, resistivity, heat capacity and Hall effect. cryosweep detects which measurement a file holds, separates the sweeps, fits the appropriate physical models and reports what it found, including when it cannot report something and why: window-sensitivity ladders on fitted exponents, declines when a parameter pins at a search bound, and integrity warnings on unphysical results. A Qt-free analysis core with a JSON contract, a command-line interface and a PySide6 desktop GUI built on the same analyzers.",
+  "keywords": [
+    "condensed matter physics",
+    "PPMS",
+    "MPMS",
+    "magnetometry",
+    "electrical transport",
+    "thermal transport",
+    "heat capacity",
+    "Hall effect",
+    "cryogenics"
+  ]
+}
