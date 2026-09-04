@@ -13,6 +13,10 @@ authors:
 license: PolyForm-Noncommercial-1.0.0
 license-url: "https://polyformproject.org/licenses/noncommercial/1.0.0"
 version: "0.2.0"
+repository-code: "https://github.com/Vova2B/cryosweep"
+# Concept DOI, not the 0.2.0 version DOI (10.5281/zenodo.22307210): citing the
+# concept always resolves to the newest release, which is what a paper should point at.
+doi: "10.5281/zenodo.22307209"
 date-released: "2026-09-04"
 keywords:
   - condensed matter physics

@@ -1,5 +1,7 @@
 # cryosweep
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22307209.svg)](https://doi.org/10.5281/zenodo.22307209)
+
 Analysis of Quantum Design **PPMS** and **MPMS** measurement files (`.dat`) — a Qt-free
 analysis core with a JSON contract, a command-line interface, and a desktop GUI built on the
 same analyzers.
