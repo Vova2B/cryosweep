@@ -8,6 +8,12 @@ One file in, physics out: cryosweep detects which measurement it is looking at, 
 sweeps, fits the appropriate models, and reports what it found — including when it *cannot*
 report something, and why.
 
+![The cryosweep heat-capacity tab: low-temperature Cp/T models, full-range Debye-Einstein fit, entropy S(T), and per-field gamma and Debye temperature](docs/images/heat-capacity-multifield.png)
+
+*That last clause is the point. In the status bar above, cryosweep reports θ_D drifting 160 %
+across fields — the lattice should be field-independent — and a Sommerfeld coefficient γ that has
+gone negative. Neither is handed back as a result; both are flagged as physics that does not hold.*
+
 | Probe | What it fits |
 |---|---|
 | **Magnetization (VSM)** — QD + MPMS formats | χ, 1/χ, Curie-Weiss (θ, C, μ_eff) with a window-sensitivity ladder |
