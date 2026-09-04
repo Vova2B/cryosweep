@@ -1,0 +1,17 @@
+[Header]
+TITLE,hall_synth
+BYAPP, Resistivity, 2.0, 1.0
+INFO, , Sample1 Name
+INFO, 1, Sample1 Cross Section
+INFO, 1, Sample1 Length
+[Data]
+Comment,Time Stamp (sec),Status (code),Temperature (K),Magnetic Field (Oe),Sample Position (degrees),Bridge 1 Resistivity (Ohm-m),Bridge 2 Resistivity (Ohm-m),Number of Readings,Bridge 1 Resistance (Ohms),Bridge 2 Resistance (Ohms)
+,0,,10.0000,-90000.0000,90.0,,2.00000000e-06,25,,2.00000000e-06
+,0,,10.0000,0.0000,90.0,,2.00000000e-06,25,,2.00000000e-06
+,0,,10.0000,90000.0000,90.0,,2.00000000e-06,25,,2.00000000e-06
+,0,,100.0000,-90000.0000,90.0,,2.00000000e-06,25,,2.00000000e-06
+,0,,100.0000,0.0000,90.0,,2.00000000e-06,25,,2.00000000e-06
+,0,,100.0000,90000.0000,90.0,,2.00000000e-06,25,,2.00000000e-06
+,0,,300.0000,-90000.0000,90.0,,2.00000000e-06,25,,2.00000000e-06
+,0,,300.0000,0.0000,90.0,,2.00000000e-06,25,,2.00000000e-06
+,0,,300.0000,90000.0000,90.0,,2.00000000e-06,25,,2.00000000e-06

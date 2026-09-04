@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Test / tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# CLI default output (written wherever the CLI is run from)
+cryosweep_out.*
+
+# Local-only measurement data: never commit real .dat files or the map that names them.
+# The suite resolves them through this map and skips cleanly when it is absent.
+real_data_map.json
+*.dat
+!tests/core/fixtures/*.dat
+!examples/*.dat
+
+# OS
+.DS_Store

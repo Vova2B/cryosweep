@@ -1,0 +1,4 @@
+quantity,value,sigma,unit,model
+C,2.2238749695478046,0.010429564529212914,emu*K/(mol*Oe),curie_weiss
+theta,-50.266967623281055,0.9886712003439132,K,curie_weiss
+mu_eff,4.215809632977184,0.00988568584387491,mu_B,curie_weiss

@@ -1,0 +1,15 @@
+{
+  "heat_capacity": {
+    "n_temperature_blocks": 4,
+    "held_fields": [0, 50000, 100000, 130000],
+    "field_band": 3000
+  },
+  "resistivity": {
+    "n_field_blocks_min": 6,
+    "n_temperature_blocks_min": 8,
+    "field_loop_temperatures": [300, 200, 100, 50, 20, 15, 10, 5, 2],
+    "temp_band": 3.0,
+    "isofield_isotherm_fields": [20000, 40000, 60000, 80000, 100000, -20000, -40000, -60000, -80000, -100000],
+    "field_band": 3000
+  }
+}

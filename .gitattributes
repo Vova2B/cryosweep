@@ -1,0 +1,19 @@
+# Normalize source and docs to LF.
+* text=auto
+*.py text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.toml text eol=lf
+*.cff text eol=lf
+*.json text eol=lf
+*.txt text eol=lf
+
+# Measurement files are byte-exact test inputs: never normalize line endings
+# (real Quantum Design files use CRLF, and provenance hashes the file bytes).
+*.dat -text
+
+# Golden oracles are compared with read_bytes(), not read_text(), and the CSV writer
+# emits CRLF — so normalizing these to LF makes the comparison fail on any fresh clone
+# while still passing in a working tree that predates the normalization. Same reasoning
+# as *.dat above: a byte-exact oracle must be stored byte-exact.
+*.golden -text

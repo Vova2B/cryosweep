@@ -1,0 +1,52 @@
+# Contributor License Agreement check.
+#
+# Records a one-time signature per contributor, stored in THIS repository on a dedicated
+# `cla-signatures` branch, so there is no third-party service and no extra secret to
+# configure: the built-in GITHUB_TOKEN is enough, given the permissions block below.
+#
+# Repository settings this needs (Settings -> Actions -> General):
+#   * "Workflow permissions" -> Read and write permissions
+#   * "Allow GitHub Actions to create and approve pull requests" is NOT needed.
+#
+# The signing sentence below must stay character-identical to the one in CLA.md.
+name: CLA
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  actions: write
+  contents: write        # to write the signature file on the cla-signatures branch
+  pull-requests: write   # to comment on the PR and set its status
+
+jobs:
+  cla:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check or record the CLA signature
+        # Runs on a PR event, on the signing comment, or on an explicit "recheck".
+        if: >
+          github.event_name == 'pull_request_target' ||
+          contains(github.event.comment.body, 'I have read the cryosweep CLA') ||
+          github.event.comment.body == 'recheck'
+        uses: contributor-assistant/github-action@v2.6.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          path-to-signatures: 'signatures/version1/cla.json'
+          path-to-document: '${{ github.server_url }}/${{ github.repository }}/blob/${{ github.event.repository.default_branch }}/CLA.md'
+          branch: 'cla-signatures'
+          allowlist: 'dependabot[bot],github-actions[bot]'
+          custom-pr-sign-comment: 'I have read the cryosweep CLA and I hereby sign the Individual CLA.'
+          custom-notsigned-prcomment: >
+            Thanks for the pull request. cryosweep is dual-licensed — free for noncommercial
+            use, separately licensed for commercial use — so contributions need a one-time
+            [Contributor License Agreement](${{ github.server_url }}/${{ github.repository }}/blob/${{ github.event.repository.default_branch }}/CLA.md).
+            You keep your copyright. Please read it, then post a comment on this PR with
+            exactly the sentence below.
+          custom-allsigned-prcomment: >
+            CLA signed — thank you. This is recorded against your account, so it will not be
+            asked again.
