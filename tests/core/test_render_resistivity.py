@@ -207,13 +207,26 @@ def test_rho_t_tc_marker_on_sc_synth():
 # ---- Task 7: rho(T) headline — low-T inset ----
 
 def test_rho_t_lowt_inset_present_and_suppressible():
-    res = _sc()
-    fig = render_kind(res, "resistivity_rho_t", PlotSpec())
+    # inset presence/window/suppression, on a file with a clear spot for it (the synthetic
+    # rho_sc_synth now DROPS its inset by measurement — pinned below).
+    from cryosweep_core.io.loader import load_dat as _ld
+    EX = pathlib.Path(__file__).resolve().parents[2] / "examples"
+    res = analyze_file(_ld(str(EX / "resistivity_superconductor.dat")),
+                       RunConfig.load(), build_default_registry())
+    fig = render_kind([res], "resistivity_rho_t", PlotSpec())
     assert len(fig.axes) == 2                                       # main + inset
-    inset = fig.axes[1]
-    assert inset.get_xlim()[1] >= 13.0                             # window reaches Tc+5 = 13 K
-    fig2 = render_kind(res, "resistivity_rho_t", PlotSpec(lowt_inset=False))
+    inset = next(a for a in fig.axes if a.get_label() == "inset")
+    assert inset.get_xlim()[1] >= 13.8                             # window reaches Tc+5 K
+    fig2 = render_kind([res], "resistivity_rho_t", PlotSpec(lowt_inset=False))
     assert len(fig2.axes) == 1
+
+
+def test_rho_t_sc_synth_drops_inset_by_measurement():
+    # rho_sc_synth has no clear corner (KNOWN-ISSUES 1 chooser): its ch2 curve ENDS a marker
+    # width past the least-bad box, so the endpoint veto drops the inset, with the note.
+    fig = render_kind(_sc(), "resistivity_rho_t", PlotSpec())
+    assert not [a for a in fig.axes if a.get_label() == "inset"]
+    assert [t for ax in fig.axes for t in ax.texts if t.get_gid() == "inset_note"]
 
 
 def test_rho_t_inset_suppressed_when_no_lowt_data():
@@ -325,7 +338,8 @@ def test_fixwave_d3_dedup_fit_label_and_no_edge_clip():
 
 def test_fixwave_d4_inset_has_no_xlabel():
     # D4: the low-T inset drops its (clipped) x-axis label; the y-label stays.
-    fig = render_kind(_sc(), "resistivity_rho_t", PlotSpec())
+    # (act_synth keeps its inset under the occupancy chooser; rho_sc_synth no longer does.)
+    fig = render_kind(_act(), "resistivity_rho_t", PlotSpec())
     inset = next(a for a in fig.axes[1:] if a.get_position().width < 0.6)
     assert inset.get_xlabel() == ""
     assert inset.get_ylabel().startswith("ρ (")
