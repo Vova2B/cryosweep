@@ -261,13 +261,21 @@ def test_lowt_inset_is_suppressed_when_the_window_holds_under_five_points():
     assert len(with_gate.axes) == len(without.axes)                # no inset axis added
 
 
-def test_folded_legend_is_placed_outside_right_by_default():
-    # F4: _tto_legend forces the folded legend outside-right (it is a key, not a per-curve
-    # list, and inside it lands on the data). Forcing "inside" survived the suite.
+def test_folded_legend_is_placed_by_occupancy_not_forced_outside():
+    # F4 -> KNOWN-ISSUES 5: the old rule forced the folded legend outside-right
+    # unconditionally, spending ~25% of canvas width even when the panel had room. The
+    # occupancy chooser keeps it inside here (this figure has a clear band) without growing
+    # the canvas; an explicit legend_loc="outside" must still force the relocation.
     fig = render_kind(_run(FX / "tto_synth.dat"), "tto_wf_t", PlotSpec(), GlobalStyle())
     ax = fig.axes[0]
     fig.canvas.draw()
-    assert ax.get_legend().get_window_extent().x0 >= ax.get_window_extent().x1
+    assert ax.get_legend() is not None
+    assert not getattr(fig, "_cryosweep_legend_grown", False)
+    fig2 = render_kind(_run(FX / "tto_synth.dat"), "tto_wf_t",
+                       PlotSpec(legend_loc="outside"), GlobalStyle())
+    ax2 = fig2.axes[0]
+    fig2.canvas.draw()
+    assert ax2.get_legend().get_window_extent().x0 >= ax2.get_window_extent().x1
 
 
 def test_full_view_override_is_reachable_from_zt_only():
@@ -420,15 +428,17 @@ def test_overlay_mode_tolerates_an_empty_selection_like_the_single_file_view():
     assert [t.get_text() for t in ax.texts] == ["no Seebeck data"]
 
 
-def test_a_legend_of_two_entries_is_relocated_outside_the_axes():
-    # M2: the "a LONE entry stays inside" rule (`len(handles) == 1`) was pinned only from the
-    # inside; relaxing it to `<= 3` survived. Two groups must go outside-right.
+def test_a_two_entry_legend_stays_inside_when_the_panel_has_room():
+    # M2 -> KNOWN-ISSUES 5: two entries used to be relocated outside unconditionally. The
+    # occupancy chooser keeps them inside on this figure (clear upper region), full canvas
+    # width preserved, and the legend must not sit on the plotted points.
     fig = render_kind(_run(FX / "tto_synth.dat"), "tto_kappa_t", PlotSpec(), GlobalStyle())
     ax = fig.axes[0]
     leg = ax.get_legend()
     assert len(leg.get_texts()) == 2
     fig.canvas.draw()
-    assert leg.get_window_extent().x0 >= ax.get_window_extent().x1
+    assert leg.get_window_extent().x0 < ax.get_window_extent().x1   # inside
+    assert not getattr(fig, "_cryosweep_legend_grown", False)
 
 
 def test_zt_full_view_pads_the_data_range_by_five_percent():

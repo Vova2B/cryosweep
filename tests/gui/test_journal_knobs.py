@@ -101,3 +101,24 @@ def test_set_style_none_spine_and_fit_color_show_auto(qapp):
     p.set_style(GlobalStyle(spine_width=None, fit_color=None))
     assert p._spine_w.value() == 0.0             # None -> "auto" (0.0)
     assert p._fit_color.currentText() == "(auto)"
+
+
+def test_legend_loc_combo_offers_explicit_positions(qapp):
+    # KNOWN-ISSUES 4, manual half: a user who can see the right spot must be able to say
+    # "upper left", not just "inside". Three modes + the nine matplotlib positions.
+    p = _panel(qapp)
+    items = [p._legend_loc.itemText(i) for i in range(p._legend_loc.count())]
+    assert items[:3] == ["best", "inside", "outside"]
+    for loc in ("upper right", "upper left", "lower right", "lower left",
+                "upper center", "lower center", "center left", "center right", "center"):
+        assert loc in items
+    p._set_legend_loc("upper left")
+    assert p.style.legend_loc == "upper left"
+
+
+def test_explicit_legend_loc_roundtrips_through_style_sync(qapp):
+    p = _panel(qapp)
+    s = GlobalStyle(legend_loc="lower center")
+    p.set_style(s)
+    assert p._legend_loc.currentText() == "lower center"
+    assert p.style.legend_loc == "lower center"
