@@ -1,0 +1,55 @@
+# Publish to PyPI via Trusted Publishing (OIDC) -- no API token is stored anywhere.
+#
+# Two ways in, deliberately different targets:
+#   * Manual run (workflow_dispatch) -> TestPyPI. The dry run: a version number on real PyPI
+#     can NEVER be reused, so a rendering or metadata mistake in 0.1.0 is permanent and the
+#     only remedy is bumping the version. Look at the TestPyPI page first.
+#   * A published GitHub Release      -> PyPI, for real.
+#
+# Both need a publisher registered on the corresponding index BEFORE the first run
+# (pypi.org / test.pypi.org -> Publishing -> Add a pending publisher), matching:
+#   owner Vova2B - repository cryosweep - workflow publish.yml - environment pypi / testpypi
+name: publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+# Nothing by default; the publish job opts into exactly the one permission OIDC needs.
+permissions: {}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ github.event_name == 'release' && 'pypi' || 'testpypi' }}
+    permissions:
+      id-token: write        # mint the OIDC token Trusted Publishing exchanges for an upload
+    steps:
+      # Actions are pinned to commit SHAs, not tags: a tag can be retargeted by whoever owns
+      # the action and this workflow would silently run new code -- with permission to publish
+      # under your name. Dependabot (.github/dependabot.yml) proposes moves so the pins cannot rot.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+
+      - name: Check the metadata before anything leaves the runner
+        run: twine check --strict dist/*
+
+      - name: Publish to TestPyPI
+        if: github.event_name == 'workflow_dispatch'
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+      - name: Publish to PyPI
+        if: github.event_name == 'release'
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
