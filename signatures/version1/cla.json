@@ -1,1 +1,12 @@
-{"signedContributors":[]}
+{
+  "signedContributors": [
+    {
+      "name": "Vova2B",
+      "id": 79088327,
+      "comment_id": 5541664360,
+      "created_at": "2026-09-04T14:11:25Z",
+      "repoId": 1357068287,
+      "pullRequestNo": 3
+    }
+  ]
+}
