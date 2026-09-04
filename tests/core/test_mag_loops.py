@@ -273,17 +273,97 @@ def _export_csvs(res, tmp):
     return {kind: pathlib.Path(p).read_bytes() for kind, p in outs.items() if kind != "meta"}
 
 
+# ---------------- oracle comparison: exact on structure, tolerant on floats ----------
+#
+# The numeric oracles were generated on one machine's BLAS. LAPACK/BLAS results differ
+# between platforms in the last one or two ULPs, so comparing the SERIALIZED TEXT pins the
+# oracle to the floating-point library rather than to this code. Measured on the first Linux
+# CI run (2026-09-04) from a byte-identical input file:
+#     -1.0252441501357285e-07  (macOS/Accelerate)   vs
+#     -1.025244150135774e-07   (Linux/OpenBLAS)      -> 4.4e-13 relative
+# Every contributor not on the generating platform would have seen a red suite.
+#
+# So: structure, keys, strings, booleans and list lengths are still compared EXACTLY -- only
+# numbers get a tolerance, and a tight one. 1e-9 sits ~4 orders above the observed platform
+# spread and far below anything this project would want to miss: a real regression moves a
+# fitted parameter in its leading digits, not its fifteenth. The report markdown carries only
+# rounded values and stays an exact comparison; the PNG bytes remain pinned and version-skipped.
+_ORACLE_RTOL = 1e-9
+
+
+def _num_close(a, b) -> bool:
+    if isinstance(a, bool) or isinstance(b, bool):
+        return a is b                       # bools are ints in Python; never tolerate
+    return bool(np.isclose(a, b, rtol=_ORACLE_RTOL, atol=0.0, equal_nan=True))
+
+
+def _assert_like_oracle(got, want, path="$"):
+    """Recursive structural equality with float tolerance. Raises AssertionError naming the
+    JSON path of the first mismatch, so a failure is as diagnosable as a text diff."""
+    assert type(got) is type(want) or isinstance(got, type(want)) or isinstance(want, type(got)), \
+        f"{path}: type {type(got).__name__} != {type(want).__name__}"
+    if isinstance(want, dict):
+        assert set(got) == set(want), f"{path}: keys differ: {set(got) ^ set(want)}"
+        for k in want:
+            _assert_like_oracle(got[k], want[k], f"{path}.{k}")
+    elif isinstance(want, (list, tuple)):
+        assert len(got) == len(want), f"{path}: length {len(got)} != {len(want)}"
+        for n, (g, w) in enumerate(zip(got, want)):
+            _assert_like_oracle(g, w, f"{path}[{n}]")
+    elif isinstance(want, (int, float)) and not isinstance(want, bool):
+        assert _num_close(got, want), f"{path}: {got!r} != {want!r} (rtol {_ORACLE_RTOL})"
+    else:
+        assert got == want, f"{path}: {got!r} != {want!r}"
+
+
+def _assert_csv_like_oracle(blob: bytes, golden: pathlib.Path, label: str):
+    """Same contract for the CSV goldens, which carry full-precision floats and are exposed
+    to exactly the same platform drift. Cell-by-cell: numeric cells by tolerance, every other
+    cell (headers, units, flags, blanks) byte-for-byte."""
+    got_rows = blob.decode("utf-8").splitlines()
+    want_rows = golden.read_bytes().decode("utf-8").splitlines()
+    assert len(got_rows) == len(want_rows), f"{label}: {len(got_rows)} rows != {len(want_rows)}"
+    for r, (gl, wl) in enumerate(zip(got_rows, want_rows)):
+        gc, wc = gl.split(","), wl.split(",")
+        assert len(gc) == len(wc), f"{label} row {r}: {len(gc)} cells != {len(wc)}"
+        for c, (g, w) in enumerate(zip(gc, wc)):
+            if g == w:
+                continue
+            try:
+                gv, wv = float(g), float(w)
+            except ValueError:
+                raise AssertionError(f"{label} row {r} col {c}: {g!r} != {w!r}") from None
+            assert _num_close(gv, wv), \
+                f"{label} row {r} col {c}: {g} != {w} (rtol {_ORACLE_RTOL})"
+
+
+def test_oracle_comparison_tolerates_platform_ulps_but_not_regressions():
+    """The tolerance must be wide enough for the measured BLAS spread and narrow enough to
+    still catch a real change. Without this, 1e-9 is an unexamined magic number."""
+    base = {"a": [-1.0252441501357285e-07], "n": 300, "model": "curie_weiss", "ok": True}
+    ulp = {"a": [-1.025244150135774e-07], "n": 300, "model": "curie_weiss", "ok": True}
+    _assert_like_oracle(ulp, base)                       # the exact Linux-vs-macOS pair: passes
+    for bad, why in [
+        ({"a": [-1.0252441e-07], "n": 300, "model": "curie_weiss", "ok": True}, "7th digit"),
+        ({"a": [-1.0252441501357285e-07], "n": 301, "model": "curie_weiss", "ok": True}, "count"),
+        ({"a": [-1.0252441501357285e-07], "n": 300, "model": "cw", "ok": True}, "string"),
+        ({"a": [-1.0252441501357285e-07], "n": 300, "model": "curie_weiss", "ok": False}, "bool"),
+    ]:
+        with pytest.raises(AssertionError):
+            _assert_like_oracle(bad, base)
+
+
 def test_oracle_vsm_synth_json_csv_report_png(tmp_path):
     res = _analyze(FIX / "vsm_synth.dat")
     # JSON minus new keys
-    got = json.dumps(_strip_new(res.data), sort_keys=True, indent=2)
-    want = (ORACLE / "vsm_synth.result.json").read_text()
-    assert got == want
+    got = _strip_new(res.data)
+    want = json.loads((ORACLE / "vsm_synth.result.json").read_text())
+    _assert_like_oracle(json.loads(json.dumps(got, sort_keys=True)), want)
     # new keys ARE present (additive)
     assert set(res.data) >= set(_NEW_KEYS)
     # CSVs
     for kind, blob in _export_csvs(res, tmp_path).items():
-        assert blob == (ORACLE / f"vsm_synth.{kind}.golden").read_bytes(), kind
+        _assert_csv_like_oracle(blob, ORACLE / f"vsm_synth.{kind}.golden", kind)
     # report
     from cryosweep_core.reports import build_report
     assert build_report(res)["markdown"] == (ORACLE / "vsm_synth.report.md").read_text()
@@ -312,10 +392,10 @@ def test_oracle_vsm_synth_json_csv_report_png(tmp_path):
 
 def test_oracle_mpms_json_csv(tmp_path, mpms_real_path):
     res = _analyze(mpms_real_path, 500.0, 10.0)
-    got = json.dumps(_strip_new(res.data), sort_keys=True, indent=2)
-    assert got == (ORACLE / "mpms.result.json").read_text()
+    got = json.loads(json.dumps(_strip_new(res.data), sort_keys=True))
+    _assert_like_oracle(got, json.loads((ORACLE / "mpms.result.json").read_text()))
     for kind, blob in _export_csvs(res, tmp_path).items():
-        assert blob == (ORACLE / f"mpms.{kind}.golden").read_bytes(), kind
+        _assert_csv_like_oracle(blob, ORACLE / f"mpms.{kind}.golden", kind)
 
 
 # ---------------- determinism --------------------------------------------
