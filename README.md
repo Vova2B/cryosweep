@@ -8,7 +8,7 @@ One file in, physics out: cryosweep detects which measurement it is looking at, 
 sweeps, fits the appropriate models, and reports what it found — including when it *cannot*
 report something, and why.
 
-![The cryosweep heat-capacity tab: low-temperature Cp/T models, full-range Debye-Einstein fit, entropy S(T), and per-field gamma and Debye temperature](docs/images/heat-capacity-multifield.png)
+![The cryosweep heat-capacity tab: low-temperature Cp/T models, full-range Debye-Einstein fit, entropy S(T), and per-field gamma and Debye temperature](https://raw.githubusercontent.com/Vova2B/cryosweep/main/docs/images/heat-capacity-multifield.png)
 
 *That last clause is the point. In the status bar above, cryosweep reports θ_D drifting 160 %
 across fields — the lattice should be field-independent — and a Sommerfeld coefficient γ that has
@@ -24,24 +24,44 @@ gone negative. Neither is handed back as a result; both are flagged as physics t
 | **Hall effect** | Antisymmetrized R_xy, R_H, carrier density, mobility, R_H(T) |
 
 The physics behind each — the models, the fitted quantities, and the criteria the detectors
-use — is documented in [`docs/physics-reference.md`](docs/physics-reference.md).
+use — is documented in [`docs/physics-reference.md`](https://github.com/Vova2B/cryosweep/blob/main/docs/physics-reference.md).
 
 ## Install
 
 ```bash
+pip install cryosweep          # core + command line
+pip install 'cryosweep[gui]'   # adds the desktop app
+```
+
+The GUI is optional because the analysis core and CLI are Qt-free by design, and Qt is by far
+the heaviest dependency here — leaving it out keeps an agent or CI install a quarter of the size.
+Installing without it still gives you every analyzer; only `cryosweep-gui` needs the extra, and it
+says so if you run it.
+
+From a clone, for development:
+
+```bash
 python3 -m venv .venv
-.venv/bin/pip install -e .
+.venv/bin/pip install -e '.[gui]'
 ```
 
 Python ≥ 3.11 (developed and tested on 3.14).
 
 ## Quickstart
 
-The [`examples/`](examples/) folder has a runnable file per probe, so you can try
-everything before pointing it at your own data ([`examples/README.md`](examples/README.md)
+The [`examples/`](https://github.com/Vova2B/cryosweep/tree/main/examples) folder has a runnable file per probe, so you can try
+everything before pointing it at your own data ([`examples/README.md`](https://github.com/Vova2B/cryosweep/blob/main/examples/README.md)
 says what each file shows and which tab/inputs to use — the Hall examples in particular
 open on the Resistivity tab first, because Hall measurements share the resistivity file
-format):
+format).
+
+Those files ship with the repository rather than the wheel, so after a `pip install` fetch one
+first — or clone the repo and run the commands as written:
+
+```bash
+curl -O https://raw.githubusercontent.com/Vova2B/cryosweep/main/examples/heat_capacity.dat
+cryosweep analyze heat_capacity.dat
+```
 
 ```bash
 cryosweep analyze examples/magnetization_vsm.dat        # Curie-Weiss: theta = -10 K
@@ -84,7 +104,7 @@ Exit codes distinguish *no result* from *a result you should look at*: `0` ok, `
 required input is missing — the payload names the flag), `11` low confidence, `2` bad input.
 Codes 10 and 11 still print a full JSON envelope. Output is byte-stable for the same input, so
 it diffs and caches cleanly. A ready-made agent guide ships in
-[`skill/cryosweep/SKILL.md`](skill/cryosweep/SKILL.md).
+[`skill/cryosweep/SKILL.md`](https://github.com/Vova2B/cryosweep/blob/main/skill/cryosweep/SKILL.md).
 
 ## Example data
 
@@ -139,21 +159,21 @@ with. PPMS is a registered trademark of Quantum Design, Inc.
 
 ## Licence
 
-cryosweep is released under the [PolyForm Noncommercial License 1.0.0](LICENSE).
+cryosweep is released under the [PolyForm Noncommercial License 1.0.0](https://github.com/Vova2B/cryosweep/blob/main/LICENSE).
 
 **Free for research and education** — universities, public research institutes, national
 laboratories, government and nonprofit organizations, and individuals, *regardless of how the
 work is funded*. Use it, modify it, redistribute it, publish results with it.
 
 **Commercial use requires a licence.** If you are a company, see
-[COMMERCIAL.md](COMMERCIAL.md) — it is a short email to `info@cryosweep.org`.
+[COMMERCIAL.md](https://github.com/Vova2B/cryosweep/blob/main/COMMERCIAL.md) — it is a short email to `info@cryosweep.org`.
 
 Third-party dependency licences, and what the LGPL requires of the Qt binding, are recorded in
-[THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).
+[THIRD-PARTY-LICENSES.md](https://github.com/Vova2B/cryosweep/blob/main/THIRD-PARTY-LICENSES.md).
 
 ## Known issues
 
-Known defects are listed in [KNOWN-ISSUES.md](KNOWN-ISSUES.md). Most are display or
+Known defects are listed in [KNOWN-ISSUES.md](https://github.com/Vova2B/cryosweep/blob/main/KNOWN-ISSUES.md). Most are display or
 ergonomics issues found by inspecting every rendered example, and each of those names the
 example file that reproduces it; none of them changes a fitted number or an exported value.
 Two exceptions are called out explicitly there — a temperature-setpoint binning bug in the
@@ -171,21 +191,21 @@ version — figures are expected to improve, and doing so is not a breaking chan
 
 ## Project documents
 
-- [CHANGELOG.md](CHANGELOG.md) — what is in each release
-- [ROADMAP.md](ROADMAP.md) — what is planned for 1.0, with measured costs where they were measured
-- [KNOWN-ISSUES.md](KNOWN-ISSUES.md) — known defects found and deferred, with what reproduces each
-- [CONTRIBUTING.md](CONTRIBUTING.md) and [CLA.md](CLA.md) — how to contribute, and the one-time agreement
-- [SECURITY.md](SECURITY.md) — reporting a vulnerability
-- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- [CHANGELOG.md](https://github.com/Vova2B/cryosweep/blob/main/CHANGELOG.md) — what is in each release
+- [ROADMAP.md](https://github.com/Vova2B/cryosweep/blob/main/ROADMAP.md) — what is planned for 1.0, with measured costs where they were measured
+- [KNOWN-ISSUES.md](https://github.com/Vova2B/cryosweep/blob/main/KNOWN-ISSUES.md) — known defects found and deferred, with what reproduces each
+- [CONTRIBUTING.md](https://github.com/Vova2B/cryosweep/blob/main/CONTRIBUTING.md) and [CLA.md](https://github.com/Vova2B/cryosweep/blob/main/CLA.md) — how to contribute, and the one-time agreement
+- [SECURITY.md](https://github.com/Vova2B/cryosweep/blob/main/SECURITY.md) — reporting a vulnerability
+- [CODE_OF_CONDUCT.md](https://github.com/Vova2B/cryosweep/blob/main/CODE_OF_CONDUCT.md)
 
 ## Contributing
 
 Bug reports, files that break the loader, and pull requests are welcome — see
-[CONTRIBUTING.md](CONTRIBUTING.md). Because the project is dual-licensed, a pull request needs a
-one-time [Contributor License Agreement](CLA.md); you keep your copyright, and a bot walks you
+[CONTRIBUTING.md](https://github.com/Vova2B/cryosweep/blob/main/CONTRIBUTING.md). Because the project is dual-licensed, a pull request needs a
+one-time [Contributor License Agreement](https://github.com/Vova2B/cryosweep/blob/main/CLA.md); you keep your copyright, and a bot walks you
 through it on your first PR.
 
 ## Citing
 
 If cryosweep contributes to work you publish, please cite it — see
-[CITATION.cff](CITATION.cff).
+[CITATION.cff](https://github.com/Vova2B/cryosweep/blob/main/CITATION.cff).

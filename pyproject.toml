@@ -27,8 +27,23 @@ dependencies = [
     "scipy>=1.13",
     "pydantic>=2.6",
     "matplotlib>=3.11",
-    "PySide6>=6.7",
 ]
+
+# The desktop GUI is optional: `pip install cryosweep[gui]`. The core and CLI are Qt-free by
+# design (tests/core/test_qt_free.py enforces it), and Qt is by far the heaviest thing here --
+# the PySide6 meta-package drags in PySide6-Addons (175 MB: Charts, 3D, WebEngine, Multimedia)
+# that this codebase never imports. Measured against the real import graph: QtWidgets, QtCore
+# and QtGui only, all of which live in PySide6-Essentials (80 MB). If a future feature ever
+# needs an Addons module, widen this one line back to "PySide6".
+[project.optional-dependencies]
+gui = ["PySide6-Essentials>=6.7"]
+
+[project.urls]
+Homepage = "https://github.com/Vova2B/cryosweep"
+Source = "https://github.com/Vova2B/cryosweep"
+Issues = "https://github.com/Vova2B/cryosweep/issues"
+Changelog = "https://github.com/Vova2B/cryosweep/blob/main/CHANGELOG.md"
+"Physics reference" = "https://github.com/Vova2B/cryosweep/blob/main/docs/physics-reference.md"
 
 [project.scripts]
 cryosweep = "cryosweep_cli.__main__:main"

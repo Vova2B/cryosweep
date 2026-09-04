@@ -21,9 +21,23 @@ def build_window():
     win._qapp = _app                    # anchor QApp to window lifetime so it is not GC'd
     return win
 
+_NO_QT = (
+    "cryosweep: the desktop GUI needs the optional Qt dependency, which is not installed.\n"
+    "    pip install 'cryosweep[gui]'\n"
+    "The command-line interface needs no Qt and is available now as `cryosweep`."
+)
+
+
 def run(argv=None):
     import sys
-    from PySide6.QtWidgets import QApplication
+    # `pip install cryosweep` deliberately omits Qt, but console entry points are unconditional:
+    # this script exists either way. Without the guard the user meets a ModuleNotFoundError
+    # traceback instead of the one line that fixes it.
+    try:
+        from PySide6.QtWidgets import QApplication
+    except ModuleNotFoundError:
+        print(_NO_QT, file=sys.stderr)
+        return 2
     app = QApplication.instance() or QApplication(argv or sys.argv)
     win = build_window()
     win.show()
