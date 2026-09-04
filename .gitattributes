@@ -17,3 +17,12 @@
 # while still passing in a working tree that predates the normalization. Same reasoning
 # as *.dat above: a byte-exact oracle must be stored byte-exact.
 *.golden -text
+
+# Images are binary. `text=auto` above would otherwise be free to inspect them and,
+# on a file it guessed wrong about, rewrite CRLF in the index -- which is exactly how
+# the .golden fixtures broke: they compared byte-for-byte, passed on the machine that
+# wrote them, and failed in every fresh clone.
+*.png -text
+*.jpg -text
+*.gif -text
+*.pdf -text
