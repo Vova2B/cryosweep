@@ -24,32 +24,26 @@ The gap is only in the single-plot button.
 
 *Estimated effort: 2–4 hours. Low risk.*
 
-### 2. Debye-Einstein parameters, both directions
+### 2. Debye-Einstein parameters, both directions — **done**
 
-Two independent changes, listed separately because they cost very differently.
+Shipped (see `docs/superpowers/plans/2026-09-04-debye-einstein-two-way-params.md` for the
+design and the trap inventory).
 
-**(a) Fitted values into the parameter boxes.** After the 7-parameter Debye-Einstein fit runs,
-the edit boxes should show what was fitted instead of the starting guesses. The trap: writing
-to the widgets alone is not enough, because `analyze_and_render` restores the panel from the
-focused entry's stored state afterwards (`probe_tab.py:314-315`) and would overwrite it. The
-stored state has to be updated too.
+**(a) Fitted values into the parameter boxes.** After an **accepted** fit, the boxes show the
+fitted values (a declined fit never overwrites the guesses). The `set_state` overwrite trap
+is handled at its source: `analyze_and_render` folds each entry's own fitted params into that
+entry's stored state, so the restore *is* the delivery; the async and tab-change paths absorb
+into the widgets and re-commit. Spinboxes went from 4 to 6 decimals — at 4, γ ≈ 0.0098
+truncated to two significant digits and the box could not honestly show what was fitted.
 
-*Estimated effort: ~0.5 day.*
-
-**(b) Live curve response when a parameter is edited.** A full re-analysis per keystroke is not
-viable — **measured**: a heat-capacity `analyze` takes **150–470 ms** (155–245 ms on this
-machine, up to 470 ms under load) and runs **synchronously on the GUI thread**. Evaluating the
-model and updating the existing line in place, including a full canvas redraw, is **~30 ms**
-(29–35 ms measured across runs) — roughly an order of magnitude cheaper, and fast enough to
-follow typing.
-
-So the live response should be a **model evaluation, not a refit**. The planned shape: draw the
-hand-set curve as a separate dashed "model (manual)" line, leave the fitted curve untouched
-beneath it, and keep exports rendering from the analysis result. That last part is the point —
-**a hand-tuned curve must never be exportable as a fit.** A figure that says "fit" is a claim
-about the data, and the UI has to keep the two visually and structurally distinct.
-
-*Estimated effort: 1.5–2.5 days. The labelling design matters more than the code.*
+**(b) Live curve response when a parameter is edited.** A model evaluation, not a refit —
+**re-measured**: HC `analyze` is 148–241 ms on this machine, a model evaluation plus in-place
+line update is **2–4 ms** — drawn as a dashed blue "model (manual)" line on `hc_full_cp_t`
+and `cp_vs_t`, `gid="manual_model"`, with the fitted curve untouched beneath it. It is
+display-state only: it never enters the analysis result, so CSV/JSON/report and "Export
+plots…" (which re-render from the result) cannot carry it; "Save plot" saves the on-screen
+figure, where the curve travels **with its "model (manual)" label**. A refit or focus change
+clears it. **A hand-tuned curve is never presented as a fit** on any surface.
 
 ### 3. Entropy fit off by default
 
@@ -74,11 +68,14 @@ touched and ~3 added.*
 
 ### 4. Analysis off the GUI thread
 
-`refit_requested` and file changes both call `analyze_and_render` synchronously
-(`probe_tab.py:59-60`, `:304`). Every heat-capacity refit therefore freezes the interface for
-the 150–470 ms measured above, and items 2 and 3 both make refits more frequent. Moving
-analysis to a worker with a busy indicator is the underlying fix, and doing it first would make
-item 2(b) simpler rather than harder.
+Half of this already exists: the **Analyze button** runs off-thread (`AnalyzeWorker`,
+`probe_tab.py:140-152`, joined by `stop_worker` on close, covered by
+`tests/gui/test_probe_tab_async.py`). What remains synchronous is `analyze_and_render` — the
+path `refit_requested` and file-list changes use (`probe_tab.py:59-60`) — so every
+heat-capacity **refit** still freezes the interface for the 148–241 ms measured above, and
+item 3 makes refits more frequent. (Item 2(b) deliberately does not: the live curve is a
+~2–4 ms model evaluation, not a refit.) Moving `analyze_and_render` onto the same worker
+pattern, with a busy indicator, is the remaining fix.
 
 *Estimated effort: not yet costed — this needs a design pass before an estimate is meaningful.*
 

@@ -550,6 +550,23 @@ def _draw_reference_lines(ax, spec):
                         va="top", ha="left", fontsize="small")
 
 
+def refresh_legend(ax, style, spec):
+    """Re-draw *ax*'s legend with the same props `_finish` used, for a caller that added or
+    removed a labelled artist on an already-rendered figure (the GUI's live "model (manual)"
+    overlay). Placement/toggle rules are `_draw_legend`'s, so the legend stays consistent
+    with the original render."""
+    spec = spec or PlotSpec()
+    legend_sz = style.legend_size if style.legend_size is not None else style.font_pt - 1
+    legend_prop = {"size": legend_sz}
+    if style.font_family:
+        legend_prop["family"] = style.font_family
+    _draw_legend(ax, legend_prop, style, spec)
+    # a re-drawn (taller) legend can land under a low-T inset the original cleared;
+    # re-apply the same nudge the renderer used (no-op on inset-free figures)
+    iax = next((a for a in ax.get_figure().axes if a.get_label() == "inset"), None)
+    _legend_clear_of_inset(ax, iax)
+
+
 def _finish(ax, kind, spec, style, xlabel, ylabel, legend_handles=None, draw_legend=True):
     ax.set_xscale(spec.xscale if spec.xscale is not None else kind.default_xscale)
     ax.set_yscale(spec.yscale if spec.yscale is not None else kind.default_yscale)
