@@ -241,6 +241,7 @@ class MainWindow(QMainWindow):
         res = tab.analyze()
         if res is not None:
             tab.show_result(res, restore_layout=self.preset_store.last_used.get(tab.probe))
+            tab.absorb_result(res)               # fitted values -> boxes + focused entry state
 
     def _on_field_unit_changed(self, text):
         self.preset_store.global_style = self.preset_store.global_style.model_copy(

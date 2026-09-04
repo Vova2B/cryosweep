@@ -1,4 +1,5 @@
 from __future__ import annotations
+import numpy as np
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (QFormLayout, QLineEdit, QGroupBox, QGridLayout,
                              QLabel, QDoubleSpinBox, QCheckBox, QPushButton, QComboBox,
@@ -13,9 +14,13 @@ _FULL_FIXDEF = {"n": True}
 
 class HCInputPanel(InputPanel):
     refit_requested = Signal()
+    #: A USER edited one of the 7 Debye-Einstein parameter boxes. Programmatic writes
+    #: (set_state, absorb_result) are quiet — they must not draw a manual model curve.
+    param_edited = Signal()
 
     def __init__(self):
         super().__init__("heatcapacity")
+        self._quiet = False                      # True while set_state/absorb write the boxes
         self._adv_groups: dict[str, CollapsibleGroup] = {}
         form = QFormLayout()
         self.n_atoms_edit = QLineEdit()
@@ -40,10 +45,13 @@ class HCInputPanel(InputPanel):
         self._val: dict[str, QDoubleSpinBox] = {}
         self._fix: dict[str, QCheckBox] = {}
         for i, k in enumerate(_FULL_KEYS, start=1):
-            sb = QDoubleSpinBox(); sb.setRange(-1e6, 1e6); sb.setDecimals(4)
+            # 6 decimals: gamma is ~0.01 J/(mol*K^2), and after a fit these boxes SHOW the
+            # fitted values — 4 decimals would truncate gamma to two significant digits.
+            sb = QDoubleSpinBox(); sb.setRange(-1e6, 1e6); sb.setDecimals(6)
             sb.setValue(_FULL_DEF[k]); self._val[k] = sb
             cb = QCheckBox("fix"); cb.setChecked(_FULL_FIXDEF.get(k, False)); self._fix[k] = cb
             g.addWidget(QLabel(k), i, 0); g.addWidget(sb, i, 1); g.addWidget(cb, i, 2)
+            sb.valueChanged.connect(self._emit_param_edited)
         self.run_full_btn = QPushButton("Run full-range fit")
         g.addWidget(self.run_full_btn, len(_FULL_KEYS) + 1, 0, 1, 3)
         cg_full = CollapsibleGroup("Full-range fit (Debye-Einstein)", collapsed=True)
@@ -126,6 +134,76 @@ class HCInputPanel(InputPanel):
     def set_value(self, key, v): self._val[key].setValue(float(v))
     def set_fix(self, key, on): self._fix[key].setChecked(bool(on))
 
+    def _emit_param_edited(self, *_):
+        if not self._quiet:
+            self.param_edited.emit()
+
+    # ---- fitted values, both directions (ROADMAP item 2) ----
+
+    @staticmethod
+    def _fitted_params(result) -> dict | None:
+        """The full-range fit's params, or None when there is no ACCEPTED fit. A declined
+        fit (ok False, r² floor, unavailable) must never overwrite the user's guesses."""
+        ff = ((getattr(result, "data", None) or {}).get("full_fit") or {}) if result else {}
+        if not ff.get("ok"):
+            return None
+        p = ff.get("params") or {}
+        if not all(k in p and p[k] is not None for k in _FULL_KEYS):
+            return None
+        return {k: float(p[k]) for k in _FULL_KEYS}
+
+    def absorb_result(self, result) -> bool:
+        """2(a): write the FITTED values into the parameter boxes (quietly — this is not a
+        user edit). Returns True when something was absorbed."""
+        vals = self._fitted_params(result)
+        if vals is None:
+            return False
+        self._quiet = True
+        try:
+            for k, v in vals.items():
+                self._val[k].setValue(v)
+        finally:
+            self._quiet = False
+        return True
+
+    def fitted_state_patch(self, state: dict, result) -> dict | None:
+        """2(a), stored-state side: a copy of *state* whose 'val' carries the fitted params,
+        or None when there is no accepted fit. Pure dict work — no widget writes — so
+        ProbeTab.analyze_and_render can fold each entry's own fit into that entry's state
+        before its final set_state restore (which would otherwise re-show the guesses)."""
+        vals = self._fitted_params(result)
+        if vals is None:
+            return None
+        return {**state, "val": vals}
+
+    def manual_model_curve(self, result):
+        """2(b): evaluate the Debye-Einstein model at the CURRENT box values over the
+        result's T range. Returns (x, y, label) or None. This is a model evaluation, never
+        a refit — whatever the caller draws from it must be labelled a manual model, not a
+        fit (physics-integrity rule)."""
+        from cryosweep_core.fitting.heat_capacity import specific_heat_full
+        d = (getattr(result, "data", None) or {}) if result else {}
+        if d.get("probe") != "heatcapacity":
+            return None
+        grid = (d.get("full_fit") or {}).get("t_grid") or []
+        if not grid:
+            T = [t for t in (d.get("full_temperature") or []) if t and t > 0]
+            if len(T) < 2:
+                return None
+            grid = np.linspace(min(T), max(T), 300)
+        x = np.asarray(grid, float)
+        x = x[np.isfinite(x) & (x > 0)]
+        if x.size < 2:
+            return None
+        params = {k: float(self._val[k].value()) for k in _FULL_KEYS}
+        try:
+            y = specific_heat_full(x, **params)
+        except (ValueError, FloatingPointError, OverflowError):
+            return None                          # unphysical hand-set params: no curve
+        if not np.all(np.isfinite(y)):
+            return None
+        return x.tolist(), np.asarray(y, float).tolist(), "model (manual)"
+
     def _entropy_ref_selected(self) -> bool:
         return self.entropy_source.currentIndex() == 1
 
@@ -195,6 +273,13 @@ class HCInputPanel(InputPanel):
                 "entropy_rln_j": self.entropy_rln_j.value()}
 
     def set_state(self, state: dict) -> None:
+        self._quiet = True                       # programmatic restore, not a user edit
+        try:
+            self._set_state(state)
+        finally:
+            self._quiet = False
+
+    def _set_state(self, state: dict) -> None:
         self.n_atoms_edit.setText(state.get("n_atoms", ""))
         self.lowt_min.setText(state.get("lowt_min", "")); self.lowt_max.setText(state.get("lowt_max", ""))
         self.full_min.setText(state.get("full_min", "")); self.full_max.setText(state.get("full_max", ""))

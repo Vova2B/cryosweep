@@ -58,6 +58,8 @@ class ProbeTab(QWidget):
         self.file_manager.changed.connect(self.analyze_and_render)
         if hasattr(self.panel, "refit_requested"):
             self.panel.refit_requested.connect(self.analyze_and_render)
+        if hasattr(self.panel, "param_edited"):
+            self.panel.param_edited.connect(self._on_param_edited)
 
         # ── 3-zone splitter: [left-inputs | center-output | right-controls] ──
         left_widget = QWidget()
@@ -155,6 +157,30 @@ class ProbeTab(QWidget):
         self._set_busy(False)
         restore = self._mw.preset_store.last_used.get(self.probe) if self._mw else None
         self.show_result(result, restore_layout=restore)
+        self.absorb_result(result)               # fitted values -> boxes + focused entry state
+
+    def absorb_result(self, result) -> None:
+        """2(a) for the paths that analyze from the LIVE panel widgets (the async Analyze
+        button, MainWindow._reanalyze_active): write the fitted values into the boxes and
+        commit them to the focused entry's stored state, so the set_state restore on the
+        next render shows the fit, not the starting guesses. analyze_and_render covers its
+        own entries via fitted_state_patch instead (per-entry, overlay-correct)."""
+        if result is None or not hasattr(self.panel, "absorb_result"):
+            return
+        if self.panel.absorb_result(result):
+            self.commit_focused_params()
+
+    def _on_param_edited(self):
+        """2(b): a USER edited a model-parameter box. Draw/update the live 'model (manual)'
+        curve — a model evaluation, never a refit, and never labelled as one."""
+        if self._last_result is None or not hasattr(self.panel, "manual_model_curve"):
+            return
+        curve = self.panel.manual_model_curve(self._last_result)
+        if curve is None:
+            self.output.clear_manual_curves()    # unphysical hand-set params: no curve
+            return
+        x, y, label = curve
+        self.output.update_manual_curve(("hc_full_cp_t", "cp_vs_t"), x, y, label)
 
     def _set_busy(self, busy):
         self.analyze_btn.setEnabled(not busy)
@@ -291,6 +317,9 @@ class ProbeTab(QWidget):
         self.commit_focused_params()
         self._focus = idx
         self.panel.set_state(self._files[idx].state)
+        # a manual model curve was computed from the PREVIOUS file's boxes; never let it
+        # linger over another file's plot
+        self.output.clear_manual_curves()
 
     def _prepare_entry(self, entry):
         """Build (rt, cfg) for one entry using the entry's own saved params (C2). Returns None on load failure."""
@@ -310,6 +339,13 @@ class ProbeTab(QWidget):
         jobs = [(self._prepare_entry(e), e) for e in inc]
         for prep, e in jobs:
             e.result = run_analysis(prep[0], prep[1], self._registry) if prep else None
+            # 2(a): fold each entry's OWN fitted params into that entry's stored state, so
+            # the set_state restore below (and any later focus switch) shows the fit rather
+            # than the starting guesses. A declined fit patches nothing.
+            if e.result is not None and hasattr(self.panel, "fitted_state_patch"):
+                patched = self.panel.fitted_state_patch(e.state, e.result)
+                if patched is not None:
+                    e.state = patched
         self._render_files()
         if self._files:                                       # restore the panel to the focused entry
             self.panel.set_state(self._files[self._focus].state)

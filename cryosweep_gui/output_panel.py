@@ -368,6 +368,7 @@ class PlotCard(QFrame):
         self._lay = QVBoxLayout(self)
         self.canvas = None
         self.figure = None
+        self.manual_line = None                  # live "model (manual)" Line2D, display-only
         self._badge = None
         self._dup_badge = None
         self._placeholder = None
@@ -411,6 +412,7 @@ class PlotCard(QFrame):
             self.canvas.hide()                       # hide before orphaning (macOS window flash)
             self._lay.removeWidget(self.canvas); self.canvas.setParent(None)
             self.canvas.deleteLater(); self.canvas = None; self.figure = None
+        self.manual_line = None                      # dies with the old figure
         if self._placeholder is not None:
             self._placeholder.hide()
             self._lay.removeWidget(self._placeholder); self._placeholder.setParent(None)
@@ -644,6 +646,46 @@ class OutputPanel(QWidget):
             self._grid.removeWidget(c); c.setParent(None); c.deleteLater()
         self._cards = []
         self.last_figure = None
+
+    # ---- live "model (manual)" overlay (ROADMAP 2b) ----
+    # Display-only: it never enters the analysis result, so CSV/JSON/report and the
+    # "Export plots…" path (which re-render from the result) can never carry it. It lives
+    # and dies with the on-screen figure (_clear_cards / PlotCard.render drop it).
+
+    MANUAL_GID = "manual_model"
+
+    def update_manual_curve(self, kinds, x, y, label) -> None:
+        """Draw or update the hand-set model curve on the cards for *kinds*. A model
+        evaluation, never a refit: dashed, its own gid, labelled distinctly from the fit."""
+        from cryosweep_core.plotting.render import refresh_legend
+        for card in self._cards:
+            if card.entry.kind not in kinds or card.figure is None:
+                continue
+            ax = card.figure.axes[0]                     # main axes (insets are appended after)
+            ln = card.manual_line
+            if ln is not None and ln.axes is ax:
+                ln.set_data(x, y)
+            else:
+                ln, = ax.plot(x, y, ls="--", color="#1f77b4", lw=1.4, zorder=6,
+                              gid=self.MANUAL_GID, label=label)
+                card.manual_line = ln
+                refresh_legend(ax, self.style, card.entry.spec)
+            card.canvas.draw_idle()
+
+    def clear_manual_curves(self) -> None:
+        from cryosweep_core.plotting.render import refresh_legend
+        for card in self._cards:
+            ln = card.manual_line
+            if ln is None:
+                continue
+            try:
+                ln.remove()
+            except (ValueError, NotImplementedError):
+                pass                                     # already gone with a re-render
+            card.manual_line = None
+            if card.figure is not None:
+                refresh_legend(card.figure.axes[0], self.style, card.entry.spec)
+                card.canvas.draw_idle()
 
     def _default_layout(self, result):
         probe = (result.data or {}).get("probe")
