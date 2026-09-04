@@ -550,13 +550,13 @@ def _draw_reference_lines(ax, spec):
                        linewidth=rl.linewidth, gid="refline")
             if rl.label:
                 ax.text(0.02, rl.value, rl.label, transform=ax.get_yaxis_transform(),
-                        va="bottom", ha="left", fontsize="small")
+                        va="bottom", ha="left", fontsize="small", gid="refline-label:h")
         else:
             ax.axvline(rl.value, color=rl.color, linestyle=rl.linestyle,
                        linewidth=rl.linewidth, gid="refline")
             if rl.label:
                 ax.text(rl.value, 0.98, rl.label, transform=ax.get_xaxis_transform(),
-                        va="top", ha="left", fontsize="small")
+                        va="top", ha="left", fontsize="small", gid="refline-label:v")
 
 
 def refresh_legend(ax, style, spec):
@@ -605,6 +605,9 @@ def _finish(ax, kind, spec, style, xlabel, ylabel, legend_handles=None, draw_leg
         ax.set_title(spec.title, fontsize=title_sz, **fam)
     _apply_robust_view(ax, spec, style)
     _apply_frame(ax, style, spec)
+    # Reference-line labels slide along their lines only now (final limits settled),
+    # and BEFORE the legend, which treats text as an obstacle: inset -> labels -> legend.
+    _place_refline_labels(ax, style)
     # Legend LAST, after the robust view has settled the final axis limits: the occupancy
     # chooser measures where the data sits in the realized view, so placing it against
     # pre-robust limits would score a stale geometry.
@@ -766,6 +769,89 @@ def _data_line_endpoints_in_host_frac(ax_host):
                 fx, fy = inv.transform(ax.transData.transform(pnt))
                 ends.append((float(fx), float(fy)))
     return ends
+
+
+def _place_refline_labels(ax, style):
+    """Slide every reference-line label along ITS OWN LINE to the clearest stretch (a 1-D
+    search — the line is the constraint, position along it the free parameter; a label
+    that leaves its line loses the association with the line it names). Labels are found
+    by gid `refline-label:h` / `refline-label:v` and processed in creation order.
+
+    The CURRENT position is always the first candidate, so a label that is already clear
+    keeps its exact position and no golden image moves. A candidate is clear by the
+    shipped standard (no obstacle-box intersection; covered points < 3 or <= 2%); when no
+    stretch is clear the minimum-coverage candidate wins (ties -> earliest). A label is
+    never dropped: unlike the inset it is the only thing tying the line to its meaning.
+
+    Runs inside `_finish` AFTER `_apply_robust_view` (final limits — scoring stale
+    pre-robust geometry misplaced both the legend and the inset during their fixes) and
+    BEFORE `_draw_legend`, giving the pinned order inset -> labels -> legend. The one
+    late-created label (tto_lorenz_t's WF label, drawn after `_finish` because its
+    in-view guard needs the settled ylim) calls this again itself; the already-drawn
+    legend is then treated as an obstacle, so nothing sits on anything either way."""
+    labels = [t for t in ax.texts if (t.get_gid() or "").startswith("refline-label:")]
+    if not labels:
+        return
+    fig = ax.get_figure()
+    fig.canvas.draw()
+    rend = fig.canvas.get_renderer()
+    inv = ax.transAxes.inverted()
+
+    def _frac(bb):
+        (x0, y0), (x1, y1) = inv.transform([(bb.x0, bb.y0), (bb.x1, bb.y1)])
+        return (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+
+    pts = _axes_points_in_host_frac(ax)
+    total = max(len(pts), 1)
+    leg = ax.get_legend()
+
+    for t in labels:
+        horizontal = t.get_gid().endswith(":h")
+        t.set_visible(False)                       # a label is not its own obstacle
+        try:
+            obstacles = _obstacle_boxes_in_host_frac(ax)
+        finally:
+            t.set_visible(True)
+        if leg is not None and leg.get_visible():
+            obstacles.append(_frac(leg.get_window_extent(rend)))
+        box = _frac(t.get_window_extent(rend))
+        w, h = box[2] - box[0], box[3] - box[1]
+        px, py = t.get_position()                  # blended: one coord frac, one data
+        free0 = box[0] if horizontal else box[1]
+        extent = w if horizontal else h
+        anchor_off = (px - box[0]) if horizontal else (py - box[1])
+
+        def _cand_box(lo):
+            return (lo, box[1], lo + w, box[3]) if horizontal else \
+                   (box[0], lo, box[2], lo + h)
+
+        def _coverage(b):
+            if not len(pts):
+                return 0
+            return int(((pts[:, 0] >= b[0]) & (pts[:, 0] <= b[2]) &
+                        (pts[:, 1] >= b[1]) & (pts[:, 1] <= b[3])).sum())
+
+        hi = 1.0 - extent - 0.02
+        cands = [free0] + [float(c) for c in np.arange(0.02, hi + 1e-9, 0.04)
+                           if abs(c - free0) > 1e-9]
+        placed, best, best_n = None, None, None
+        for c in cands:
+            b = _cand_box(c)
+            if any(_rects_overlap(b, ob) for ob in obstacles):
+                continue
+            n = _coverage(b)
+            if n < 3 or n / total <= _LEGEND_MULTIAXIS_OVERLAP_MAX:
+                placed = c
+                break
+            if best_n is None or n < best_n:
+                best, best_n = c, n
+        if placed is None:
+            placed = best if best is not None else free0
+        if abs(placed - free0) > 1e-9:
+            if horizontal:
+                t.set_position((placed + anchor_off, py))
+            else:
+                t.set_position((px, placed + anchor_off))
 
 
 #: Inset corner preference: lower right FIRST — the shipped journal default — so every
@@ -1624,7 +1710,7 @@ def render_hc_full_cp_t(results, spec=None, style=None, overlay=None):
             # Label at the LEFT edge (small x-fraction) near the DP line rather than in the
             # legend, so it can't collide with the low-T inset that sits at the lower-right.
             ax.text(0.02, dp, "Dulong–Petit", transform=ax.get_yaxis_transform(),
-                    va="top", ha="left", fontsize="small")
+                    va="top", ha="left", fontsize="small", gid="refline-label:h")
 
     _hc_iax = _add_lowt_inset(ax, d0, spec, style)
     _finish(ax, kind, spec, style, "Temperature (K)", "Cp (J/mol·K)")
@@ -2023,12 +2109,12 @@ def _rho_tc_markers(ax, d, spec, style):
             ax.axvline(c["tc_mid_k"], color=col, ls=":", lw=0.6, alpha=0.5, gid="refline")
             ax.text(c["tc_mid_k"], 0.02, f" $T_c$ = {c['tc_mid_k']:.2f} K?",
                     transform=ax.get_xaxis_transform(), rotation=90, va="bottom", ha="left",
-                    fontsize=style.font_pt - 2, color=col, alpha=0.6)
+                    fontsize=style.font_pt - 2, color=col, alpha=0.6, gid="refline-label:v")
         else:
             ax.axvline(c["tc_mid_k"], color=col, ls="--", lw=0.8, gid="refline")
             ax.text(c["tc_mid_k"], 0.02, f" $T_c$ = {c['tc_mid_k']:.2f} K",
                     transform=ax.get_xaxis_transform(), rotation=90, va="bottom", ha="left",
-                    fontsize=style.font_pt - 2, color=col)
+                    fontsize=style.font_pt - 2, color=col, gid="refline-label:v")
 
 
 def _rho_annotation(ax, d, style, factor=1e6, unit="µΩ·cm"):
@@ -3561,7 +3647,12 @@ def render_tto_lorenz_t(results, spec=None, style=None, overlay=None):
         # touched here, so "small" is a fixed absolute size and visibly under-scales at 14 pt.
         fam = {"fontfamily": style.font_family} if style.font_family else {}
         ax.text(0.02, 1.0, "Wiedemann–Franz (L = L₀)", transform=ax.get_yaxis_transform(),
-                va="bottom", ha="left", fontsize=style.font_pt - 1, gid="refline-label", **fam)
+                va="bottom", ha="left", fontsize=style.font_pt - 1, gid="refline-label:h",
+                **fam)
+        # created AFTER _finish (the in-view guard needs the settled ylim), so the
+        # canonical inset->labels->legend order cannot apply: place it now, with the
+        # already-drawn legend as an obstacle.
+        _place_refline_labels(ax, style)
     return fig
 
 

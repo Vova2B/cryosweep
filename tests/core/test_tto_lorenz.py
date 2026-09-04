@@ -71,7 +71,7 @@ def test_render_draws_the_sommerfeld_reference_line_at_one():
 
 
 def _refline_labels(ax):
-    return [t.get_text() for t in ax.texts if t.get_gid() == "refline-label"]
+    return [t.get_text() for t in ax.texts if (t.get_gid() or "").startswith("refline-label")]
 
 
 def test_the_reference_line_is_labelled_when_it_is_in_view(tto_real_path):
@@ -82,7 +82,7 @@ def test_the_reference_line_is_labelled_when_it_is_in_view(tto_real_path):
     bottom, top = ax.get_ylim()
     assert bottom <= 1.0 <= top                       # premise of the guard
     assert _refline_labels(ax) == ["Wiedemann–Franz (L = L₀)"]
-    t = [x for x in ax.texts if x.get_gid() == "refline-label"][0]
+    t = [x for x in ax.texts if (x.get_gid() or "").startswith("refline-label")][0]
     assert t.get_position()[1] == pytest.approx(1.0)  # pinned TO the line, not floating
     assert t.get_transform() is ax.get_yaxis_transform()
 
@@ -93,7 +93,7 @@ def test_the_label_scales_with_font_pt(tto_real_path):
     r = _run(tto_real_path)
     for pt in (9, 14):
         ax = render_kind(r, "tto_lorenz_t", PlotSpec(), GlobalStyle(font_pt=pt)).axes[0]
-        t = [x for x in ax.texts if x.get_gid() == "refline-label"][0]
+        t = [x for x in ax.texts if (x.get_gid() or "").startswith("refline-label")][0]
         assert t.get_fontsize() == pytest.approx(pt - 1)
 
 

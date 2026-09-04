@@ -3,11 +3,13 @@
 Items 1–17 were found by rendering every file in `examples/` — first the default kind, then
 **all 55 plot kinds** — and inspecting the output, 2026-09-01. Items 18–21 came from running
 the Hall analyzers against a real measurement, and item 22 from a GUI investigation, both
-2026-09-02. They are recorded here rather than quietly left because the project's own rule is
-that a result you cannot trust is more useful reported than hidden.
+2026-09-02. Item 23 was found 2026-09-04 by looking at the
+figures produced while verifying the item-1 fix. They are recorded here rather than quietly
+left because the project's own rule is that a result you cannot trust is more useful reported
+than hidden.
 
-**Items 1–18 and 21–22 change no fitted number and no value in an exported CSV; items 19 and
-20 do.** Items 1–8 and 11–16 are display; items 9 and 18 are reporting-honesty gaps; item 10
+**Items 1–18, 21–22 and 23 change no fitted number and no value in an exported CSV; items 19
+and 20 do.** Items 1–8 and 11–16 are display; items 9 and 18 are reporting-honesty gaps; item 10
 is CLI ergonomics; item 17 hides a GUI control and item 22 makes one act on the wrong target;
 items 19 and 20 are correctness bugs; item 21 is an unfinished feature.
 
@@ -229,3 +231,18 @@ Choosing plots explicitly *does* work: the neighbouring **"Export plots…"** bu
 (`cryosweep_gui/probe_tab.py:74`) opens a dialog with a checkbox per plot, PNG/PDF/SVG, DPI,
 tight crop and exact-mm sizing. Use that until this is fixed. Scheduled for 1.0 — see
 [ROADMAP.md](ROADMAP.md).
+
+## Display (found while verifying the item-1 fix, 2026-09-04)
+
+**23. Reference-line labels are drawn on top of the data.** *FIXED 2026-09-04 (c7945d2):
+every reference-line label now slides along its own line to the first stretch that is clear
+of data, text and the legend — the current position is always tried first, so a label that
+was already clear (and every golden image) does not move. A companion test audits every
+shipped example at its default kind and fails if any text artist covers more than a handful
+of the plotted points, so this defect class cannot return silently.*
+Every reference-line label was pinned at a fixed fraction along its line, the same
+fixed-position class as items 1 and 4: `Dulong–Petit` covered 93 of 858 points on
+`heat_capacity_multifield.dat` (`hc_full_cp_t`), the `T_c` marker label 39 of 391 on
+`resistivity_superconductor.dat` (`resistivity_rho_t`), and `Wiedemann–Franz (L = L₀)` 4 of
+135 on `thermal_transport.dat` (`tto_lorenz_t`). Distinct from item 11 (legend entries
+overprinting each other): this is line labels over the measured curve itself.
