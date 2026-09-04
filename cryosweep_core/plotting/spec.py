@@ -2,6 +2,15 @@ from __future__ import annotations
 from typing import Literal
 from pydantic import BaseModel, Field
 
+#: Legend placement vocabulary. Three modes plus the nine explicit matplotlib positions:
+#:  - "best":    occupancy auto — clearest inside position, relocated outside when none is clear
+#:  - "inside":  clearest inside position, never relocated
+#:  - "outside": forced outside-right (canvas grows so the axes keep their size)
+#:  - explicit positions pass to matplotlib verbatim — the user who can see the right spot wins
+LegendLoc = Literal["best", "inside", "outside",
+                    "upper right", "upper left", "lower right", "lower left",
+                    "upper center", "lower center", "center left", "center right", "center"]
+
 class GlobalStyle(BaseModel):
     """Global plot styling applied to all cards in a layout."""
     width_mm: float = Field(90.0, gt=0)
@@ -38,7 +47,7 @@ class GlobalStyle(BaseModel):
     grid_alpha: float = Field(0.4, ge=0, le=1)
     connect_lines: bool = True
     legend_on: bool = True
-    legend_loc: Literal["best", "inside", "outside"] = "best"
+    legend_loc: LegendLoc = "best"
     legend_frame: bool = False
     fit_color: str | None = None
     fit_linestyle: str = "-"
@@ -75,7 +84,7 @@ class PlotSpec(BaseModel):
     width_mm: float | None = Field(None, gt=0)
     height_mm: float | None = Field(None, gt=0)
     legend_on: bool | None = None
-    legend_loc: Literal["best", "inside", "outside"] | None = None
+    legend_loc: LegendLoc | None = None
     reference_lines: list[ReferenceLine] | None = None
     annotation: bool = True      # rho0/n/RRR/Tc text box on resistivity_rho_t (PQ-4)
     tc_marker: bool = True       # vertical dashed Tc line on resistivity_rho_t (PQ-4)

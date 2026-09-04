@@ -248,6 +248,10 @@ def test_mpms_zfc_fc_two_ramps_in_field_group(mpms_real_path):
 #   - the CGS Curie-constant unit string was reconciled to the physically-correct
 #     "emu*K/(mol*Oe)" (fit.units.C) — this legitimately changes result.json + fit_params.csv
 #     + report.md, which were regenerated; it is NOT a rendering/analysis-shape change;
+# Legend-occupancy amendment (KNOWN-ISSUES 4/5/11/12): default legend placement moved from
+#   matplotlib "best" to the occupancy chooser, so all four PNG goldens were regenerated
+#   (old-vs-new inspected: vsm_chi_t's legend used to sit ON the χ curve, now upper-center
+#   clear; the others are visually unchanged). Numeric goldens (JSON/CSV/report) untouched.
 #   - the `vsm_chi_t` (now twin χ/χ⁻¹) and `inverse_chi` (now +modified-CW line + θ/C box)
 #     renderers changed by design -> those two PNG goldens were regenerated; the two untouched
 #     kinds (vsm_moment_t, vsm_chi_t_product) stay strictly byte-identical.

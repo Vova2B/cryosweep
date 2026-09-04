@@ -59,12 +59,11 @@ This is a **clarity change, not a performance one**: `compute_entropy` was **mea
 ~0 ms**, so nothing is being switched off to make the app faster. It also silences the entropy
 warning banner on samples with no magnetic entropy, where the warning is correct but not useful.
 
-It **hides** rather than fixes [KNOWN-ISSUES](KNOWN-ISSUES.md) item 12 — the legend on that
-figure lists a curve that was never drawn. Building the legend from the artists actually added
-to the axes is a separate ~1 hour change and should land in the same release.
+[KNOWN-ISSUES](KNOWN-ISSUES.md) item 12 — the legend on that figure listing a curve that was
+never visibly drawn — was fixed independently on 2026-09-04 (43e5e48), so this item no longer
+needs to carry a legend fix.
 
-*Estimated effort: 0.5–1 day, plus ~1 hour for the legend fix. About 4 existing GUI tests
-touched and ~3 added.*
+*Estimated effort: 0.5–1 day. About 4 existing GUI tests touched and ~3 added.*
 
 ### 4. Analysis off the GUI thread
 

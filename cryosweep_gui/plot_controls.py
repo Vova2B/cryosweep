@@ -440,7 +440,13 @@ class PlotControlsPanel(QWidget):
         _hdr("Legend")
         self._legend_on = QCheckBox("show legend"); self._legend_on.setChecked(s.legend_on)
         self._legend_on.toggled.connect(self._set_legend_on)
-        self._legend_loc = QComboBox(); self._legend_loc.addItems(["best", "inside", "outside"])
+        # three modes + the nine explicit matplotlib positions (spec.LegendLoc; KNOWN-ISSUES 4:
+        # a user who can see the right spot must be able to say "upper left", not just "inside")
+        self._legend_loc = QComboBox()
+        self._legend_loc.addItems(["best", "inside", "outside",
+                                   "upper right", "upper left", "lower right", "lower left",
+                                   "upper center", "lower center",
+                                   "center left", "center right", "center"])
         self._legend_loc.setCurrentText(s.legend_loc)
         self._legend_loc.currentTextChanged.connect(self._set_legend_loc)
         self._legend_frame = QCheckBox("legend frame"); self._legend_frame.setChecked(s.legend_frame)

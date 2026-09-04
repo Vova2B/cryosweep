@@ -41,9 +41,13 @@ def _legend_ncol(n):
     return min(LEGEND_MAX_COLS, math.ceil(n / LEGEND_MAX_ROWS))
 
 def _draw_legend(ax, legend_prop, style, spec, handles=None, force_loc=None):
-    """legend_on toggle, frame toggle, and placement: best (inside<=cap else outside),
-    forced inside, or forced outside-right. `force_loc` overrides the spec/style loc
-    resolution (used by `_merged_legend` to pin a chosen inside corner or force outside)."""
+    """legend_on toggle, frame toggle, and placement. Placement states:
+      - an explicit matplotlib position ("upper left", ...) -> verbatim, the user's call;
+      - "inside" -> the occupancy chooser's clearest inside position, never relocated;
+      - "best" (default) -> occupancy chooser when <=LEGEND_INSIDE_MAX entries; relocated
+        outside-right when the figure has no clear inside spot (or is genuinely dense);
+      - "outside" -> forced outside-right.
+    `force_loc` overrides the spec/style loc resolution (composite renderers)."""
     legend_on = spec.legend_on if spec.legend_on is not None else style.legend_on
     if not legend_on:
         return
@@ -57,10 +61,15 @@ def _draw_legend(ax, legend_prop, style, spec, handles=None, force_loc=None):
     base = {"prop": legend_prop, "frameon": style.legend_frame}
     if handles is not None:
         base["handles"] = handles
-    inside = (loc == "inside") or (loc == "best" and n <= LEGEND_INSIDE_MAX)
-    if inside:
-        ax.legend(**base)
+    if loc in _LEGEND_INSIDE_LOCS:               # explicit position: pass through verbatim
+        ax.legend(**base, loc=loc)
         return
+    if loc == "inside" or (loc == "best" and n <= LEGEND_INSIDE_MAX):
+        pick, clear = _occupancy_legend_loc(ax, handles, legend_prop, style)
+        if clear or loc == "inside":             # "inside" always stays in (least-bad spot)
+            ax.legend(**base, loc=pick)
+            return
+        # "best" with no clear inside spot -> the outside-right relocation below
     dense_prop = dict(legend_prop)                       # cap font only for the relocated dense legend
     dense_prop["size"] = min(legend_prop.get("size", LEGEND_DENSE_PT), LEGEND_DENSE_PT)
     base["prop"] = dense_prop
@@ -590,14 +599,17 @@ def _finish(ax, kind, spec, style, xlabel, ylabel, legend_handles=None, draw_leg
     legend_prop = {"size": legend_sz}
     if style.font_family:
         legend_prop["family"] = style.font_family
-    if draw_legend:                     # callers that place the legend themselves pass False
-        _draw_legend(ax, legend_prop, style, spec, legend_handles)
     if style.tick_size is not None:
         ax.tick_params(labelsize=style.tick_size)
     if spec.title:
         ax.set_title(spec.title, fontsize=title_sz, **fam)
     _apply_robust_view(ax, spec, style)
     _apply_frame(ax, style, spec)
+    # Legend LAST, after the robust view has settled the final axis limits: the occupancy
+    # chooser measures where the data sits in the realized view, so placing it against
+    # pre-robust limits would score a stale geometry.
+    if draw_legend:                     # callers that place the legend themselves pass False
+        _draw_legend(ax, legend_prop, style, spec, legend_handles)
 
 
 def _setup(results, kind_key, spec, style):
@@ -642,7 +654,11 @@ def _offset_axis(ax, style, color, pos=1.18):
     return oax
 
 _LEGEND_INSIDE_CORNERS = ("upper right", "upper left", "lower right", "lower left")
-_LEGEND_MULTIAXIS_OVERLAP_MAX = 0.02   # >2% of visible points under every corner -> go outside
+#: All nine matplotlib inside positions, corners first (matplotlib-best default bias), then
+#: edge-centres, then centre — the tie-break preference order of the occupancy chooser.
+_LEGEND_INSIDE_LOCS = _LEGEND_INSIDE_CORNERS + (
+    "upper center", "lower center", "center left", "center right", "center")
+_LEGEND_MULTIAXIS_OVERLAP_MAX = 0.02   # >2% of visible points under every position -> go outside
 
 def _axes_points_in_host_frac(ax_host):
     """Every plotted finite point across ALL of the figure's axes (host + twin/offset), expressed
@@ -671,16 +687,82 @@ def _axes_points_in_host_frac(ax_host):
     p = np.vstack(pts)
     return p[(p[:, 0] >= 0) & (p[:, 0] <= 1) & (p[:, 1] >= 0) & (p[:, 1] <= 1)]
 
-def _best_inside_loc(ax_host, handles, legend_prop, style, exclude=()):
-    """Pick the inside corner whose legend bbox overlaps the fewest of the figure's plotted points
-    (union over all axes). Ties resolve to `_LEGEND_INSIDE_CORNERS` order (matplotlib-best default
-    bias). Corners in `exclude` are never chosen (e.g. the corner occupied by an inset or a text
-    annotation, which are not line artists and so are invisible to the point-overlap test).
-    Returns the corner string, or None if EVERY eligible corner covers >2% of visible points
-    (caller then falls back to the outside-right relocation)."""
+def _candidate_boxes(w, h, pad=0.02):
+    """Axes-fraction (x0, y0, x1, y1) rects a legend of fractional size w×h would occupy at
+    each of the nine matplotlib inside positions."""
+    cx0, cx1 = (1 - w) / 2, (1 + w) / 2
+    cy0, cy1 = (1 - h) / 2, (1 + h) / 2
+    return {
+        "upper right":  (1 - pad - w, 1 - pad - h, 1 - pad, 1 - pad),
+        "upper left":   (pad, 1 - pad - h, pad + w, 1 - pad),
+        "lower right":  (1 - pad - w, pad, 1 - pad, pad + h),
+        "lower left":   (pad, pad, pad + w, pad + h),
+        "upper center": (cx0, 1 - pad - h, cx1, 1 - pad),
+        "lower center": (cx0, pad, cx1, pad + h),
+        "center left":  (pad, cy0, pad + w, cy1),
+        "center right": (1 - pad - w, cy0, 1 - pad, cy1),
+        "center":       (cx0, cy0, cx1, cy1),
+    }
+
+
+def _obstacle_boxes_in_host_frac(ax_host):
+    """Bboxes (host axes-fraction) of everything a legend must never sit on that matplotlib's
+    own placement cannot see: visible free-text artists (annotations, the Dulong-Petit label,
+    Rln labels — on ANY axis) and inset axes. Twin/offset axes are NOT obstacles: they share
+    the host frame (their bbox ~ the whole axes) — only an axis properly inside the host frame
+    (an inset) counts. The figure must have been drawn (transforms realized)."""
     fig = ax_host.get_figure()
-    tmp = ax_host.legend(handles=handles, prop=legend_prop, frameon=style.legend_frame,
-                         loc="upper right")
+    rend = fig.canvas.get_renderer()
+    inv = ax_host.transAxes.inverted()
+
+    def _frac(bb):
+        (x0, y0), (x1, y1) = inv.transform([(bb.x0, bb.y0), (bb.x1, bb.y1)])
+        return (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+
+    boxes = []
+    host_bb = ax_host.get_window_extent(rend)
+    for ax in fig.axes:
+        if not ax.get_visible():
+            continue
+        for t in ax.texts:
+            if not t.get_visible() or not str(t.get_text()).strip():
+                continue
+            boxes.append(_frac(t.get_window_extent(rend)))
+        if ax is ax_host:
+            continue
+        bb = ax.get_window_extent(rend)
+        ix0, iy0 = max(bb.x0, host_bb.x0), max(bb.y0, host_bb.y0)
+        ix1, iy1 = min(bb.x1, host_bb.x1), min(bb.y1, host_bb.y1)
+        inter = max(0.0, ix1 - ix0) * max(0.0, iy1 - iy0)
+        host_area = max(host_bb.width * host_bb.height, 1e-9)
+        if 0.0 < inter / host_area < 0.95:           # properly inside -> an inset, not a twin
+            boxes.append(_frac(bb))
+    return boxes
+
+
+def _rects_overlap(a, b):
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+def _occupancy_legend_loc(ax_host, handles, legend_prop, style):
+    """Choose an inside legend position from what is actually drawn (KNOWN-ISSUES 4/11).
+
+    Scores the nine matplotlib inside positions for THIS legend's measured bbox against the
+    figure's ink: the fraction of plotted points covered (union over all axes, reflines
+    excluded) plus hard vetoes for intersecting any text annotation or inset — both invisible
+    to matplotlib's own 'best'. Returns (loc, clear): loc is the least-covered candidate in
+    preference order (corners, edge-centres, centre); clear is False when even that candidate
+    covers >2% of the points or sits on a text/inset — the 'best' caller then relocates
+    outside-right, which is the honest answer when the figure has no room.
+
+    A render-time decision by design: font size and canvas size (the owner's screen-size
+    point) enter through the measured legend extent, and the choice never shifts under the
+    user without a re-render."""
+    fig = ax_host.get_figure()
+    kw = {"prop": legend_prop, "frameon": style.legend_frame, "loc": "upper right"}
+    if handles is not None:
+        kw["handles"] = handles
+    tmp = ax_host.legend(**kw)
     fig.canvas.draw()                                  # realize transforms + legend extent
     bb = tmp.get_window_extent()
     inv = ax_host.transAxes.inverted()
@@ -689,26 +771,31 @@ def _best_inside_loc(ax_host, handles, legend_prop, style, exclude=()):
     tmp.remove()
     pts = _axes_points_in_host_frac(ax_host)
     total = max(len(pts), 1)
-    pad = 0.02
-    boxes = {
-        "upper right": (1 - pad - w, 1 - pad - h, 1 - pad, 1 - pad),
-        "upper left":  (pad, 1 - pad - h, pad + w, 1 - pad),
-        "lower right": (1 - pad - w, pad, 1 - pad, pad + h),
-        "lower left":  (pad, pad, pad + w, pad + h),
-    }
-    best, best_frac = None, None
-    for loc in _LEGEND_INSIDE_CORNERS:
-        if loc in exclude:
-            continue
+    obstacles = _obstacle_boxes_in_host_frac(ax_host)
+    boxes = _candidate_boxes(w, h)
+    best, best_key = None, None
+    for loc in _LEGEND_INSIDE_LOCS:
         x0, y0, x1, y1 = boxes[loc]
-        inside = ((pts[:, 0] >= x0) & (pts[:, 0] <= x1) &
-                  (pts[:, 1] >= y0) & (pts[:, 1] <= y1)).sum() if len(pts) else 0
-        frac = inside / total
-        if best_frac is None or frac < best_frac - 1e-12:
-            best, best_frac = loc, frac
-    if best_frac is not None and best_frac > _LEGEND_MULTIAXIS_OVERLAP_MAX:
-        return None
-    return best
+        vetoed = any(_rects_overlap((x0, y0, x1, y1), ob) for ob in obstacles)
+        frac = (((pts[:, 0] >= x0) & (pts[:, 0] <= x1) &
+                 (pts[:, 1] >= y0) & (pts[:, 1] <= y1)).sum() / total) if len(pts) else 0.0
+        key = (vetoed, frac)                           # clear-of-text first, then least data ink
+        if best_key is None or key < (best_key[0], best_key[1] - 1e-12):
+            best, best_key = loc, key
+    if best_key is None:
+        return "upper right", False
+    vetoed, frac = best_key
+    area = max(w * h, 1e-9)
+    covered = frac * (len(pts) if len(pts) else 0)
+    # Occupied = EITHER the absolute >2%-of-all-points rule (with a 3-point floor: on a
+    # sparse synthetic curve one marker is already >2% and would exile every legend) OR a
+    # DENSITY rule — a small legend over uniformly dense data covers few of the total points
+    # yet sits fully on ink, which the absolute rule cannot see. Same legend size at every
+    # candidate, so the frac ordering above already minimizes both.
+    absolute = frac > _LEGEND_MULTIAXIS_OVERLAP_MAX and covered >= 3
+    dense = (frac / area) > 0.30 and covered >= 5
+    clear = bool(not vetoed and not absolute and not dense and w < 1.0 and h < 1.0)
+    return best, clear
 
 def _merged_legend(ax_host, handles, labels, style, spec):
     """One legend on ax_host combining handles gathered from twin/offset axes. Assigns labels
@@ -726,17 +813,9 @@ def _merged_legend(ax_host, handles, labels, style, spec):
     legend_prop = {"size": legend_sz}
     if style.font_family:
         legend_prop["family"] = style.font_family
-    legend_on = spec.legend_on if spec.legend_on is not None else style.legend_on
-    loc = spec.legend_loc if spec.legend_loc is not None else style.legend_loc
-    n = len(handles)
-    multiaxis = len(ax_host.get_figure().axes) > 1
-    if legend_on and loc == "best" and 0 < n <= LEGEND_INSIDE_MAX and multiaxis:
-        best = _best_inside_loc(ax_host, handles, legend_prop, style)
-        if best is not None:
-            ax_host.legend(handles=handles, prop=legend_prop, frameon=style.legend_frame, loc=best)
-        else:
-            _draw_legend(ax_host, legend_prop, style, spec, handles, force_loc="outside")
-        return
+    # _draw_legend's occupancy chooser already scores the union of ALL axes' data (twin/offset
+    # included) and falls back to the outside-right relocation when nothing inside is clear —
+    # the multiaxis special case this function used to carry is now the general path.
     _draw_legend(ax_host, legend_prop, style, spec, handles)
 
 
@@ -1537,6 +1616,13 @@ def render_hc_entropy_vs_t(results, spec=None, style=None, overlay=None):
         return fig
 
     # ---- SINGLE-AXIS path (non-meaningful magnetic): total-only, no twin, no Rln --------------
+    # KNOWN-ISSUES 12: this branch is taken exactly when magnetic entropy is NOT meaningfully
+    # resolved, so the headline "S magnetic" series is a flat ~0 line crushed invisibly on the
+    # x-axis — yet it used to be drawn and legended, sending the reader hunting for a curve
+    # that is not visible. Skip it here (display-only: entropy_magnetic still reaches the CSV
+    # and JSON). Per-field magnetic overlays (role "magnetic_field") are default-off explicit
+    # user selections and stay drawable.
+    plotted = [(r, s) for (r, s) in plotted if s.role != "magnetic"]
     ally = []
     for r, s in plotted:
         x = np.asarray(s.x, float); y = np.asarray(s.y, float)
@@ -1862,6 +1948,30 @@ def _install_legend_dodge(fig, ax, ann, inset_ax=None):
     with no collision changes nothing, keeping every fixed-size export byte-identical."""
     state = {"busy": False}
 
+    def _leg_area_frac():
+        leg = ax.get_legend()
+        if leg is None:
+            return None
+        lb = leg.get_window_extent()
+        ab = ax.get_window_extent()
+        area = ab.width * ab.height
+        return (lb.width * lb.height) / area if area > 0 else None
+
+    # Baseline: the legend's area fraction of the axes AT RENDER SIZE — the as-designed
+    # layout (the occupancy chooser accepted it, or _legend_avoiding pinned it inside as the
+    # owner's least-bad call). The second trigger below is pure geometry: fonts keep their
+    # point size while a realized canvas shrinks, so the legend's area fraction GROWS in
+    # exact proportion to the lost axes area; >1.25× the baseline (~12% linear shrink) is
+    # the "this canvas is too small for the journal layout" signal in a form that cannot
+    # fire at the creation size (ratio 1.0) and needs no absolute magic fraction. Measured
+    # now, while the figure still has its render geometry — a GUI canvas realizes its first
+    # draw at the card size, which must not become the baseline.
+    try:
+        fig.canvas.draw()
+        state["base_area"] = _leg_area_frac()
+    except Exception:
+        state["base_area"] = None
+
     def _on_draw(event):
         if state["busy"]:
             return
@@ -1875,6 +1985,9 @@ def _install_legend_dodge(fig, ax, ann, inset_ax=None):
             getattr(fig.canvas, "get_renderer", lambda: None)()
         try:
             hit = renderer is not None and _ann_hits_legend_text(leg, ann, renderer)
+            if not hit and renderer is not None and state["base_area"]:
+                now = _leg_area_frac()
+                hit = now is not None and now > 1.25 * state["base_area"]
         except Exception:      # a renderer that cannot measure text extents -> leave layout alone
             return
         if not hit:
@@ -2062,32 +2175,21 @@ def _legend_avoiding(ax, spec, style, inset_present=False, annotation_present=Fa
     prop = {"size": legend_sz}
     if style.font_family:
         prop["family"] = style.font_family
+    # Placement delegates to _draw_legend's occupancy chooser, which MEASURES the inset and
+    # annotation bboxes (they are obstacle rects) instead of trusting these two booleans —
+    # kept in the signature so call sites don't churn, no longer read.
+    #
+    # "best" is pinned to INSIDE here (owner decision, PQ-4): the ρ(T) headline stays inside
+    # even when crowded — a frameless legend over the ramp tail is journal-fine, an outside
+    # relocation grows the export off its exact-mm size, and the small-canvas draw-time dodge
+    # (_install_legend_dodge: hide the inset, back the legend with white) only works on an
+    # inside legend. The chooser still picks the measured least-bad spot. A genuinely dense
+    # legend (>LEGEND_INSIDE_MAX) and an explicit "outside" still relocate.
     loc = spec.legend_loc if spec.legend_loc is not None else style.legend_loc
-    if loc == "outside":
-        _draw_legend(ax, prop, style, spec, H, force_loc="outside")
-        return
-    if loc == "inside":                              # user forced inside -> matplotlib best corner
-        ax.legend(handles=H, prop=prop, frameon=style.legend_frame)
-        return
-    if len(H) > LEGEND_INSIDE_MAX:                   # genuinely dense -> relocate outside (rare here)
-        _draw_legend(ax, prop, style, spec, H, force_loc="outside")
-        return
-    exclude = set()
-    if inset_present:
-        exclude.add("lower right")
-    if annotation_present:
-        exclude.add("upper left")
-    # Prefer the clearest non-excluded inside corner. When every corner is data-covered we still
-    # stay INSIDE (least-bad non-excluded corner by preference) rather than grow the headline
-    # canvas: a frameless legend over the ramp tail is journal-fine, while an outside legend would
-    # break exact-mm export sizing. The inset (lower-right) and annotation (upper-left) are the
-    # regions we must never land on -- both are invisible to matplotlib's own placement.
-    best = _best_inside_loc(ax, H, prop, style, exclude=exclude)
-    if best is None:
-        pref = [c for c in ("upper right", "upper left", "lower left", "lower right")
-                if c not in exclude]
-        best = pref[0] if pref else "upper right"
-    ax.legend(handles=H, prop=prop, frameon=style.legend_frame, loc=best)
+    if loc == "best" and len(H) <= LEGEND_INSIDE_MAX:
+        _draw_legend(ax, prop, style, spec, H, force_loc="inside")
+    else:
+        _draw_legend(ax, prop, style, spec, H)
 
 
 def render_resistivity(results, spec=None, style=None, overlay=None):
@@ -2673,17 +2775,15 @@ def render_acms_chi_t(results, spec=None, style=None, overlay=None):
             ax_top.text(sc["tc_mid_k"], 0.02, " (low confidence)",   # the data/CSV (PQ-4 conv.)
                         transform=ax_top.get_xaxis_transform(), rotation=90, va="bottom",
                         ha="left", fontsize=style.font_pt - 2, color="0.35")
-    # Legend: an AC file's data fan typically fills the χ′ panel edge-to-edge, so an inside
-    # "best" legend lands on top of the points (visual gate, real file). Route through
-    # _draw_legend's outside-right relocation path by default (canvas grows so the axes keep
-    # their size); an explicit legend_loc="inside" still wins.
+    # Legend: an AC file's data fan often fills the χ′ panel edge-to-edge, in which case the
+    # occupancy chooser relocates outside-right exactly as the old unconditional rule did —
+    # but it now MEASURES that (KNOWN-ISSUES 5) instead of assuming it, so a file with a clear
+    # inside spot keeps its canvas width. Explicit legend_loc wins as before.
     legend_sz = style.legend_size if style.legend_size is not None else style.font_pt - 1
     legend_prop = {"size": legend_sz}
     if style.font_family:
         legend_prop["family"] = style.font_family
-    loc = spec.legend_loc if spec.legend_loc is not None else style.legend_loc
-    _draw_legend(ax_top, legend_prop, style, spec, handles,
-                 force_loc=("inside" if loc == "inside" else "outside"))
+    _draw_legend(ax_top, legend_prop, style, spec, handles)
     return fig
 
 
@@ -2976,20 +3076,17 @@ def _tto_draw(ax, plotted, kind, spec, style, gcolor, yscale=1.0, draw_bands=Tru
 
 def _tto_legend(ax, handles, spec, style):
     """Folded legend, always drawn (the gate file is a single curve, so a '>1 series'
-    condition would leave the figure with no field/direction annotation at all). Routed
-    outside-right by default; an explicit legend_loc='inside' still wins.
+    condition would leave the figure with no field/direction annotation at all).
 
-    A LONE entry stays inside: relocating one word outside-right grows the canvas and spends
-    ~20% of the figure width on it (visual gate, real single-curve file). An explicit
-    legend_loc='outside' still forces the relocation."""
+    Placement is the occupancy chooser's (KNOWN-ISSUES 5): the old unconditional
+    outside-right relocation spent ~20-25% of canvas width on a two-entry legend even when
+    the upper-right quadrant was empty. A file whose data fan really fills the panel still
+    relocates — the chooser measures it instead of assuming it. Explicit legend_loc wins."""
     legend_sz = style.legend_size if style.legend_size is not None else style.font_pt - 1
     legend_prop = {"size": legend_sz}
     if style.font_family:
         legend_prop["family"] = style.font_family
-    loc = spec.legend_loc if spec.legend_loc is not None else style.legend_loc
-    inside = (loc == "inside") or (loc != "outside" and len(handles) == 1)
-    _draw_legend(ax, legend_prop, style, spec, handles,
-                 force_loc=("inside" if inside else "outside"))
+    _draw_legend(ax, legend_prop, style, spec, handles)
 
 
 def _tto_lowt_inset(ax, results, spec, style):
