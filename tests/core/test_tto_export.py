@@ -274,7 +274,15 @@ def test_n_sigma_is_the_stat_sigma_and_not_the_window_spread(tmp_path):
     row = _rows(out["tto_summary"])[0]
     sigma = float(row["kappa_ph_n_sigma"])
     spread = float(row["kappa_ph_n_spread"])
-    assert sigma == pytest.approx(0.009695422631348375, rel=1e-9)
+    # sigma is looser than its neighbours ON PURPOSE. It comes from sqrt(diag(pcov)) --
+    # curve_fit's covariance, i.e. the Jacobian at the solution through an SVD
+    # (fitting/thermal.py:48-53) -- which is far more platform-sensitive than the converged
+    # parameter itself. Measured on Linux CI 2026-09-04 against this macOS-captured literal:
+    # 0.009695422659268899 vs 0.009695422631348375, 2.9e-9 relative, so rel=1e-9 failed there.
+    # The same run PROVED n and n_spread stable at 1e-9, so those stay tight; do not loosen
+    # them without evidence. 1e-6 keeps ~300x headroom over the measured drift and is still
+    # five orders tighter than the 74x sigma/spread separation this test exists to pin.
+    assert sigma == pytest.approx(0.009695422631348375, rel=1e-6)
     assert spread == pytest.approx(0.7207143396761797, rel=1e-9)
     assert spread > 70 * sigma                          # no swap, no aliasing, no mix-up
     assert float(row["kappa_ph_n"]) == pytest.approx(2.0350774348699807, rel=1e-9)
