@@ -27,3 +27,6 @@ real_data_map.json
 
 # OS
 .DS_Store
+
+# Internal design/planning docs live in the private development tree, not here.
+docs/superpowers/
