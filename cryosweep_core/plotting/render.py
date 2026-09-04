@@ -744,6 +744,162 @@ def _rects_overlap(a, b):
     return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
 
 
+def _data_line_endpoints_in_host_frac(ax_host):
+    """First and last finite point of every visible DATA line (reflines and fit overlays
+    excluded), in host axes-fraction coords. Used by the inset fallback: a box hiding a
+    line's terminal point makes the curve appear to stop there."""
+    ends = []
+    inv = ax_host.transAxes.inverted()
+    for ax in ax_host.get_figure().axes:
+        if not ax.get_visible():
+            continue
+        for ln in ax.get_lines():
+            if ln.get_gid() in ("refline", "fit"):
+                continue
+            xy = np.asarray(ln.get_xydata(), float)
+            if xy.size == 0:
+                continue
+            xy = xy[np.isfinite(xy).all(axis=1)]
+            if not len(xy):
+                continue
+            for pnt in (xy[0], xy[-1]):
+                fx, fy = inv.transform(ax.transData.transform(pnt))
+                ends.append((float(fx), float(fy)))
+    return ends
+
+
+#: Inset corner preference: lower right FIRST — the shipped journal default — so every
+#: figure whose corner was already genuinely clear keeps its position; stability is the
+#: tiebreak, not re-optimization. Corners only: a 42%x40% panel at an edge-centre is not a
+#: journal idiom (unlike a legend, which considers all nine positions).
+_INSET_CORNERS = ("lower right", "upper right", "upper left", "lower left")
+
+
+def _inset_spot(ax, w=0.42, h=0.40, pad=0.05):
+    """Measured position for a w x h (axes-fraction) low-T inset (KNOWN-ISSUES 1). The fixed
+    lower-right corner hid 35% of the reproducer's curve — the curve appeared to STOP where
+    the inset started. Reuses the legend chooser's machinery: plotted points (union over
+    axes, reflines excluded) and text-annotation obstacle boxes. A position is clear by the
+    same standard the legend ships: no text intersection, and <=2% of all points or <3
+    points under the box.
+
+    Two candidate tiers. First the four corners in `_INSET_CORNERS` order (lower right = the
+    shipped journal default, so figures whose corner was already genuinely clear keep it
+    byte-similar) — a clear corner returns its loc STRING. When no corner is clear, a coarse
+    anchor grid (columns right-to-left, rows bottom-to-top) is scanned and the first clear
+    (x0, y0) TUPLE is returned — on the SC reproducer the only clear region is the right
+    mid-band between the curve top and the wide Tc annotation, which no rigid corner box can
+    reach (measured: the annotation clips the upper-right box by ~2% of the axes). Third, a
+    LEAST-BAD corner fallback: the lowest-coverage non-text-vetoed corner is accepted when it
+    covers <=10% of the points AND hides NO data line's terminal point — a grazed midsection
+    reads as a curve passing behind a panel (the shipped look on the ACT fixture, measured
+    5.25%), while a hidden endpoint is exactly the "curve stops here" illusion of the
+    original defect, so endpoint containment is a hard veto that a bare coverage percentage
+    cannot express. None means genuinely nowhere: the caller then DROPS the inset (with an
+    on-figure note) — a supplement must never hide the primary data.
+
+    Placed BEFORE the legend by construction (renderer body vs _finish), and the legend
+    chooser treats the resulting inset bbox as a hard obstacle — so ordering is acyclic and
+    deterministic. Draws the canvas to realize transforms."""
+    fig = ax.get_figure()
+    fig.canvas.draw()
+    pts = _axes_points_in_host_frac(ax)
+    total = max(len(pts), 1)
+    obstacles = _obstacle_boxes_in_host_frac(ax)
+
+    def _clear(box):
+        if any(_rects_overlap(box, ob) for ob in obstacles):
+            return False
+        covered = int(((pts[:, 0] >= box[0]) & (pts[:, 0] <= box[2]) &
+                       (pts[:, 1] >= box[1]) & (pts[:, 1] <= box[3])).sum()) if len(pts) else 0
+        return covered < 3 or covered / total <= _LEGEND_MULTIAXIS_OVERLAP_MAX
+
+    cx0, cx1 = 1 - pad - w, 1 - pad
+    boxes = {
+        "lower right": (cx0, pad, cx1, pad + h),
+        "upper right": (cx0, 1 - pad - h, cx1, 1 - pad),
+        "upper left":  (pad, 1 - pad - h, pad + w, 1 - pad),
+        "lower left":  (pad, pad, pad + w, pad + h),
+    }
+    for loc in _INSET_CORNERS:
+        if _clear(boxes[loc]):
+            return loc
+    step = 0.05
+    xs = np.arange(cx0, pad - 1e-9, -step)           # columns: right to left
+    ys = np.arange(pad, 1 - pad - h + 1e-9, step)    # rows: bottom to top
+    for x0 in xs:
+        for y0 in ys:
+            if _clear((x0, y0, x0 + w, y0 + h)):
+                return (float(x0), float(y0))
+    # least-bad corner fallback: midsection grazing only, never a hidden endpoint.
+    # The veto box is padded by ~a marker width: matplotlib's 5% axis margins put a
+    # full-range curve's terminal point at frac 0.9545, a hair OUTSIDE the pad=0.05
+    # chooser box (right edge 0.95) — unpadded, the veto is geometrically dead for
+    # exactly the full-range sweep it was written for, while the curve's run-in still
+    # vanishes under the drawn panel with one lone marker peeking past its edge.
+    eps = 0.02
+    ends = _data_line_endpoints_in_host_frac(ax)
+
+    def _coverage(box):
+        if not len(pts):
+            return 0.0
+        return float(((pts[:, 0] >= box[0]) & (pts[:, 0] <= box[2]) &
+                      (pts[:, 1] >= box[1]) & (pts[:, 1] <= box[3])).sum()) / total
+
+    best, best_cov = None, None
+    for loc in _INSET_CORNERS:
+        box = boxes[loc]
+        if any(_rects_overlap(box, ob) for ob in obstacles):
+            continue
+        if any(box[0] - eps <= ex <= box[2] + eps and
+               box[1] - eps <= ey <= box[3] + eps for ex, ey in ends):
+            continue                                 # would hide where a curve STOPS
+        cov = _coverage(box)
+        if cov <= 0.10 and (best_cov is None or cov < best_cov - 1e-12):
+            best, best_cov = loc, cov
+    return best
+
+
+def _lowt_inset_axes(ax, spec, style):
+    """Create the shared 42%x40% low-T inset at the measured corner (KNOWN-ISSUES 1), or —
+    when no corner is clear — draw a small grey note and return None: dropping must be said
+    on the figure, never silent, so a reader does not mistake a missing inset for missing
+    data. Callers run their own data guards first, so the note only ever appears where an
+    inset was actually warranted.
+
+    The view is settled FIRST: insets are created in the renderer body, before `_finish`
+    applies the robust view / explicit spec limits, and on the SC reproducer the robust view
+    moves ylim from (-4, 107) to (44, 178) — a corner scored against the creation-time
+    autoscale is stale (measured; the same staleness class the legend chooser fixed by
+    drawing after `_apply_robust_view`). Both calls are idempotent — `_finish` re-applies
+    them to the identical result."""
+    if spec.xscale is not None:
+        ax.set_xscale(spec.xscale)
+    if spec.yscale is not None:                      # BEFORE the robust view: it must see the
+        ax.set_yscale(spec.yscale)                   # final scale (it skips log-y by contract)
+    if spec.ymin is not None or spec.ymax is not None:
+        ax.set_ylim(bottom=spec.ymin, top=spec.ymax)
+    if spec.xmin is not None or spec.xmax is not None:
+        ax.set_xlim(left=spec.xmin, right=spec.xmax)
+    _apply_robust_view(ax, spec, style)
+    spot = _inset_spot(ax)
+    if spot is None:
+        ax.text(0.99, 1.01, "low-T inset omitted (no clear corner)", transform=ax.transAxes,
+                ha="right", va="bottom", fontsize=max(style.font_pt - 3, 5), color="0.45",
+                gid="inset_note")
+        return None
+    from mpl_toolkits.axes_grid1.inset_locator import inset_axes as _inset_axes
+    if isinstance(spot, str):                        # a clear corner: the shipped geometry
+        iax = _inset_axes(ax, width="42%", height="40%", loc=spot, borderpad=1.4)
+    else:                                            # grid anchor: exact fractional box
+        x0, y0 = spot
+        iax = _inset_axes(ax, width="100%", height="100%", loc="lower left",
+                          bbox_to_anchor=(x0, y0, 0.42, 0.40),
+                          bbox_transform=ax.transAxes, borderpad=0)
+    iax.set_label("inset")   # identifies the inset to the visual gate; never drawn
+    return iax
+
+
 def _occupancy_legend_loc(ax_host, handles, legend_prop, style):
     """Choose an inside legend position from what is actually drawn (KNOWN-ISSUES 4/11).
 
@@ -1376,7 +1532,7 @@ def render_cp_vs_t(results, spec=None, style=None, overlay=None):
 _FULL_CP_FIT_COLOR = "#d62728"       # solid-red Debye-Einstein overlay (journal target)
 
 
-def _add_lowt_inset(ax, d, style):
+def _add_lowt_inset(ax, d, spec, style):
     """Low-T (0→~10 K) inset: the ≤10 K Cp(T) subset as open squares + the chosen low-T fit
     line evaluated over that range. Self-contained — draws on its own `ax.inset_axes` panel
     (excluded from constrained layout, so the global frame/layout is untouched). Returns the
@@ -1387,9 +1543,9 @@ def _add_lowt_inset(ax, d, style):
     T, cp = T[m], cp[m]
     if T.size == 0:
         return None
-    from mpl_toolkits.axes_grid1.inset_locator import inset_axes as _inset_axes
-    iax = _inset_axes(ax, width="42%", height="40%", loc="lower right", borderpad=1.4)
-    iax.set_label("inset")   # identifies the inset to the visual gate; never drawn
+    iax = _lowt_inset_axes(ax, spec, style)    # measured corner, or dropped-with-note (None)
+    if iax is None:
+        return None
     iax.plot(T, cp, marker="s", markerfacecolor="none", ls="none",
              ms=max(style.marker_size - 1.0, 2.0), color="0.2",
              markeredgewidth=(style.edge_width if style.edge_width is not None else 0.8))
@@ -1470,7 +1626,7 @@ def render_hc_full_cp_t(results, spec=None, style=None, overlay=None):
             ax.text(0.02, dp, "Dulong–Petit", transform=ax.get_yaxis_transform(),
                     va="top", ha="left", fontsize="small")
 
-    _hc_iax = _add_lowt_inset(ax, d0, style)
+    _hc_iax = _add_lowt_inset(ax, d0, spec, style)
     _finish(ax, kind, spec, style, "Temperature (K)", "Cp (J/mol·K)")
     # loc='best' cannot see the inset (a separate Axes); at 12pt+ the legend lands under
     # it. Conditional on real overlap, so the 9 pt gallery render is untouched.
@@ -2055,9 +2211,9 @@ def _rho_lowt_inset(ax, d, spec, style, factor, unit):
     w = (T >= 0) & (T <= hi)
     if int(np.count_nonzero(w)) < 5:
         return None
-    from mpl_toolkits.axes_grid1.inset_locator import inset_axes as _inset_axes
-    iax = _inset_axes(ax, width="42%", height="40%", loc="lower right", borderpad=1.4)
-    iax.set_label("inset")   # identifies the inset to the visual gate; never drawn
+    iax = _lowt_inset_axes(ax, spec, style)    # measured corner, or dropped-with-note (None)
+    if iax is None:
+        return None
     iax.plot(T[w], R[w], marker="s", markerfacecolor="none", ls="none",
              ms=max(style.marker_size - 1.0, 2.0), color="0.2",
              markeredgewidth=(style.edge_width if style.edge_width is not None else 0.8))
@@ -3110,9 +3266,9 @@ def _tto_lowt_inset(ax, results, spec, style):
     w = (T >= 0) & (T <= 30.0)
     if int(np.count_nonzero(w)) < 5:
         return None
-    from mpl_toolkits.axes_grid1.inset_locator import inset_axes as _inset_axes
-    iax = _inset_axes(ax, width="42%", height="40%", loc="lower right", borderpad=1.4)
-    iax.set_label("inset")   # identifies the inset to the visual gate; never drawn
+    iax = _lowt_inset_axes(ax, spec, style)    # measured corner, or dropped-with-note (None)
+    if iax is None:
+        return None
     # The inset's markers shrink with the band for the same reason the host's do (I3): at
     # 976 points they are dense enough to bury the ribbon entirely (looked at: an unshrunk
     # inset is a solid black worm). error_band off -> unchanged, so gallery renders are
