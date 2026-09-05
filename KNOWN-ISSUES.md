@@ -74,7 +74,13 @@ default-choice question, not a bug — but at these magnitudes it costs readabil
 
 ## Reporting
 
-**9. A flagged-unphysical value is not flagged *on the figure*.**
+**9. A flagged-unphysical value is not flagged *on the figure*.** *FIXED 2026-09-04 (c6fd994):
+the fit now carries a machine-readable `gamma_negative` in its `quality_flags` and the
+annotation reads it — the γ line on this reproducer says
+`γ = -8.3e-03 J/mol·K² (unphysical)`. The value stays visible (γ < 0 is what was measured;
+this is not a case for declining), the verdict now travels with the figure. The same audit
+that guards text placement renders this file's default kind, so the longer line is checked
+against the data too.*
 `examples/heat_capacity_multifield.dat`, low-T Cp/T vs T² fit: the annotation box prints
 **γ = −8.3e−03 J/mol·K²** as a plain number. A negative Sommerfeld coefficient is unphysical —
 it says the T² window or the model is wrong.
