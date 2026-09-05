@@ -3309,16 +3309,23 @@ def _estimator_method_note(ax, plotted, spec, style):
     ax.set_title("open = 0-field+1 fallback estimator;\n"
                  "steps between estimators are method, not physics",
                  fontsize=style.font_pt - 1, **fam)
+    # Fit by EDGES, not raw width: the title is centred on the AXES, which wide y tick
+    # labels (hall_tdep_n_T's log ticks) push right of the figure centre — a raw-width
+    # check passes while the right edge still clips. Shrink until both edges are inside.
     fig = ax.get_figure()
-    for _ in range(4):
+    for _ in range(6):
         fig.draw_without_rendering()
         rend = fig.canvas.get_renderer()
-        t_w = ax.title.get_window_extent(rend).width
-        fig_w = fig.get_window_extent(rend).width * 0.96
+        bb = ax.title.get_window_extent(rend)
+        fig_w = fig.get_window_extent(rend).width
+        pad = 0.02 * fig_w
         size = ax.title.get_fontsize()
-        if t_w <= fig_w or size <= 6.0:
+        if (bb.x0 >= pad * 0.25 and bb.x1 <= fig_w - pad * 0.25) or size <= 6.0:
             break
-        ax.title.set_fontsize(max(6.0, size * fig_w / t_w))
+        centre = 0.5 * (bb.x0 + bb.x1)
+        half = max(0.5 * bb.width, 1e-9)
+        allowed = min(fig_w - pad - centre, centre - pad)   # tightest half-width that fits
+        ax.title.set_fontsize(max(6.0, size * max(allowed, 1e-9) / half))
 
 
 def _plain_offsetless_yaxis(ax):

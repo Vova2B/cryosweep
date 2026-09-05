@@ -48,11 +48,14 @@ def test_fallback_estimator_is_drawn_open_and_dashed():
     assert twop.get_linestyle() != anti.get_linestyle()
 
 
-def test_method_boundary_warning_appears_when_both_estimators_present():
-    fig = render_kind(_tdep_result(), "hall_tdep_RH_T")
+@pytest.mark.parametrize("kind", ["hall_tdep_RH_T", "hall_tdep_n_T"])
+def test_method_boundary_warning_appears_when_both_estimators_present(kind):
+    # n_T matters separately: its wide log tick labels shift the axes (and the centred
+    # title) right, so a raw-width fit can pass while the right edge still clips
+    fig = render_kind(_tdep_result(), kind)
     ax = fig.axes[0]
     assert "method" in ax.get_title().lower()      # "…steps between estimators are method…"
-    # and the warning is fully INSIDE the canvas — a note clipped at both edges warns no one
+    # and the warning is fully INSIDE the canvas — a note clipped at an edge warns no one
     fig.canvas.draw()
     rend = fig.canvas.get_renderer()
     bb = ax.title.get_window_extent(rend)
