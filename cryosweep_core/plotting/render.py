@@ -35,6 +35,12 @@ _CONNECT_KINDS = {
 # checks" bug in this file's history.)
 NON_DATA_GIDS = ("refline", "fit", "fit-extrap")
 
+#: The frameless stats box every renderer draws (theta/C, gamma/beta/theta_D, rho0/RRR/Tc,
+#: S_total, E_a). One source of truth: it used to be identified by its pinned literal
+#: position `(0.02, 0.98)`, which stopped being an identity the moment `_place_annotation`
+#: earned the right to move it.
+ANNOTATION_GID = "annotation"
+
 LEGEND_INSIDE_MAX = 11   # <= this many entries -> legend stays inside, byte-identical to today
 LEGEND_MAX_ROWS   = 14   # rows per column when relocated (caps legend height)
 LEGEND_MAX_COLS   = 4    # max columns when relocated (caps legend width -> axes can't collapse)
@@ -756,6 +762,226 @@ def _rects_overlap(a, b):
     return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
 
 
+def _segment_hits_rect(pts, rect):
+    """True when ANY segment of the polyline `pts` intersects the axis-aligned `rect`
+    (x0, y0, x1, y1), both in the same coordinate system. Liang-Barsky clipping.
+
+    VERTEX CONTAINMENT IS NOT ENOUGH, and that is the whole reason this exists. An
+    `axvline` is a two-vertex line whose vertices sit at the TOP and BOTTOM of the axes;
+    against a text box in the middle of the panel both vertices are outside while the
+    segment between them runs straight through it. A point-in-box scan over the same
+    figures reports a clean zero — a check that cannot see the thing it checks.
+    `tests/core/test_refline_text_crossing.py` pins that exact case."""
+    x0, y0, x1, y1 = rect
+    for (ax_, ay), (bx, by) in zip(pts[:-1], pts[1:]):
+        dx, dy = bx - ax_, by - ay
+        t0, t1, ok = 0.0, 1.0, True
+        for p, q in ((-dx, ax_ - x0), (dx, x1 - ax_), (-dy, ay - y0), (dy, y1 - ay)):
+            if p == 0:                      # parallel to this edge: outside it -> no hit
+                if q < 0:
+                    ok = False
+                    break
+            else:
+                r = q / p
+                if p < 0:
+                    if r > t1:
+                        ok = False
+                        break
+                    t0 = max(t0, r)
+                else:
+                    if r < t0:
+                        ok = False
+                        break
+                    t1 = min(t1, r)
+        if ok and t0 <= t1:
+            return True
+    return False
+
+
+def _refline_polylines_in_host_frac(ax_host):
+    """Every visible reference LINE (gid 'refline', on any of the figure's axes) as a
+    polyline in ax_host axes-fraction coords.
+
+    Uses `ln.get_transform()`, NEVER `ax.transData`: `axvline`/`axhline` store one
+    coordinate in AXES fraction on a blended transform, so pushing their xydata through
+    transData yields nonsense (measured: y = -107 on the rho(T) reproducer). The figure
+    must have been drawn (transforms realized) before calling."""
+    inv = ax_host.transAxes.inverted()
+    out = []
+    for ax in ax_host.get_figure().axes:
+        if not ax.get_visible():
+            continue
+        for ln in ax.get_lines():
+            if ln.get_gid() != "refline" or not ln.get_visible():
+                continue
+            xy = np.asarray(ln.get_xydata(), float)
+            if xy.size == 0 or len(xy) < 2:
+                continue
+            out.append(inv.transform(ln.get_transform().transform(xy)))
+    return out
+
+
+#: Annotation corner preference: UPPER LEFT FIRST — the position every frameless stats box
+#: has shipped at — so a figure whose corner is already clear keeps it byte-identical.
+#: Stability is the tiebreak, not re-optimization. Corners only: a multi-line stats box at
+#: an edge-centre or dead centre is not a journal idiom (unlike a legend, which considers
+#: all nine matplotlib positions).
+_ANNOTATION_CORNERS = ("upper left", "upper right", "lower left", "lower right")
+
+
+def _annotation_corner_boxes(w, h, pad=0.02):
+    """Axes-fraction (x0, y0, x1, y1) rects a w x h annotation occupies at each corner."""
+    return {
+        "upper left":  (pad, 1 - pad - h, pad + w, 1 - pad),
+        "upper right": (1 - pad - w, 1 - pad - h, 1 - pad, 1 - pad),
+        "lower left":  (pad, pad, pad + w, pad + h),
+        "lower right": (1 - pad - w, pad, 1 - pad, pad + h),
+    }
+
+
+#: (x, y, va, ha) for `Text.set_position`/`set_va`/`set_ha` at each corner, pad=0.02.
+_ANNOTATION_ANCHORS = {
+    "upper left":  (0.02, 0.98, "top", "left"),
+    "upper right": (0.98, 0.98, "top", "right"),
+    "lower left":  (0.02, 0.02, "bottom", "left"),
+    "lower right": (0.98, 0.02, "bottom", "right"),
+}
+
+
+def _effective_yscale(spec, kind):
+    """The y-scale the figure will actually end up with: the spec override, else the kind's
+    default. `_finish` resolves it the same way, but only at the END of a render — so any
+    helper that must know the scale BEFORE then has to resolve it itself."""
+    if spec is not None and spec.yscale is not None:
+        return spec.yscale
+    return getattr(kind, "default_yscale", "linear") or "linear"
+
+
+def _realize_layout(fig):
+    """Realize the figure's transforms (final axes positions + a renderer) WITHOUT drawing,
+    then put the layout state back exactly as it was.
+
+    Measuring costs a layout pass, and a layout pass is not free: running
+    ConstrainedLayoutEngine an extra time moves the axes and shifts marker antialiasing by
+    1/255 on a handful of pixels — measured, sub-visible, and still a byte difference on
+    figures that have no defect to fix. Snapshotting each axes' original+active position and
+    restoring it afterwards makes the extra pass invisible: verified byte-identical across
+    all 101 example x kind renders. Returns the renderer, or None if this canvas cannot
+    measure text (a vector canvas mid-save) — callers then leave placement alone."""
+    eng = fig.get_layout_engine()
+    saved = [(ax, ax.get_position(original=True).frozen(), ax.get_position().frozen(),
+              ax.get_in_layout()) for ax in fig.axes] if eng is not None else []
+    if eng is not None:
+        eng.execute(fig)
+    try:
+        return fig.canvas.get_renderer()
+    except Exception:
+        return None
+    finally:
+        for ax, orig, active, in_layout in saved:
+            ax.set_position(orig, which="original")
+            ax.set_position(active, which="active")
+            # set_position evicts the axes from the layout engine ("called externally to
+            # the library"), so the FINAL layout pass would then leave it at the position
+            # we just restored. Measured: every annotated figure shifted ~86 px down and
+            # ~31 px left. Restoring the flag is what makes the measurement a read.
+            ax.set_in_layout(in_layout)
+
+
+def _place_annotation(txt, spec=None, style=None, kind=None):
+    """Move a frameless stats box off whatever it is sitting on, or leave it exactly where
+    it is (the same root cause already fixed for the legend, the low-T inset and the
+    reference-line labels: placement decided without measuring).
+
+    Every one of these boxes shipped pinned at `ax.text(0.02, 0.98, ...)`. On
+    `resistivity_superconductor.dat` / `resistivity_rho_t` that put the wide
+    `RRR = 86.7 / T_c = 8.03 K (onset 8.80, zero 7.49)` box across the vertical dashed T_c
+    guide (measured: box x 180.5-761.5 px against a line at x = 224.7 px spanning the whole
+    panel).
+
+    Scored with the legend/inset chooser's machinery — plotted points, text and inset
+    obstacle boxes — PLUS reference lines, which those choosers deliberately ignore (they
+    exist to dodge DATA) and which nothing measured until now. A refline is scored by SEGMENT
+    intersection, never vertex containment: see `_segment_hits_rect`.
+
+    Returns the chosen corner. `upper left` is tried first and returned whenever it is clear,
+    so every figure without the defect renders byte-identical; only a box with nowhere clear
+    at upper left ever moves. When NO corner is clear the least-bad one is taken, ordered
+    (refline crossed, obstacle hit, share of data covered) — upper left winning ties by
+    preference order, so a genuinely hopeless panel still does not churn.
+
+    Given `spec`/`style`/`kind` the robust y-view is settled FIRST (idempotent — it derives
+    ylim from the lines, not from the current limits, and `_finish` re-applies it to the
+    identical result). The low-T inset learned this the hard way: a box scored against the
+    creation-time autoscale is stale, because the robust view moves ylim afterwards and takes
+    the data out from under the score. Measured here on the rho(T) reproducer: the raw
+    autoscale puts the Ch1 curve under an upper-right box, the robust view (ylim -> 43.9-178.3)
+    does not, and the stale score sent the box to the lower-right corner — pushing the legend
+    and the inset to new corners in turn, for a figure whose upper right was empty all along.
+
+    Settled only when the kind's EFFECTIVE y-scale is linear. On a log-y kind the scale is set
+    in `_finish`, i.e. after this runs, so applying the robust view here would fix a
+    linear-scale ylim that the later log switch inherits (measured on `resistivity_arrhenius`:
+    ylim 0.0074-8.32 became -0.007-0.372). `_apply_robust_view` self-guards on the CURRENT
+    scale, which is still linear at this point — hence the explicit `kind`.
+
+    `tests/core/test_refline_text_crossing.py` scans the FINISHED figure, so a placement that
+    a stale score still got wrong fails a gate rather than shipping."""
+    ax = txt.axes
+    if ax is None:
+        return None
+    fig = ax.get_figure()
+    if spec is not None and style is not None and _effective_yscale(spec, kind) == "linear":
+        _apply_robust_view(ax, spec, style)
+    rend = _realize_layout(fig)
+    if rend is None:
+        return None
+    inv = ax.transAxes.inverted()
+    bb = txt.get_window_extent(rend)
+    (fx0, fy0), (fx1, fy1) = inv.transform([(bb.x0, bb.y0), (bb.x1, bb.y1)])
+    w, h = abs(fx1 - fx0), abs(fy1 - fy0)
+    if not (0.0 < w < 1.0 and 0.0 < h < 1.0):     # a box wider or taller than the panel:
+        return None                              # no corner helps, keep the shipped spot
+
+    txt.set_visible(False)                       # never let the box veto itself
+    try:
+        obstacles = _obstacle_boxes_in_host_frac(ax)
+    finally:
+        txt.set_visible(True)
+    reflines = _refline_polylines_in_host_frac(ax)
+    pts = _axes_points_in_host_frac(ax)
+    total = max(len(pts), 1)
+    boxes = _annotation_corner_boxes(w, h)
+
+    def _score(box):
+        crossed = any(_segment_hits_rect(pl, box) for pl in reflines)
+        blocked = any(_rects_overlap(box, ob) for ob in obstacles)
+        covered = int(((pts[:, 0] >= box[0]) & (pts[:, 0] <= box[2]) &
+                       (pts[:, 1] >= box[1]) & (pts[:, 1] <= box[3])).sum()) if len(pts) else 0
+        # the clear-standard the legend and the inset already ship with
+        on_data = not (covered < 3 or covered / total <= _LEGEND_MULTIAXIS_OVERLAP_MAX)
+        return crossed, blocked, on_data, covered / total
+
+    best, best_key = None, None
+    for loc in _ANNOTATION_CORNERS:
+        crossed, blocked, on_data, frac = _score(boxes[loc])
+        if not crossed and not blocked and not on_data:
+            _apply_annotation_corner(txt, loc)
+            return loc
+        key = (crossed, blocked, frac)
+        if best_key is None or key < best_key:
+            best, best_key = loc, key
+    _apply_annotation_corner(txt, best)
+    return best
+
+
+def _apply_annotation_corner(txt, loc):
+    x, y, va, ha = _ANNOTATION_ANCHORS[loc]
+    txt.set_position((x, y))
+    txt.set_va(va)
+    txt.set_ha(ha)
+
+
 def _data_line_endpoints_in_host_frac(ax_host):
     """First and last finite point of every visible DATA line (reflines and fit overlays
     excluded), in host axes-fraction coords. Used by the inset fallback: a box hiding a
@@ -1284,8 +1510,8 @@ def _chi_labels(is_si):
     return "χ (emu/(mol·Oe))", "1/χ (mol·Oe/emu)"
 
 
-def _cw_annotation(ax, fit, fitmod, drew_mod, style):
-    """Frameless θ/C[/χ₀] text box, axes-fraction upper-left, fontsize font_pt-1. Units come
+def _cw_annotation(ax, fit, fitmod, drew_mod, style, spec=None, kind=None):
+    """Frameless θ/C[/χ₀] text box, fontsize font_pt-1, placed by `_place_annotation`. Units come
     from FitResult.units (never hardcoded). χ₀ line only when the modified line was drawn."""
     p = (fit or {}).get("params") or {}
     if "C" not in p or "theta" not in p:
@@ -1298,8 +1524,10 @@ def _cw_annotation(ax, fit, fitmod, drew_mod, style):
         if "chi0" in pm:
             lines.append(f"χ₀ = {pm['chi0']:.3g} {um.get('chi0', '')}".rstrip())
     fam = {"fontfamily": style.font_family} if style.font_family else {}
-    return ax.text(0.02, 0.98, "\n".join(lines), transform=ax.transAxes, va="top", ha="left",
-                   fontsize=style.font_pt - 1, **fam)
+    t = ax.text(0.02, 0.98, "\n".join(lines), transform=ax.transAxes, va="top", ha="left",
+                fontsize=style.font_pt - 1, gid=ANNOTATION_GID, **fam)
+    _place_annotation(t, spec, style, kind)
+    return t
 
 
 def render_inverse_chi(results, spec=None, style=None, overlay=None):
@@ -1345,7 +1573,7 @@ def render_inverse_chi(results, spec=None, style=None, overlay=None):
                     _extrap_plot(ax, Tx, ym, style, lnm.get_color(), y)
                 drew_mod = True
             if not annotated:                    # one box (first fitted result) — avoid stacking
-                ann = _cw_annotation(ax, fit, fitmod, drew_mod, style)
+                ann = _cw_annotation(ax, fit, fitmod, drew_mod, style, spec, kind)
                 annotated = True
     _finish(ax, kind, spec, style, "Temperature (K)", inv_lbl)
     # The CW annotation is pinned at axes upper-left with ax.text, and matplotlib's legend
@@ -1584,8 +1812,8 @@ def render_vsm_mh(results, spec=None, style=None, overlay=None):
 _SPIN_FLUCT_KEYS = ("spin_fluct_noninteracting", "spin_fluct_weak")
 
 
-def _hc_lowt_annotation(ax, d, style):
-    """Frameless γ/β/θ_D text box (axes-fraction upper-left), matching the VSM _cw_annotation
+def _hc_lowt_annotation(ax, d, style, spec=None, kind=None):
+    """Frameless γ/β/θ_D text box (corner chosen by `_place_annotation`), matching _cw_annotation
     pattern. θ_D renders as 'n/a' when non-finite or the chosen model is spin-fluctuation
     (β is not a lattice property there, so θ_D is undefined)."""
     fit = d.get("fit") or {}
@@ -1606,8 +1834,9 @@ def _hc_lowt_annotation(ax, d, style):
     else:
         lines.append(f"θ_D = {theta_D:.3g} K")
     fam = {"fontfamily": style.font_family} if style.font_family else {}
-    ax.text(0.02, 0.98, "\n".join(lines), transform=ax.transAxes, va="top", ha="left",
-            fontsize=style.font_pt - 1, **fam)
+    _place_annotation(
+        ax.text(0.02, 0.98, "\n".join(lines), transform=ax.transAxes, va="top", ha="left",
+                fontsize=style.font_pt - 1, gid=ANNOTATION_GID, **fam), spec, style, kind)
 
 
 def _hc_fit_window_shade(ax, values):
@@ -1651,7 +1880,7 @@ def render_cp_over_t(results, spec=None, style=None, overlay=None):
         d0 = results[0].data or {}
         if spec.fit_window_shade:      # opt-in (owner: useful, but OFF by default)
             _hc_fit_window_shade(ax, d0.get("t_squared"))
-        _hc_lowt_annotation(ax, d0, style)
+        _hc_lowt_annotation(ax, d0, style, spec, kind)
     _finish(ax, kind, spec, style, "T² (K²)", "Cp/T (J/mol·K²)")
     return fig
 
@@ -1911,7 +2140,7 @@ def render_hc_entropy_vs_t(results, spec=None, style=None, overlay=None):
         if spec.legend_loc in (None, "best"):
             legspec = spec.model_copy(update={"legend_loc": "lower right"})
         _merged_legend(ax, handles, labels, style, legspec)
-        _entropy_saturation_annotation(ax, d0, rln_val, rln_lbl, style)
+        _entropy_saturation_annotation(ax, d0, rln_val, rln_lbl, style, spec, kind)
         return fig
 
     # ---- SINGLE-AXIS path (non-meaningful magnetic): total-only, no twin, no Rln --------------
@@ -1942,7 +2171,7 @@ def render_hc_entropy_vs_t(results, spec=None, style=None, overlay=None):
             if hi > lo:
                 y_bottom, y_top = lo, hi * 1.05
 
-    _entropy_saturation_annotation(ax, d0, rln_val, rln_lbl, style)
+    _entropy_saturation_annotation(ax, d0, rln_val, rln_lbl, style, spec, kind)
     _finish(ax, kind, spec, style, "Temperature (K)", "S (J/mol·K)")
     # Override AFTER _finish so full-range wins over _apply_robust_view (robust clipping is wrong
     # for a cumulative monotone S_total). Respect an explicit user ymin/ymax.
@@ -1951,8 +2180,9 @@ def render_hc_entropy_vs_t(results, spec=None, style=None, overlay=None):
     return fig
 
 
-def _entropy_saturation_annotation(ax, d0, rln_val, rln_lbl, style):
-    """Saturation annotation for hc_entropy_vs_t (top-left of the LEFT axis): TOTAL saturation is
+def _entropy_saturation_annotation(ax, d0, rln_val, rln_lbl, style, spec=None, kind=None):
+    """Saturation annotation for hc_entropy_vs_t (on the LEFT axis, corner chosen by
+    `_place_annotation`): TOTAL saturation is
     the headline (always); the magnetic saturation and its % of the Rln plateau are shown ONLY
     when magnetic entropy was actually resolved (last finite S_magnetic > 5% of the Rln value).
     On a fixture where the fitted lattice ~ total Cp, S_magnetic ~ 0 (or slightly negative), so a
@@ -1973,8 +2203,9 @@ def _entropy_saturation_annotation(ax, d0, rln_val, rln_lbl, style):
             f"S_mag(T_max) = {sat_mag:.2f} J/mol·K ({100.0 * sat_mag / rln_val:.0f}% {rln_lbl})")
     if lines_txt:
         fam = {"fontfamily": style.font_family} if style.font_family else {}
-        ax.text(0.02, 0.98, "\n".join(lines_txt), transform=ax.transAxes, va="top", ha="left",
-                fontsize=style.font_pt - 1, **fam)
+        _place_annotation(
+            ax.text(0.02, 0.98, "\n".join(lines_txt), transform=ax.transAxes, va="top",
+                    ha="left", fontsize=style.font_pt - 1, gid=ANNOTATION_GID, **fam), spec, style, kind)
 
 
 def render_hc_c_over_t_linear(results, spec=None, style=None, overlay=None):
@@ -1984,7 +2215,7 @@ def render_hc_c_over_t_linear(results, spec=None, style=None, overlay=None):
         d0 = results[0].data or {}
         if spec.fit_window_shade:      # opt-in (owner: useful, but OFF by default)
             _hc_fit_window_shade(ax, d0.get("temperature"))
-        _hc_lowt_annotation(ax, d0, style)
+        _hc_lowt_annotation(ax, d0, style, spec, kind)
     _finish(ax, kind, spec, style, "Temperature (K)", "Cp/T (J/mol·K²)")
     return fig
 
@@ -2181,9 +2412,10 @@ def _rho_tc_markers(ax, d, spec, style):
                     fontsize=style.font_pt - 2, color=col, gid="refline-label:v")
 
 
-def _rho_annotation(ax, d, style, factor=1e6, unit="µΩ·cm"):
-    """Frameless rho0/n/RRR (+ Tc onset/mid/zero) box, upper-left — _hc_lowt_annotation
-    pattern. ρ₀/n/RRR from the first bridge carrying any of them (box stays compact); the Tc
+def _rho_annotation(ax, d, style, factor=1e6, unit="µΩ·cm", spec=None, kind=None):
+    """Frameless rho0/n/RRR (+ Tc onset/mid/zero) box — _hc_lowt_annotation pattern, with
+    the corner chosen by `_place_annotation` (this box is the one that shipped across the
+    T_c guide line). ρ₀/n/RRR from the first bridge carrying any of them (box stays compact); the Tc
     line is taken from whichever bridge actually has a transition, so a Tc on bridge 2 (which
     _rho_tc_markers already marks) is never dropped just because bridge 1 supplied the scalars.
     Omitted when there is nothing to say. ρ₀ is shown in the SAME engineering unit the y-axis was
@@ -2220,8 +2452,10 @@ def _rho_annotation(ax, d, style, factor=1e6, unit="µΩ·cm"):
     if not lines:
         return None
     fam = {"fontfamily": style.font_family} if style.font_family else {}
-    return ax.text(0.02, 0.98, "\n".join(lines), transform=ax.transAxes, va="top", ha="left",
-                   fontsize=style.font_pt - 1, **fam)
+    t = ax.text(0.02, 0.98, "\n".join(lines), transform=ax.transAxes, va="top", ha="left",
+                fontsize=style.font_pt - 1, gid=ANNOTATION_GID, **fam)
+    _place_annotation(t, spec, style, kind)
+    return t
 
 
 def _ann_hits_legend_text(leg, ann, renderer):
@@ -2537,7 +2771,7 @@ def render_resistivity(results, spec=None, style=None, overlay=None):
         d0 = results[0].data or {}
         _rho_tc_markers(ax, d0, spec, style)
         if spec.annotation:
-            ann_text = _rho_annotation(ax, d0, style, _f, unit)
+            ann_text = _rho_annotation(ax, d0, style, _f, unit, spec, kind)
             annotation_present = ann_text is not None
         _iax = _rho_lowt_inset(ax, d0, spec, style, _f, unit)
         inset_present = _iax is not None
@@ -2617,8 +2851,9 @@ def render_resistivity_arrhenius(results, spec=None, style=None, overlay=None):
                         lines.append(f"  E$_a$ moves {spread:.1f} meV across windows")
         if lines:
             fam = {"fontfamily": style.font_family} if style.font_family else {}
-            ax.text(0.02, 0.98, "\n".join(lines), transform=ax.transAxes, va="top",
-                    ha="left", fontsize=style.font_pt - 1, **fam)
+            _place_annotation(
+                ax.text(0.02, 0.98, "\n".join(lines), transform=ax.transAxes, va="top",
+                        ha="left", fontsize=style.font_pt - 1, gid=ANNOTATION_GID, **fam), spec, style, kind)
     _finish(ax, kind, spec, style, "1000/T (1/K)", "ρ (Ω·cm)")
     return fig
 

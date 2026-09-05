@@ -6,7 +6,7 @@ from cryosweep_core.analyzers.dispatch import analyze_file
 from cryosweep_core.registry import build_default_registry
 from cryosweep_core.plotting.spec import PlotSpec
 from cryosweep_core.plotting.catalog import BUILTIN_PLOTKINDS
-from cryosweep_core.plotting.render import render_for, render_kind
+from cryosweep_core.plotting.render import ANNOTATION_GID, render_for, render_kind
 
 FIX = pathlib.Path(__file__).parent / "fixtures"
 KINDS = {k.key: k for k in BUILTIN_PLOTKINDS}
@@ -491,7 +491,9 @@ def _ann_and_legend_text_hits(fig):
     ax = fig.axes[0]
     ren = fig.canvas.get_renderer()
     leg = ax.get_legend()
-    ann = next(t for t in ax.texts if t.get_position() == (0.02, 0.98))
+    # by gid, not by the literal (0.02, 0.98): the stats box is placed by measurement now
+    # (_place_annotation), so its position is an OUTPUT, never its identity.
+    ann = next(t for t in ax.texts if t.get_gid() == ANNOTATION_GID)
     ab = ann.get_window_extent(ren)
     return [not (b.x1 < ab.x0 or ab.x1 < b.x0 or b.y1 < ab.y0 or ab.y1 < b.y0)
             for b in (t.get_window_extent(ren) for t in leg.get_texts())]
