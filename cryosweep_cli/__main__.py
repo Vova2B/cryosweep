@@ -47,7 +47,12 @@ def main(argv=None):
                                         "hall", "hall-tdep"])
     ap.add_argument("file", nargs="?", default=None)
     ap.add_argument("--out", default="cryosweep_out")
-    ap.add_argument("--unit-system", default="CGS", choices=["CGS", "SI"])
+    # default None (not "CGS") so a --config file's unit_system is only overridden when the
+    # flag is actually typed; RunConfig itself still defaults to CGS.
+    ap.add_argument("--unit-system", default=None, choices=["CGS", "SI"])
+    ap.add_argument("--config", default=None,
+                    help="RunConfig JSON file (schema: `cryosweep schema config`); "
+                         "explicit flags override it per key")
     ap.add_argument("--molar-mass", type=float, default=None)
     ap.add_argument("--mass-mg", type=float, default=None)
     ap.add_argument("--width-mm", type=float, default=None)
@@ -59,7 +64,7 @@ def main(argv=None):
     ap.add_argument("--long-file", default=None)
     ap.add_argument("--thickness", type=float, default=None)
     ap.add_argument("--thickness-unit", default="mm", choices=["mm", "um", "nm"])
-    ap.add_argument("--geometry-sign", type=int, default=1, choices=[1, -1])
+    ap.add_argument("--geometry-sign", type=int, default=None, choices=[1, -1])
     ap.add_argument("--temp-interval", type=float, default=None)
     ap.add_argument("--plot-kind", default=None, help="plot kind key (default: probe's default kind)")
     ap.add_argument("--style-file", default=None, help="GlobalStyle JSON (deterministic styling)")
@@ -74,7 +79,7 @@ def main(argv=None):
     # ~ expansion happens ONCE, at the argv boundary, for every path-valued arg
     # (the shell masks this interactively; agent/subprocess callers pass raw strings).
     # `schema` reuses the file slot for a schema name — never ~-leading, so a no-op.
-    for _pathattr in ("file", "out", "long_file", "style_file", "layout_file"):
+    for _pathattr in ("file", "out", "long_file", "style_file", "layout_file", "config"):
         _v = getattr(a, _pathattr)
         if _v is not None:
             setattr(a, _pathattr, expand_user_path(_v))
@@ -89,14 +94,43 @@ def main(argv=None):
     if a.long_channel is not None: hall["longitudinal_channel"] = a.long_channel
     if a.long_file is not None: hall["longitudinal_file"] = a.long_file
     if a.thickness is not None: hall["thickness_mm"] = a.thickness * _UNIT_MM[a.thickness_unit]
-    if a.geometry_sign != 1: hall["geometry_sign"] = a.geometry_sign
+    if a.geometry_sign is not None: hall["geometry_sign"] = a.geometry_sign
     if a.temp_interval is not None: hall["temp_interval"] = a.temp_interval
-    overrides = {"unit_system": a.unit_system}
+    overrides = {}
+    if a.unit_system is not None: overrides["unit_system"] = a.unit_system
     if geom: overrides["geometry"] = geom
     if hall: overrides["hall"] = hall
     probe_override = a.probe or ("hall" if a.command == "hall" else ("hall_tdep" if a.command == "hall-tdep" else None))
     if probe_override: overrides["probe_override"] = probe_override
-    cfg = RunConfig.load(**overrides)
+    from pydantic import ValidationError
+    cfg_warnings: list = []
+    try:
+        if a.config:
+            base = json.loads(pathlib.Path(a.config).read_text())
+            if not isinstance(base, dict):
+                raise ValueError("--config must hold a JSON object (RunConfig; "
+                                 "see `cryosweep schema config`)")
+            _unk = unknown_keys(RunConfig, base)
+            if _unk:
+                _w = "--config: unknown key(s) ignored: " + ", ".join(_unk)
+                cfg_warnings.append(_w)
+                sys.stderr.write(_w + "\n")
+            # explicit flags override the file, PER KEY inside the nested sub-configs, so a
+            # config file's hall.temp_interval survives adding --hall-channel on the CLI.
+            for k, v in overrides.items():
+                if isinstance(v, dict) and isinstance(base.get(k), dict):
+                    base[k] = {**base[k], **v}
+                else:
+                    base[k] = v
+            cfg = RunConfig(**base)
+        else:
+            cfg = RunConfig.load(**overrides)
+    except (FileNotFoundError, OSError, UnicodeError, ValueError, ValidationError) as e:
+        sys.stderr.write(f"error: --config: {e}\n")
+        _emit(Result(status="error", errors=[f"--config: {e}"],
+                     provenance=Provenance(file=str(a.file or ""), sha256="",
+                                           app_version=None, config={})).model_dump(mode="json"))
+        return 2
 
     # discovery / schema commands: no file needed
     if a.command in ("probes", "fits", "plots", "observables"):
@@ -205,6 +239,8 @@ def main(argv=None):
                 except (ValueError, KeyError) as e:
                     res = res.model_copy(update={"data": {**res.data, "plot": None},
                                                  "warnings": [*res.warnings, f"plot kind '{kind}' unavailable: {e}"]})
+        if cfg_warnings:
+            res = res.model_copy(update={"warnings": [*res.warnings, *cfg_warnings]})
         _emit(res.model_dump(mode="json"))
         return EXIT_CODES.get(res.status, 2)
     except (FileNotFoundError, OSError, UnicodeError, ValueError, KeyError, ValidationError) as e:
