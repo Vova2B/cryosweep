@@ -489,6 +489,29 @@ def series_resistivity_mr_pct(result, field_unit="Oe"):
     pairs.sort(key=lambda p: p[0])
     return [s for _, s in pairs]
 
+def series_resistivity_arrhenius(result, field_unit="Oe"):
+    """log rho vs 1000/T (industry convention) for bridges the Arrhenius fit ran on —
+    i.e. insulating channels only; the fitted widest zero-field ramp per channel."""
+    import numpy as _np
+    out = []
+    bridges = (result.data or {}).get("bridges", [])
+    multi = _multi_channel(bridges, "rho_t_curves")
+    for b in bridges:
+        if b.get("arrhenius") is None:
+            continue
+        ch = b.get("channel")
+        for c in sorted(b.get("rho_t_curves", []),
+                        key=lambda c: -len(c.get("temperature") or []))[:1]:
+            T = _arr(c, "temperature"); rho = _arr(c, "rho")
+            m = _np.isfinite(T) & _np.isfinite(rho) & (T > 0) & (rho > 0)
+            if int(m.sum()) < 4:
+                continue
+            out.append(Series(key=f"b{ch}:arrh", label=f"{_chan_prefix(ch, multi)}Ch{ch}",
+                              x=(1000.0 / T[m]).tolist(), y=rho[m].tolist(),
+                              group=f"Bridge {ch}", default_on=True))
+    return out
+
+
 def series_resistivity_mr_pct_t(result, field_unit="Oe"):
     """MR% at H_max vs temperature (spec D6): one point per grouped field loop (the widest-ramp
     value per DQ-B, as surfaced by the analyzer), one series per channel, marker-by-channel when
@@ -1256,6 +1279,8 @@ BUILTIN_PLOTKINDS = [
     PlotKind("resistivity_mr", "ρ vs H (MR)", "resistivity", series_resistivity_mr),
     PlotKind("resistivity_mr_pct", "MR % vs H", "resistivity", series_resistivity_mr_pct),
     PlotKind("resistivity_mr_pct_t", "MR % vs T", "resistivity", series_resistivity_mr_pct_t),
+    PlotKind("resistivity_arrhenius", "Arrhenius ρ vs 1000/T", "resistivity",
+             series_resistivity_arrhenius, default_yscale="log"),
     PlotKind("resistivity_rho_t2", "ρ vs T²", "resistivity", series_resistivity_rho_t2),
     PlotKind("hall_rh_t", "R_H vs T", "hall", series_hall_rh_t),
     PlotKind("hall_mobility_t", "μ vs T", "hall", series_hall_mobility_t),

@@ -1,6 +1,6 @@
 from __future__ import annotations
 import csv, json, math, numbers, pathlib
-from cryosweep_core.fitting.transport import POWER_LAW_DECLINE_FLAGS
+from cryosweep_core.fitting.transport import POWER_LAW_DECLINE_FLAGS, ARRHENIUS_DECLINE_FLAGS
 
 
 def _export_hall(result, stem) -> dict:
@@ -123,7 +123,13 @@ def _export_resistivity(result, stem) -> dict:
                     "power_law_n", "power_law_A", "power_law_r2",
                     "tc_onset_k", "tc_mid_k", "tc_zero_k",
                     "rrr_std", "power_law_n_sigma", "power_law_n_spread",
-                    "power_law_flags"])
+                    "power_law_flags",
+                    # 2026-09-05 activated transport: 17 -> 23, appended last (name-keyed
+                    # safe). The gap column carries its assumption in its NAME - E_g = 2*E_a
+                    # only if intrinsic; declined fits leave every numeric cell blank.
+                    "arrhenius_ea_mev", "arrhenius_ea_sigma_mev",
+                    "arrhenius_ea_spread_mev", "arrhenius_r2",
+                    "e_g_assuming_intrinsic_mev", "arrhenius_flags"])
         for b in d.get("bridges", []):
             pl = b.get("power_law") or {}
             params = pl.get("params", {})
@@ -139,12 +145,21 @@ def _export_resistivity(result, stem) -> dict:
             # TTO kappa_ph cells).
             if set(pl.get("quality_flags") or []) & POWER_LAW_DECLINE_FLAGS:
                 pl, params = {"quality_flags": pl.get("quality_flags")}, {}
+            ar = b.get("arrhenius") or {}
+            ar_flags = ";".join(ar.get("quality_flags") or []) if ar else None
+            ar_params = ar.get("params", {})
+            if set(ar.get("quality_flags") or []) & ARRHENIUS_DECLINE_FLAGS:
+                ar, ar_params = {"quality_flags": ar.get("quality_flags")}, {}
             w.writerow([b["channel"], b["rho_source"], b["classification"], b.get("rrr"),
                         b.get("rrr_t_high"), b.get("rrr_t_low"), b.get("residual_rho"),
                         params.get("n"), params.get("A"), pl.get("r2"),
                         tc.get("tc_onset_k"), tc.get("tc_mid_k"), tc.get("tc_zero_k"),
                         b.get("rrr_std"), (pl.get("sigma") or {}).get("n"),
-                        b.get("power_law_n_spread"), pl_flags])
+                        b.get("power_law_n_spread"), pl_flags,
+                        ar_params.get("e_a_mev"), (ar.get("sigma") or {}).get("e_a_mev"),
+                        (b.get("arrhenius_ea_spread_mev") if ar_params else None),
+                        ar.get("r2"), ar_params.get("e_g_assuming_intrinsic_mev"),
+                        ar_flags])
     out["derived"] = str(dp)
     # 3) capabilities
     cap = stem.with_suffix(".capabilities.csv")

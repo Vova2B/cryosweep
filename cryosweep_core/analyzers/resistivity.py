@@ -18,7 +18,9 @@ from cryosweep_core.robust import outlier_stats, outlier_mask, is_log_space
 from cryosweep_core.registry import Need
 from cryosweep_core.grouping import group_segments_by_setpoint
 from cryosweep_core.fitting.transport import (NO_FIT_LINE_FLAGS,
-                                              _RHO_LADDER_RUNGS)
+                                              _RHO_LADDER_RUNGS,
+                                              fit_arrhenius_ladder,
+                                              ARRHENIUS_DECLINE_FLAGS)
 
 _ZERO_FIELD_OE = 50.0      # |H| below this counts as held "zero field"
 _RRR_K = 5                 # nearest-extreme physical points to median for RRR endpoints
@@ -84,6 +86,14 @@ class BridgeResult(BaseModel):
     # the primary is an annotation, NOT a fit failure (O7). ---
     power_law_ladder: list[dict] | None = None
     power_law_n_spread: float | None = None
+    # --- 2026-09-05 activated transport (appended last; additive-only contract). E_a is
+    # reported AS MEASURED; the only gap field is params["e_g_assuming_intrinsic_mev"] -
+    # the intrinsic assumption travels in the name (extrinsic factor is 1, and transport
+    # alone cannot tell the regimes apart). ---
+    arrhenius: FitResult | None = None
+    arrhenius_ladder: list[dict] | None = None
+    arrhenius_ea_spread_mev: float | None = None
+    arrhenius_alt_models: dict | None = None
 
 class Capability(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -468,7 +478,50 @@ def _bridge_result(df, cmap, cfg, ch, T, H, tsegs, fgroups) -> BridgeResult | No
                 br.rho_t2_linear = RhoT2FermiLiquidModel().fit(Tk, Rk)
             except ValueError:
                 pass
+        if br.classification == "insulating":
+            # Activated transport is a WHOLE-WINDOW statement (no 30 K cap: the exponential
+            # regime is the high-T side); fit the full physical zero-field ramp.
+            mi = (_clean_mask(rho[idx], cfg, T=T[idx]) & np.isfinite(T[idx])
+                  & (T[idx] > 0))
+            Ti, Ri = T[idx][mi], rho[idx][mi]
+            if Ti.size >= 4 and np.ptp(Ti) > 0:
+                try:
+                    fit, ladder, spread, alts = fit_arrhenius_ladder(Ti, Ri)
+                    br.arrhenius = fit
+                    br.arrhenius_ladder = ladder or None
+                    br.arrhenius_ea_spread_mev = spread
+                    br.arrhenius_alt_models = alts
+                except (ValueError, RuntimeError):
+                    pass
     return br
+
+
+_ARRHENIUS_DECLINE_TEXT = {
+    "insufficient_rho_span": ("under one e-fold of rho change in the window (an exponential "
+                              "is indistinguishable from a straight line there)"),
+    "ea_unresolved": "sigma swamps E_a (slope not resolved by this window)",
+}
+
+
+def _activated_transport_cap(bridges, has_insulating) -> Capability:
+    fits = [b.arrhenius for b in bridges if b.arrhenius is not None]
+    clean = [f for f in fits if not (set(f.quality_flags) & ARRHENIUS_DECLINE_FLAGS)]
+    if clean:
+        return Capability(
+            name="activated_transport", applicable=True,
+            reason=("Arrhenius E_a reported as measured; E_g = 2*E_a only under the "
+                    "intrinsic-conduction assumption (extrinsic factor is 1) - transport "
+                    "alone cannot tell the regimes apart"))
+    if fits:
+        why = "; ".join(sorted({_ARRHENIUS_DECLINE_TEXT.get(fl, fl)
+                                for f in fits
+                                for fl in set(f.quality_flags) & ARRHENIUS_DECLINE_FLAGS}))
+        return Capability(name="activated_transport", applicable=False,
+                          reason=f"insulating rho(T) but the Arrhenius fit declined: {why}")
+    return Capability(name="activated_transport", applicable=False,
+                      reason=("insulating rho(T) detected but no fittable zero-field ramp"
+                              if has_insulating
+                              else "not applicable: no insulating rho(T) segment"))
 
 
 def _capabilities(bridges, tsegs, fsegs) -> list[Capability]:
@@ -499,9 +552,7 @@ def _capabilities(bridges, tsegs, fsegs) -> list[Capability]:
         Capability(name="linear_fit", applicable=len(tsegs) > 0,
                    reason="temperature ramp present" if tsegs else "no temperature ramp"),
         # recognized-but-not-yet-implemented analyses: report data applicability + reason
-        Capability(name="activated_transport", applicable=False,
-                   reason=("insulating rho(T) detected; Arrhenius/Mott-VRH fit not yet implemented"
-                           if has_insulating else "not applicable: no insulating rho(T) segment")),
+        _activated_transport_cap(bridges, has_insulating),
         Capability(name="superconducting_transition", applicable=has_tc,
                    reason=("resistive drop detected" if has_tc
                            else "no resistive drop")),

@@ -2506,6 +2506,50 @@ def render_resistivity_mr_pct(results, spec=None, style=None, overlay=None):
     _finish(ax, kind, spec, style, _field_axis_label("Field", style), "MR (%)")
     return fig
 
+_KB_MEV_PER_K = 8.617333262e-2   # Boltzmann, meV/K (matches fitting.transport.KB_MEV_PER_K)
+
+
+def render_resistivity_arrhenius(results, spec=None, style=None, overlay=None):
+    """log rho vs 1000/T with the Arrhenius fit line and the E_a annotation. The gap line
+    carries its assumption ON the figure ("only if intrinsic" — the factor-of-two trap);
+    a declined fit (insufficient_rho_span / ea_unresolved) draws NO fit line and states the
+    reason instead, the transport decline discipline."""
+    results, kind, spec, style, fig, ax = _setup(results, "resistivity_arrhenius", spec, style)
+    _plot_data(ax, results, kind, spec, style, overlay)
+    if overlay is None:
+        lines = []
+        for r in results:
+            for b in (r.data or {}).get("bridges", []):
+                f = b.get("arrhenius")
+                if not f:
+                    continue
+                flags = set(f.get("quality_flags") or [])
+                declined = flags & {"insufficient_rho_span", "ea_unresolved"}
+                if declined:
+                    lines.append("Arrhenius fit declined — " + "; ".join(sorted(declined)))
+                    continue                              # a non-measurement gets no line
+                p_ = f["params"]; ea = p_["e_a_mev"]
+                if spec.fit_line:
+                    lo, hi = f["fit_range"]
+                    Tg = np.linspace(lo, hi, 200)
+                    rho_fit = np.exp(p_["ln_rho0"] + p_["e_a_mev"] / (_KB_MEV_PER_K * Tg))
+                    _fit_plot(ax, 1000.0 / Tg, rho_fit, style, label="Arrhenius fit")
+                sig = (f.get("sigma") or {}).get("e_a_mev")
+                sig_txt = f" ± {sig:.2g}" if sig is not None else ""
+                lines.append(f"E$_a$ = {ea:.1f}{sig_txt} meV")
+                lines.append(f"E$_g$ = 2·E$_a$ = {2 * ea:.1f} meV (only if intrinsic)")
+                if "window_sensitive" in flags:
+                    spread = b.get("arrhenius_ea_spread_mev")
+                    if spread is not None:
+                        lines.append(f"WINDOW-SENSITIVE: E$_a$ moves {spread:.1f} meV across windows")
+        if lines:
+            fam = {"fontfamily": style.font_family} if style.font_family else {}
+            ax.text(0.02, 0.98, "\n".join(lines), transform=ax.transAxes, va="top",
+                    ha="left", fontsize=style.font_pt - 1, **fam)
+    _finish(ax, kind, spec, style, "1000/T (1/K)", "ρ (Ω·cm)")
+    return fig
+
+
 def render_resistivity_mr_pct_t(results, spec=None, style=None, overlay=None):
     results, kind, spec, style, fig, ax = _setup(results, "resistivity_mr_pct_t", spec, style)
     _plot_data(ax, results, kind, spec, style, overlay)
@@ -3888,6 +3932,7 @@ _RENDERERS = {
     "resistivity_mr": render_resistivity_mr,
     "resistivity_mr_pct": render_resistivity_mr_pct,
     "resistivity_mr_pct_t": render_resistivity_mr_pct_t,
+    "resistivity_arrhenius": render_resistivity_arrhenius,
     "resistivity_rho_t2": render_resistivity_rho_t2,
     "hall_rh_t": render_hall,
     "hall_mobility_t": render_hall_mobility_t,
