@@ -12,7 +12,7 @@ authors:
     orcid: "https://orcid.org/0000-0001-8851-2489"
 license: PolyForm-Noncommercial-1.0.0
 license-url: "https://polyformproject.org/licenses/noncommercial/1.0.0"
-version: "0.3.0"
+version: "0.3.1"
 repository-code: "https://github.com/Vova2B/cryosweep"
 # Concept DOI, not the 0.2.0 version DOI (10.5281/zenodo.22307210): citing the
 # concept always resolves to the newest release, which is what a paper should point at.

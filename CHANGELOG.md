@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.3.1 — 2026-09-05
+
+Three fixes to the surfaces a *user* or an *agent* meets first. No analysis behaviour
+changed; every number this release reports is the number 0.3.0 reported.
+
+### Fixed
+
+- **The agent skill taught a fabricated molar mass.** `SKILL.md` gave
+  `--molar-mass 200 --mass-mg 5` as a gate remedy with nothing marking the numbers as
+  placeholders, so an unattended agent following it got `status: ok`, a confident
+  `mu_eff`, and no warning — from an invented molar mass. Remedy examples are now
+  labelled **syntax, not values**, with an instruction to stop and ask when the real
+  value cannot be obtained. This is the failure the gating discipline exists to prevent,
+  and the documentation was defeating it.
+- **A missing `--hall-channel` errored instead of gating.** It returned
+  `status: "error"`, exit 2 and an empty `gate[]`, while every other missing user input
+  returns `status: "gated"`, exit 10 and a remedy naming the flag. Hall now follows the
+  same contract, and so does `hall-tdep`.
+- **Option files failed silently.** `--layout-file` and `--style-file` ignored unknown
+  keys, so a wrong shape or a single typo (`errorband` for `error_band`) produced exit 0,
+  no message, and a figure quietly missing the requested feature. Both now warn, naming
+  the offending path and the expected shape. Warning rather than rejecting, so files
+  written against other versions keep loading.
+- **README shell blocks could not be copy-pasted.** The install commands carried trailing
+  `#` comments; zsh does not enable `interactive_comments` for interactive shells, so
+  `pip` received `#` as a package name. macOS ships zsh. Comments are out of the
+  pasteable blocks entirely — putting them on their own line does not help, since a
+  leading `#` is `command not found` under the same option. Two commands calling bare
+  `python`, which does not exist on macOS, now use `.venv/bin/python`.
+- **The MPMS example was documented as a sample it is not.** The docs said to analyze it
+  with 5 mg and advertised `C = 3, mu_eff = 4.90`; the file is built at 10 mg, which
+  gives `C = 1.5, mu_eff = 3.46`. Both readings are self-consistent — halving the mass
+  doubles the inferred C — but a gating example exists to teach "supply the real inputs"
+  and should not ship inputs that are not the file's. Fixed in the generator, so the next
+  regeneration cannot revert it.
+
+### Added
+
+- **`--config FILE`** loads a `RunConfig` JSON (`cryosweep schema config`). The CLI could
+  previously set only unit system, geometry, Hall and probe override, which left the
+  heat-capacity Schottky fit, the transition search and `quality.exclude_outliers`
+  permanently unreachable from a headless run — they are opt-in masters that no CLI flag
+  could turn on. Precedence: an explicit flag beats the file, the file beats the default.
+- The skill documents the `--layout-file`/`--style-file` shapes, how to pick
+  `--hall-channel` on an unfamiliar file, `run` pipeline semantics (only `detect` and
+  `analyze` are legal steps; one bad step aborts all of them), and that `examples/` ships
+  in the repository but not in the wheel.
+
 ## 0.3.0 — 2026-09-05
 
 Ten pull requests of analysis and figure work on top of the first published release. The
