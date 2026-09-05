@@ -9,10 +9,15 @@ def _analyze(path, **hall):
     cfg = RunConfig.load(hall=hall)
     return HallAnalyzer().analyze(rt, cfg)
 
-def test_error_without_hall_channel(hall_synth_path):
+def test_gated_without_hall_channel(hall_synth_path):
+    # Repinned 2026-09-05 (was status=="error"): a missing hall channel is a missing USER
+    # INPUT, so it follows the gate discipline (status gated + remedy), not the error path.
     res = _analyze(hall_synth_path)                       # no hall_channel
-    assert res.status == "error"
-    assert any("hall_channel" in e for e in res.errors)
+    assert res.status == "gated"
+    assert res.errors == []
+    g = next(g for g in res.gate if g.need == "hall_channel")
+    assert g.remedy["flag"] == "--hall-channel"
+    assert "--hall-channel" in g.remedy["example"]
 
 def test_synthetic_recovers_R_H_n_mobility(hall_synth_path):
     res = _analyze(hall_synth_path, hall_channel=1, thickness_mm=0.1, longitudinal_channel=2)

@@ -16,7 +16,7 @@ from cryosweep_core.detect.sweeps import segment_sweeps
 from cryosweep_core.analyzers.hall import (_carrier_n, _mobility,
                                       _long_rho_xx, field_sweep_points)
 from cryosweep_core.fitting.transport import LinearFitModel
-from cryosweep_core.result import Result, Provenance
+from cryosweep_core.result import Result, Provenance, Gate
 from cryosweep_core.registry import Need
 from cryosweep_core.io.loader import load_dat
 from cryosweep_core.io.columns import canonicalize_columns
@@ -652,8 +652,12 @@ class HallTempDepAnalyzer:
 
         # --- guards ---
         if hc.hall_channel is None:
-            return Result(status="error", errors=["hall_channel required"],
-                          data={"probe": "hall_tdep"}, provenance=prov)
+            # Missing user input gates with a remedy (see hall.py) — never a bare error.
+            return Result(status="gated", confidence=0.5, data={"probe": "hall_tdep"},
+                          gate=[Gate(need="hall_channel",
+                                     reason="which bridge carries the transverse (Hall) signal is not stated in the file",
+                                     remedy={"flag": "--hall-channel", "example": "--hall-channel 1"})],
+                          provenance=prov)
         rkey = f"resistance_ch{hc.hall_channel}"
         if rkey not in cmap.logical or "temperature" not in cmap.logical or "field" not in cmap.logical:
             return Result(status="error",
