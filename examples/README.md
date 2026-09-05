@@ -66,3 +66,9 @@ Anonymized real VSM: multi-field M(T) at 100 Oe / 5 kOe / 40 kOe / 100 kOe plus 
 Anonymized real Cp(T): four fields (0 / 5 / 10 / 13 T) - low-T Cp/T vs T^2 and the full-range 7-parameter Debye-Einstein fit (theta_D = 119 K) on a real lattice.
 
 **In the GUI:** Opens in the Heat Capacity tab. Four field groups (0 / 5 / 10 / 13 T); both the low-T Cp/T vs T^2 fit and the full-range 7-parameter Debye-Einstein fit run (theta_D = 119 K, r2 = 0.9999). The analyzed column is already per-mole, so the neutral formula weight in the header changes no fitted number.
+
+## hall_mixed_sweeps.dat *(anonymized real measurement)*
+
+Anonymized real Hall-wired measurement: nine field loops (2-300 K, +-90 kOe) plus fixed-field temperature ramps - drifting temperature setpoints and single-pair field coverage, the messiness the synthetic Hall examples cannot express (KNOWN-ISSUES 18-20 regression data); geometry deliberately unset.
+
+**In the GUI:** Real (anonymized) Hall data, and deliberately messy where the synthetic files are clean. Hall tab: channel 1, thickness 0.07 mm, longitudinal channel 2 - nine R_xy(H) loops incl. a 200 K loop whose setpoint drifted 199.84-199.99 K (one loop, not two - that split once fabricated a phantom carrier density). Temp-Dep Hall tab: most temperatures carry a single +- field pair, fitted as antisym at full confidence; a few unpaired ones fall back to the labeled low-confidence 2-point estimate. The Resistivity tab shows the geometry-unset warning: the header never had sample dimensions, so absolute rho is scale-arbitrary while RRR and MR% stay valid.
