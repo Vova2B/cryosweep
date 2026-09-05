@@ -76,7 +76,13 @@ bounded so a robust-view exclusion of a far outlier is never re-opened.* The κ 
 (`thermal_transport.dat`, panel a) and the χ′ high-T plateau (`ac_susceptibility.dat`, top
 panel) touch the axes frame.
 
-**7. Large fields are labelled in Oe.** Legends read `90000 Oe` / `100000 Oe` rather than 9 T /
+**7. Large fields are labelled in Oe.** *FIXED 2026-09-05 (ce1509e + af64ded), by owner
+decision: the unit system stays Oe, and |H| ≥ 10 kOe formats with a k prefix — `90 kOe`,
+`45.5 kOe` — trailing zeros trimmed. The 10 kOe threshold leaves the low-field regime
+(Curie-Weiss labels, the MPMS 1000 Oe oracle) byte-identical, and the rule lives only in
+`fmt_field`, which the first commit made the single source of truth for Oe labels (five
+call sites used to bypass it). The Oe↔T toggle is unchanged.* Legends read `90000 Oe` /
+`100000 Oe` rather than 9 T /
 10 T. There is a global Oe↔T display toggle and Oe is the deliberate default, so this is a
 default-choice question, not a bug — but at these magnitudes it costs readability.
 
