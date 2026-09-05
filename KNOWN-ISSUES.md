@@ -162,8 +162,12 @@ none of these paths: `hall examples/hall_field_sweeps.dat --hall-channel 1 --thi
 --long-channel 2` and the matching `hall-tdep examples/hall_temperature_dependence.dat` both
 exit 0 at confidence ≥ 0.9999 with no `R_H` missing. Reproducing 18–20 needs a file with
 **unpaired field points and temperature setpoints that drift by more than 0.05 K**, and no such
-file is in the repository. That is itself the finding: this whole class of defect is invisible
-to the shipped fixtures.
+file was in the repository. That was itself the finding: this whole class of defect was
+invisible to the shipped fixtures. *Closed 2026-09-05 (7993d90):
+`examples/hall_mixed_sweeps.dat` is an anonymized, structure-aware-decimated subset of the
+very measurement these three were found on — its 200 K loop still straddles the old bin edge
+and most of its temperatures carry a single ± pair — and
+`tests/core/test_example_hall_real.py` pins all three fixed paths against it.*
 
 **18. `hall-tdep` reports `confidence 0.0` on a result that is correct.** *FIXED
 2026-09-02 (cc43b8c): a single ± pair now fits as an antisym point anchored at

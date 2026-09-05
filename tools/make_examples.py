@@ -78,6 +78,12 @@ REAL_SPECS = [
      "Anonymized real Cp(T): four fields (0 / 5 / 10 / 13 T) - low-T Cp/T vs T^2 and the "
      "full-range 7-parameter Debye-Einstein fit (theta_D = 119 K) on a real lattice",
      "make_hc", "write_real_example", {}),
+    ("hall_mixed_sweeps.dat", "hall",
+     "Anonymized real Hall-wired measurement: nine field loops (2-300 K, +-90 kOe) plus "
+     "fixed-field temperature ramps - drifting temperature setpoints and single-pair "
+     "field coverage, the messiness the synthetic Hall examples cannot express "
+     "(KNOWN-ISSUES 18-20 regression data); geometry deliberately unset",
+     "make_hall_real", "write_real_example", {}),
 ]
 
 
@@ -135,6 +141,16 @@ _GUI_NOTES = {
         "Resistivity-format file for the Temp-Dep Hall tab (green dot): set the Hall "
         "channel (1) and thickness to get R_H(T), n(T) and mobility(T); the Resistivity "
         "tab shows the ordinary rho(T) of the longitudinal channel.",
+    "hall_mixed_sweeps.dat":
+        "Real (anonymized) Hall data, and deliberately messy where the synthetic files "
+        "are clean. Hall tab: channel 1, thickness 0.07 mm, longitudinal channel 2 - "
+        "nine R_xy(H) loops incl. a 200 K loop whose setpoint drifted 199.84-199.99 K "
+        "(one loop, not two - that split once fabricated a phantom carrier density). "
+        "Temp-Dep Hall tab: most temperatures carry a single +- field pair, fitted as "
+        "antisym at full confidence; a few unpaired ones fall back to the labeled "
+        "low-confidence 2-point estimate. The Resistivity tab shows the geometry-unset "
+        "warning: the header never had sample dimensions, so absolute rho is "
+        "scale-arbitrary while RRR and MR% stay valid.",
 }
 
 
