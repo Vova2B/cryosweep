@@ -9,7 +9,7 @@ from cryosweep_core.result import EXIT_CODES, Result, Provenance
 from cryosweep_core.io.export import export_result
 from cryosweep_core.reports import build_report
 from cryosweep_core.discovery import discover
-from cryosweep_core.schema import get_schema, SCHEMA_NAMES
+from cryosweep_core.schema import get_schema, unknown_keys, SCHEMA_NAMES
 
 def _sha(path):
     return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()[:16]
@@ -143,8 +143,20 @@ def main(argv=None):
             from cryosweep_core.plotting.presets import reconcile_layout
             from cryosweep_core.plotting.export import save_figure, export_plots, _FORMATS
             res = _analyze(rt, cfg)
-            style = (GlobalStyle.model_validate_json(_pl.Path(a.style_file).read_text())
-                     if a.style_file else GlobalStyle())
+            # Unknown keys in the two option files WARN instead of passing silently: pydantic
+            # ignores extras, so a typo'd key or a spec boolean at the wrong nesting level
+            # otherwise yields exit 0 and a figure without the requested feature. Warn, never
+            # reject — presets/sidecars written against other versions must keep loading.
+            _optfile_warnings = []
+            if a.style_file:
+                _style_raw = json.loads(_pl.Path(a.style_file).read_text())
+                style = GlobalStyle.model_validate(_style_raw)
+                _unk = unknown_keys(GlobalStyle, _style_raw)
+                if _unk:
+                    _optfile_warnings.append("--style-file: unknown key(s) ignored: "
+                                             + ", ".join(_unk))
+            else:
+                style = GlobalStyle()
             if a.dpi is not None:
                 style = style.model_copy(update={"dpi": a.dpi})
             formats = [f.strip().lower() for f in a.format.split(",") if f.strip()]
@@ -154,13 +166,23 @@ def main(argv=None):
             probe = (res.data or {}).get("probe")
             lay = None
             if a.layout_file:
-                raw_lay = PlotLayout.model_validate_json(_pl.Path(a.layout_file).read_text())
+                _lay_raw = json.loads(_pl.Path(a.layout_file).read_text())
+                raw_lay = PlotLayout.model_validate(_lay_raw)
+                _unk = unknown_keys(PlotLayout, _lay_raw)
+                if _unk:
+                    _optfile_warnings.append(
+                        "--layout-file: unknown key(s) ignored: " + ", ".join(_unk)
+                        + ' — expected shape {"plots": [{"kind": "...", "spec": {...}}]}')
                 # a user-supplied layout file is deliberate (like a named preset): exact, no
                 # newly-backed kinds appended
                 lay = reconcile_layout(raw_lay, res, build_default_registry(), add_newly_backed=False)
                 if raw_lay.plots and not lay.plots:
                     res = res.model_copy(update={"warnings": [*res.warnings,
                           f"--layout-file has no plots for probe '{probe}' (ignored)"]})
+            if _optfile_warnings:
+                for _w in _optfile_warnings:
+                    sys.stderr.write(_w + "\n")
+                res = res.model_copy(update={"warnings": [*res.warnings, *_optfile_warnings]})
             if a.all:
                 if lay is None:      # no layout file: every kind known for this probe
                     lay = PlotLayout(plots=[PlotEntry(kind=k.key) for k in
