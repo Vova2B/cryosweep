@@ -15,9 +15,9 @@ VSM M(T): Curie-Weiss paramagnet, C = 0.5 emu*K/(mol*Oe), theta = -10 K, measure
 
 ## magnetization_mpms.dat
 
-MPMS bare-CSV M(T) - the second magnetometer format the loader recognises. Curie-Weiss theta = -30 K, C = 3 emu*K/(mol*Oe), mu_eff = 4.90 mu_B, once molar mass and sample mass are supplied.
+MPMS bare-CSV M(T) - the second magnetometer format the loader recognises. Curie-Weiss theta = -30 K, C = 1.5 emu*K/(mol*Oe), mu_eff = 3.46 mu_B, once molar mass and sample mass are supplied.
 
-**In the GUI:** Opens in the Magnetization tab, status 'gated': bare MPMS CSVs carry no molar mass or sample mass, so type them in the left panel (200 g/mol, 5 mg) and re-analyze. This is a *different* synthetic sample from the VSM file, not the same one in another format - it fits to theta = -30 K, C = 3, mu_eff = 4.90 mu_B (the VSM file is theta = -10 K, C = 0.5, mu_eff = 2.00). What the two share is the loader path, not the physics.
+**In the GUI:** Opens in the Magnetization tab, status 'gated': bare MPMS CSVs carry no molar mass or sample mass, so type them in the left panel (200 g/mol, 10 mg - the values this synthetic file was built with) and re-analyze. This is a *different* synthetic sample from the VSM file, not the same one in another format - it fits to theta = -30 K, C = 1.5, mu_eff = 3.46 mu_B (the VSM file is theta = -10 K, C = 0.5, mu_eff = 2.00). What the two share is the loader path, not the physics.
 
 ## heat_capacity.dat
 

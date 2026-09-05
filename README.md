@@ -85,7 +85,7 @@ Some measurements need inputs the file does not carry. MPMS files hold no molar 
 mass, so the analyzer **gates** rather than guessing — supply them and it proceeds:
 
 ```bash
-cryosweep analyze examples/magnetization_mpms.dat --molar-mass 200 --mass-mg 5
+cryosweep analyze examples/magnetization_mpms.dat --molar-mass 200 --mass-mg 10
 ```
 
 Hall measurements use the same file format as ordinary resistivity — only the wiring differs —
