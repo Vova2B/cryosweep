@@ -7,6 +7,7 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.lines import Line2D
 from matplotlib.ticker import (FixedLocator, FuncFormatter, MaxNLocator, ScalarFormatter)
+from cryosweep_core.fitting.heat_capacity import _LOWT_FUNCS
 from cryosweep_core.plotting.spec import PlotSpec, GlobalStyle
 from cryosweep_core.plotting.catalog import (BUILTIN_PLOTKINDS, select_series, series_label,
                                         _field_scale, _held, _acms_label,
@@ -443,7 +444,7 @@ def _apply_robust_view_core(ax, spec, style):
     # not steer the view; reference lines carry transform-space coords -> both excluded.
     per_line = []
     for ln in ax.lines:
-        if ln.get_gid() in ("refline", "fit"):
+        if ln.get_gid() in ("refline", "fit", "fit-extrap"):
             continue
         a = np.asarray(ln.get_ydata(), float)
         a = a[np.isfinite(a)]
@@ -757,7 +758,7 @@ def _data_line_endpoints_in_host_frac(ax_host):
         if not ax.get_visible():
             continue
         for ln in ax.get_lines():
-            if ln.get_gid() in ("refline", "fit"):
+            if ln.get_gid() in ("refline", "fit", "fit-extrap"):
                 continue
             xy = np.asarray(ln.get_xydata(), float)
             if xy.size == 0:
@@ -1131,7 +1132,7 @@ def _draw_asym_fit_lines(ax, results, spec, style, plotted):
         return
     # marker snapshot: exclude reflines (e.g. the H=0 axhline drawn before the data) and
     # any already-appended fit lines so plotted[i] stays 1:1 with markers[i]
-    markers = [ln for ln in ax.lines if ln.get_gid() not in ("refline", "fit")]
+    markers = [ln for ln in ax.lines if ln.get_gid() not in ("refline", "fit", "fit-extrap")]
     for i, (r, s) in enumerate(plotted):
         if not s.key.startswith("asym:"):
             continue
@@ -1161,7 +1162,7 @@ def _draw_branch_fit_lines(ax, results, spec, style, plotted):
         return
     # marker snapshot: exclude reflines (the H=0 axhline precedes the data at ax.lines[0])
     # and any fit lines so plotted[i] stays 1:1 with markers[i]
-    markers = [ln for ln in ax.lines if ln.get_gid() not in ("refline", "fit")]
+    markers = [ln for ln in ax.lines if ln.get_gid() not in ("refline", "fit", "fit-extrap")]
     for i, (r, s) in enumerate(plotted):
         if not (s.key.startswith("rawpos:") or s.key.startswith("rawneg:")):
             continue
@@ -1191,7 +1192,7 @@ def _draw_rxy_mirror_fit_lines(ax, results, spec, style, plotted):
     branch has >=1 raw point. Not envelope-clipped: the centroid anchor keeps it on-scale."""
     if not spec.fit_line:
         return
-    markers = [ln for ln in ax.lines if ln.get_gid() not in ("refline", "fit")]
+    markers = [ln for ln in ax.lines if ln.get_gid() not in ("refline", "fit", "fit-extrap")]
     for i, (r, s) in enumerate(plotted):
         if not s.key.startswith("raw:"):
             continue
@@ -1234,6 +1235,25 @@ def _fit_plot(ax, x, y, style, series_color=None, label=None, linestyle="-"):
     if label is not None:
         kw["label"] = label
     return ax.plot(x, y, ls, **kw)[0]
+
+def _extrap_plot(ax, x, y, style, color, y_ref):
+    """Extrapolated continuation of a fit line down to its 0-intercept — a claim about
+    behaviour OUTSIDE the fitted window, so it must never read as fit: dotted, thinner
+    (0.75x), half-alpha, the SAME color as its fit line, no legend entry, gid="fit-extrap"
+    (excluded from the robust view and the legend-marker snapshots like gid="fit").
+
+    Insurance against pathological parameter sets (a modified-CW pole, a runaway power
+    law): points with |y| > 3*max|y_ref| (the fitted segment's own values) are dropped, so
+    an extrapolation can never blow up the axis — y-limits stay driven by the data and the
+    finite intercept the figure exists to show (gamma, rho0, -theta/C)."""
+    x = np.asarray(x, float); y = np.asarray(y, float)
+    ref = np.asarray(y_ref, float)
+    cap = 3.0 * float(np.nanmax(np.abs(ref[np.isfinite(ref)])))
+    m = np.isfinite(x) & np.isfinite(y) & (np.abs(y) <= cap)
+    kw = dict(lw=0.75 * style.line_width, ls=":", alpha=0.5, gid="fit-extrap",
+              label="_nolegend_", color=color)
+    return ax.plot(x[m], y[m], **kw)[0]
+
 
 # ---- VSM renderers ----
 _INVCHI_FITS = ("cw", "cw_modified")      # per-fit toggle set for inverse_chi (_fit_lines_wanted)
@@ -1291,14 +1311,30 @@ def render_inverse_chi(results, spec=None, style=None, overlay=None):
             T = np.asarray(d.get("temperature") or [], float)
             if not (T.size and "C" in p and "theta" in p):
                 continue
+            # extrapolation target: through T = 0 to the theta crossing (1/chi = 0 at
+            # T = theta) — the intercept the CW annotation already claims in text
+            t_lo = float(np.nanmin(T))
+            x_end = min(0.0, float(p["theta"]))
             if "cw" in want:
-                _fit_plot(ax, T, (T - p["theta"]) / p["C"], style, label="Curie-Weiss fit")
+                ln = _fit_plot(ax, T, (T - p["theta"]) / p["C"], style, label="Curie-Weiss fit")
+                if t_lo > x_end:
+                    Tx = np.linspace(x_end, t_lo, 60)
+                    _extrap_plot(ax, Tx, (Tx - p["theta"]) / p["C"], style,
+                                 ln.get_color(), (T - p["theta"]) / p["C"])
             drew_mod = False
             if "cw_modified" in want and {"C", "theta", "chi0"} <= set(pm):
                 with np.errstate(divide="ignore", invalid="ignore"):
                     y = 1.0 / (pm["chi0"] + pm["C"] / (T - pm["theta"]))
                 # dashed grey ("0.45") second model; gid='fit' -> excluded from robust view
-                _fit_plot(ax, T, y, style, series_color="0.45", label="modified CW", linestyle="--")
+                lnm = _fit_plot(ax, T, y, style, series_color="0.45", label="modified CW", linestyle="--")
+                # the modified-CW curve has a pole below theta (where chi0 + C/(T-theta)
+                # crosses 0): never extend past theta itself, where 1/chi -> 0 from above
+                xm_end = max(x_end, float(pm["theta"]) + 1e-9)
+                if t_lo > xm_end:
+                    Tx = np.linspace(xm_end, t_lo, 60)
+                    with np.errstate(divide="ignore", invalid="ignore"):
+                        ym = 1.0 / (pm["chi0"] + pm["C"] / (Tx - pm["theta"]))
+                    _extrap_plot(ax, Tx, ym, style, lnm.get_color(), y)
                 drew_mod = True
             if not annotated:                    # one box (first fitted result) — avoid stacking
                 ann = _cw_annotation(ax, fit, fitmod, drew_mod, style)
@@ -1594,10 +1630,19 @@ def render_cp_over_t(results, spec=None, style=None, overlay=None):
                     color, ls = _LOWT_FIT_STYLE.get(mfit["key"], (None, "-"))
                     r2 = mfit.get("r2")
                     label = f'{mfit.get("label", mfit["key"])} (R²={r2:.3f})' if r2 is not None else mfit.get("label")
-                    _fit_plot(ax, x, y, style, series_color=color, label=label, linestyle=ls)
+                    ln = _fit_plot(ax, x, y, style, series_color=color, label=label, linestyle=ls)
+                    # continue the model to T² = 0: the intercept IS gamma, the number the
+                    # annotation prints (incl. a negative/unphysical one — the reader must
+                    # see the crossing the flag talks about, not just be told of it)
+                    fn = _LOWT_FUNCS.get(mfit["key"]); prm = mfit.get("params") or {}
+                    x_lo = float(x.min())
+                    if fn is not None and prm and x_lo > 0.0:
+                        xg = np.linspace(0.0, x_lo, 40)
+                        _extrap_plot(ax, xg, fn(xg, prm), style, ln.get_color(), y)
     if overlay is None and results:
         d0 = results[0].data or {}
-        _hc_fit_window_shade(ax, d0.get("t_squared"))
+        if spec.fit_window_shade:      # opt-in (owner: useful, but OFF by default)
+            _hc_fit_window_shade(ax, d0.get("t_squared"))
         _hc_lowt_annotation(ax, d0, style)
     _finish(ax, kind, spec, style, "T² (K²)", "Cp/T (J/mol·K²)")
     return fig
@@ -1929,7 +1974,8 @@ def render_hc_c_over_t_linear(results, spec=None, style=None, overlay=None):
     _plot_data(ax, results, kind, spec, style, overlay)
     if overlay is None and results:
         d0 = results[0].data or {}
-        _hc_fit_window_shade(ax, d0.get("temperature"))
+        if spec.fit_window_shade:      # opt-in (owner: useful, but OFF by default)
+            _hc_fit_window_shade(ax, d0.get("temperature"))
         _hc_lowt_annotation(ax, d0, style)
     _finish(ax, kind, spec, style, "Temperature (K)", "Cp/T (J/mol·K²)")
     return fig
@@ -1952,7 +1998,13 @@ def render_hc_lowt_multifield(results, spec=None, style=None, overlay=None):
                     lkey = f"{f['key']}@{g['field_oe']:g}"
                     if want is not None and lkey not in want:
                         continue
-                    _fit_plot(ax, f["t2_grid"], f["cp_over_t_fit"], style, label=lkey)
+                    xg = np.asarray(f["t2_grid"], float)
+                    yg = np.asarray(f["cp_over_t_fit"], float)
+                    ln = _fit_plot(ax, xg, yg, style, label=lkey)
+                    fn = _LOWT_FUNCS.get(f["key"]); prm = f.get("params") or {}
+                    if fn is not None and prm and xg.size and float(xg.min()) > 0.0:
+                        xe = np.linspace(0.0, float(xg.min()), 40)
+                        _extrap_plot(ax, xe, fn(xe, prm), style, ln.get_color(), yg)
     _finish(ax, kind, spec, style, "T² (K²)", "Cp/T (J/mol·K²)", legend_handles=handles)
     return fig
 
@@ -2456,10 +2508,18 @@ def render_resistivity(results, spec=None, style=None, overlay=None):
                     lo, hi = f["fit_range"]
                     p = f["params"]
                     T = np.linspace(lo, hi, 50)
-                    _fit_plot(ax, T, p["rho0"] + p["A"] * np.power(T, p["n"]), style,
-                              series_color=_rho_bridge_color(ax, b),
-                              label="power-law fit", linestyle="--")
-                    _hc_fit_window_shade(ax, [lo, hi])
+                    yfit = p["rho0"] + p["A"] * np.power(T, p["n"])
+                    ln = _fit_plot(ax, T, yfit, style,
+                                   series_color=_rho_bridge_color(ax, b),
+                                   label="power-law fit", linestyle="--")
+                    if lo > 0.0:
+                        # continuation to T = 0: the intercept is rho0, the residual
+                        # resistivity the annotation reports
+                        Te = np.linspace(0.0, lo, 40)
+                        _extrap_plot(ax, Te, p["rho0"] + p["A"] * np.power(Te, p["n"]),
+                                     style, ln.get_color(), yfit)
+                    if spec.fit_window_shade:
+                        _hc_fit_window_shade(ax, [lo, hi])
     _f, unit = _rho_axis_autoscale(ax)
     inset_present = False
     annotation_present = False
@@ -2574,15 +2634,25 @@ def render_resistivity_rho_t2(results, spec=None, style=None, overlay=None):
                     if f and "rho0_unresolved" not in (f.get("quality_flags") or []):
                         lo, hi = f["fit_range"]; p = f["params"]
                         T = np.linspace(lo, hi, 50)
-                        _fit_plot(ax, T * T, p["rho0"] + p["beta"] * T * T, style, label="ρ=ρ₀+βT² fit")
+                        yfit = p["rho0"] + p["beta"] * T * T
+                        ln = _fit_plot(ax, T * T, yfit, style, label="ρ=ρ₀+βT² fit")
+                        if lo > 0.0:      # continue to T² = 0: intercept = rho0
+                            Te = np.linspace(0.0, lo, 40)
+                            _extrap_plot(ax, Te * Te, p["rho0"] + p["beta"] * Te * Te,
+                                         style, ln.get_color(), yfit)
                 if "power_law" in want:
                     f = b.get("power_law")
                     if f and not (set(f.get("quality_flags") or [])
                                   & NO_FIT_LINE_FLAGS):
                         lo, hi = f["fit_range"]; p = f["params"]
                         T = np.linspace(lo, hi, 50)
-                        _fit_plot(ax, T * T, p["rho0"] + p["A"] * np.power(T, p["n"]), style,
-                                  label="power-law fit", linestyle="--")
+                        yfit = p["rho0"] + p["A"] * np.power(T, p["n"])
+                        ln = _fit_plot(ax, T * T, yfit, style,
+                                       label="power-law fit", linestyle="--")
+                        if lo > 0.0:
+                            Te = np.linspace(0.0, lo, 40)
+                            _extrap_plot(ax, Te * Te, p["rho0"] + p["A"] * np.power(Te, p["n"]),
+                                         style, ln.get_color(), yfit)
     _finish(ax, kind, spec, style, "T² (K²)", "ρ (Ohm·cm)")
     return fig
 
@@ -3007,7 +3077,7 @@ def _acms_axis_view(ax, spec, style):
         return
     los, his = [], []
     for ln in ax.lines:
-        if ln.get_gid() in ("refline", "fit"):
+        if ln.get_gid() in ("refline", "fit", "fit-extrap"):
             continue
         a = np.asarray(ln.get_ydata(), float)
         a = a[np.isfinite(a)]
@@ -3240,6 +3310,8 @@ def _tto_field_handles(plotted, style):
 # these three curves has an error estimate". The derived quantities have no propagated sigma;
 # that work is deferred.
 _TTO_BAND_KINDS = {"tto_kappa_t", "tto_seebeck_t", "tto_zt_t", "tto_summary_t"}
+# Kinds carrying the opt-in fitted-window shade (PlotSpec.fit_window_shade, default OFF)
+_SHADE_KINDS = {"cp_over_t", "hc_c_over_t_linear", "resistivity_rho_t"}
 _TTO_BAND_ALPHA = 0.20
 _TTO_BAND_ZORDER = 1.5      # under the lines' default zorder 2 -> paint order is immaterial
 
@@ -3499,7 +3571,7 @@ def _tto_full_view(ax, spec, style):
     if not use or ax.get_yscale() != "linear" or spec.ymin is not None or spec.ymax is not None:
         return
     vals = [np.asarray(ln.get_ydata(), float) for ln in ax.lines
-            if ln.get_gid() not in ("refline", "fit")]
+            if ln.get_gid() not in ("refline", "fit", "fit-extrap")]
     a = np.concatenate(vals) if vals else np.array([])
     a = a[np.isfinite(a)]
     if a.size == 0:
