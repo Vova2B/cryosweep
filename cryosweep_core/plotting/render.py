@@ -1551,7 +1551,11 @@ def _hc_lowt_annotation(ax, d, style):
     theta_D = p.get("theta_D")
     if gamma is None or beta is None:
         return
-    lines = [f"γ = {gamma:.1e} J/mol·K²", f"β = {beta:.1e} J/mol·K⁴"]
+    # A flagged value carries its verdict onto the figure — the artifact that travels into
+    # a talk without the status bar. The value stays (it IS what was measured; this is not
+    # the decline case), the tag rides its own line, Tc "(low confidence)" idiom.
+    gamma_tag = " (unphysical)" if "gamma_negative" in (fit.get("quality_flags") or []) else ""
+    lines = [f"γ = {gamma:.1e} J/mol·K²{gamma_tag}", f"β = {beta:.1e} J/mol·K⁴"]
     spin = d.get("model") in _SPIN_FLUCT_KEYS
     if theta_D is None or not np.isfinite(theta_D) or spin:
         lines.append("θ_D = n/a")

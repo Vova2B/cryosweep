@@ -556,9 +556,14 @@ def fit_lowt_models(T, cp, n_atoms=1.0, parsimony_r2=0.99, extended=False,
                        "max_abs_corr": (_fin(max_corr) if max_corr is not None else None),
                        "identifiable": bool(fit_ok), "identifiability": ident}
             fr_params = dict(params); fr_params["theta_D"] = theta_pub
+            # gamma < 0 is unphysical (negative Sommerfeld coefficient) but it IS the
+            # measured value: flag it machine-readably rather than blanking it, so every
+            # surface that prints gamma (the figure annotation included) can say so.
+            qflags = ["gamma_negative"] if fr_params.get("gamma", 0.0) < 0 else []
             fitresult = FitResult(model=spec["key"], params=fr_params, r2=r2, n_points=n,
                                   fit_range=[float(T.min()), float(T.max())],
-                                  units=_units_for(spec["param_names"]))
+                                  units=_units_for(spec["param_names"]),
+                                  quality_flags=qflags)
             fits.append({"key": spec["key"], "label": spec["label"], "ok": True, "r2": r2,
                          "adj_r2": _adj_r2(r2, n, p), "params": fr_params, "theta_D": theta_pub,
                          "n_params": p, "t2_grid": grid.tolist(),
