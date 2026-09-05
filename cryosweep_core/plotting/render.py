@@ -1836,6 +1836,22 @@ def render_vsm_mh(results, spec=None, style=None, overlay=None):
             if zoom_half > 0:
                 ax.set_xlim(-zoom_half, zoom_half)
         _apply_robust_view(ax, spec, style)
+        if ax is zoom_ax and zoom_half > 0:
+            # KNOWN-ISSUES #13: a zoom panel must zoom in y too. It used to inherit the
+            # full-range autoscale (0-0.55 µ_B on the multifield example) while its own
+            # window held 0-0.06, leaving the panel ~80% empty. Fit the y-view to the data
+            # INSIDE the ±10% window, padded like the robust view. AFTER _apply_robust_view,
+            # which scores the lines' FULL ydata and would re-frame the whole loop.
+            wy = []
+            for _, s in plotted:
+                sx = np.asarray(s.x, float); sy = np.asarray(s.y, float)
+                m = np.isfinite(sx) & np.isfinite(sy) & (np.abs(sx) <= zoom_half)
+                wy.append(sy[m])
+            wy = np.concatenate(wy) if wy else np.array([])
+            if wy.size:
+                wlo, whi = float(wy.min()), float(wy.max())
+                pad = _ROBUST_PAD * (whi - wlo) if whi > wlo else max(abs(whi), 1e-12) * 0.1
+                ax.set_ylim(wlo - pad, whi + pad)
         _apply_frame(ax, style, spec)
 
     main_ax.set_ylabel(_MH_YLABEL, fontsize=label_sz, **fam)
