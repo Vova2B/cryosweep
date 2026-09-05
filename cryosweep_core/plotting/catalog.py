@@ -56,7 +56,10 @@ def _arr(d, key):
 def fmt_field(value_oe, unit="Oe"):
     """Format a field magnitude for a label. Oe -> '500 Oe'; T -> 3-sig-fig Tesla with
     trailing zeros trimmed ('9999'->'1 T', '10000'->'1 T', '500'->'0.05 T', '40000'->'4 T',
-    '137000'->'13.7 T'). NaN/None/non-finite -> '' (caller already guards)."""
+    '137000'->'13.7 T'). NaN/None/non-finite -> '' (caller already guards). This IS the
+    single source of truth for field labels — five call sites used to bypass the Oe path
+    with inline ternaries and were collapsed here, so a change to this function reaches
+    every legend."""
     if value_oe is None:
         return ""
     try:
@@ -90,7 +93,7 @@ def fmt_field_setpoint(value_oe, unit="Oe"):
     if not np.isfinite(v):
         return ""
     v = 0.0 if abs(v) < 50.0 else float(f"{v:.4g}")
-    return fmt_field(v, unit) if unit == "T" else f"{v:g} Oe"
+    return fmt_field(v, unit)
 
 
 def _field_scale(unit):
@@ -149,7 +152,7 @@ def _split_from_tblocks(result, series, tblock_y, multi_label_prefix="", field_u
         arrow = _RAMP_ARROW.get(direction, "")
         ls = _RAMP_LINESTYLE.get(direction, "-")
         if multi:
-            flabel = fmt_field(field, field_unit) if field_unit == "T" else f"{field:.0f} Oe"
+            flabel = fmt_field(round(field), field_unit)   # round() keeps the old :.0f display
             out.append(Series(
                 key=f"{series.key}:{field:g}:{direction}",
                 label=f"{multi_label_prefix}{flabel}{arrow}", x=xs, y=ys, group=f"{field:g}Oe",
@@ -430,7 +433,7 @@ def series_resistivity_rho_t(result, field_unit="Oe"):
             if fld is None:
                 flabel = "ρ(T)"   # no Field column -> don't fake "na Oe"
             else:
-                flabel = fmt_field(fld, field_unit) if field_unit == "T" else f"{fld:.0f} Oe"
+                flabel = fmt_field(round(fld), field_unit)   # round() keeps the old :.0f display
             out.append(Series(key=key, label=f"{_chan_prefix(ch, multi)}{flabel}",
                               x=T.tolist(), y=rho.tolist(), group=f"Bridge {ch}",
                               default_on=(c is widest)))
@@ -452,7 +455,7 @@ def series_resistivity_rho_t2(result, field_unit="Oe"):
             if fld is None:
                 flabel = "ρ(T²)"   # no Field column -> don't fake "na Oe"
             else:
-                flabel = fmt_field(fld, field_unit) if field_unit == "T" else f"{fld:.0f} Oe"
+                flabel = fmt_field(round(fld), field_unit)   # round() keeps the old :.0f display
             out.append(Series(key=key, label=f"{_chan_prefix(ch, multi)}{flabel}",
                               x=(T * T).tolist(), y=rho.tolist(), group=f"Bridge {ch}",
                               default_on=(c is widest)))
@@ -1276,7 +1279,7 @@ def tto_field_ls_label(field_oe, field_unit="Oe"):
     including the |H| < 50 Oe -> nominal "0 Oe" zero-field collapse of #8)."""
     if abs(field_oe or 0.0) < 50.0:
         field_oe = 0.0
-    return fmt_field(field_oe, field_unit) if field_unit == "T" else f"{field_oe:g} Oe"
+    return fmt_field(field_oe, field_unit)
 
 
 def series_tto_wf_t(result, field_unit="Oe"):
