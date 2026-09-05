@@ -173,7 +173,11 @@ def test_rho_t_fit_overlay_and_shade():
     ax = fig.axes[0]
     fits = [l for l in ax.lines if l.get_gid() == "fit"]
     assert fits and all(l.get_linestyle() == "--" for l in fits)
-    assert any(p.get_gid() == "refline" for p in ax.patches)       # axvspan shade
+    # the fit-window shade is opt-in since 2026-09-05 (owner: "useful, but switched off by
+    # default") -- absent by default, recoverable via the spec flag
+    assert not [p for p in ax.patches if p.get_gid() == "refline"]
+    shaded = render_kind(_act(), "resistivity_rho_t", PlotSpec(fit_window_shade=True)).axes[0]
+    assert any(p.get_gid() == "refline" for p in shaded.patches)   # axvspan shade
 
 
 def test_rho_t_fit_off_via_spec():

@@ -14,7 +14,7 @@ import pytest
 
 from cryosweep_core.plotting.catalog import (
     OverlayFile, build_default_layout, get_kind, BUILTIN_PLOTKINDS)
-from cryosweep_core.plotting.render import render_kind
+from cryosweep_core.plotting.render import render_kind, NON_DATA_GIDS
 from cryosweep_core.plotting.export import save_figure
 from cryosweep_core.plotting.spec import PlotSpec, GlobalStyle
 
@@ -502,7 +502,7 @@ def _single_ramp_data(ykey="moment_per_fu"):
 
 
 def _nonfit_data_lines(ax):
-    return [ln for ln in ax.lines if ln.get_gid() not in ("fit", "refline")]
+    return [ln for ln in ax.lines if ln.get_gid() not in NON_DATA_GIDS]
 
 
 # ---- series layer: keys / labels / linestyles / groups -------------------

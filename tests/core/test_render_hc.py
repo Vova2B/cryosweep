@@ -28,7 +28,10 @@ def test_hc_overlays_all_fitted_models():
     on = render_kind(res, "cp_over_t", PlotSpec(fit_line=True)).axes[0].lines
     off = render_kind(res, "cp_over_t", PlotSpec(fit_line=False)).axes[0].lines
     assert n_ok >= 1
-    assert len(on) == len(off) + n_ok                      # one fit line per fitted model
+    # count by gid, not by total-line arithmetic: each fit also draws a gid="fit-extrap"
+    # continuation to its 0-intercept, which is NOT a fit line and NOT a data line
+    assert len([l for l in on if l.get_gid() == "fit"]) == n_ok   # one fit line per model
+    assert not [l for l in off if l.get_gid() == "fit"]
     labels = [l.get_label() for l in on]
     assert any("R²" in str(s) for s in labels)             # fit labels carry R^2
 
@@ -37,8 +40,7 @@ def test_hc_fit_lines_subset_toggle():
     res = _hc()
     one = render_kind(res, "cp_over_t",
                       PlotSpec(fit_line=True, fit_lines=("debye_t3",))).axes[0].lines
-    off = render_kind(res, "cp_over_t", PlotSpec(fit_line=False)).axes[0].lines
-    assert len(one) == len(off) + 1                        # only debye_t3 drawn
+    assert len([l for l in one if l.get_gid() == "fit"]) == 1   # only debye_t3 drawn
 
 
 # ---- PQ-5 Task 4: hc_entropy_vs_t --------------------------------------------
@@ -241,7 +243,11 @@ def test_cp_over_t_has_annotation_and_shade(hc_path):
     theta_D = (res.data["fit"]["params"] or {}).get("theta_D")
     if theta_D is not None and math.isfinite(theta_D):
         assert "n/a" not in txt, txt
-    assert _has_shade(ax), "fit-window shade expected"
+    # fit-window shade is opt-in since 2026-09-05 (owner: "useful, but switched off by
+    # default") -- absent by default, recoverable via the spec flag
+    assert not _has_shade(ax), "shade drawn although fit_window_shade defaults OFF"
+    assert _has_shade(render_kind(res, "cp_over_t",
+                                  PlotSpec(fit_window_shade=True)).axes[0])
 
 
 def test_hc_c_over_t_linear_has_annotation_and_shade(hc_path):
@@ -251,7 +257,9 @@ def test_hc_c_over_t_linear_has_annotation_and_shade(hc_path):
     txt = " ".join(t.get_text() for t in ax.texts)
     assert ("γ" in txt) or ("gamma" in txt.lower())
     assert ("θ" in txt) or ("theta" in txt.lower())
-    assert _has_shade(ax), "fit-window shade expected"
+    assert not _has_shade(ax), "shade drawn although fit_window_shade defaults OFF"
+    assert _has_shade(render_kind(res, "hc_c_over_t_linear",
+                                  PlotSpec(fit_window_shade=True)).axes[0])
 
 
 def test_theta_d_shows_na_for_spin_fluct_model(hc_path):

@@ -27,6 +27,14 @@ _CONNECT_KINDS = {
     "tto_summary_t", "tto_kappa_t", "tto_seebeck_t", "tto_zt_t", "tto_wf_t", "tto_lorenz_t",
 }
 
+# Artists that are DRAWN CONCLUSIONS, not measurements. Every "which lines are the data?"
+# filter must exclude all of them, so the set lives in ONE place: adding a new overlay gid
+# here updates the robust view, the legend-marker snapshots and the tests at once. (When
+# "fit-extrap" was added at 7 literal call sites instead, 7 tests silently reclassified the
+# extrapolation as DATA -- the same shape as every other "check that no longer sees what it
+# checks" bug in this file's history.)
+NON_DATA_GIDS = ("refline", "fit", "fit-extrap")
+
 LEGEND_INSIDE_MAX = 11   # <= this many entries -> legend stays inside, byte-identical to today
 LEGEND_MAX_ROWS   = 14   # rows per column when relocated (caps legend height)
 LEGEND_MAX_COLS   = 4    # max columns when relocated (caps legend width -> axes can't collapse)
@@ -444,7 +452,7 @@ def _apply_robust_view_core(ax, spec, style):
     # not steer the view; reference lines carry transform-space coords -> both excluded.
     per_line = []
     for ln in ax.lines:
-        if ln.get_gid() in ("refline", "fit", "fit-extrap"):
+        if ln.get_gid() in NON_DATA_GIDS:
             continue
         a = np.asarray(ln.get_ydata(), float)
         a = a[np.isfinite(a)]
@@ -758,7 +766,7 @@ def _data_line_endpoints_in_host_frac(ax_host):
         if not ax.get_visible():
             continue
         for ln in ax.get_lines():
-            if ln.get_gid() in ("refline", "fit", "fit-extrap"):
+            if ln.get_gid() in NON_DATA_GIDS:
                 continue
             xy = np.asarray(ln.get_xydata(), float)
             if xy.size == 0:
@@ -1132,7 +1140,7 @@ def _draw_asym_fit_lines(ax, results, spec, style, plotted):
         return
     # marker snapshot: exclude reflines (e.g. the H=0 axhline drawn before the data) and
     # any already-appended fit lines so plotted[i] stays 1:1 with markers[i]
-    markers = [ln for ln in ax.lines if ln.get_gid() not in ("refline", "fit", "fit-extrap")]
+    markers = [ln for ln in ax.lines if ln.get_gid() not in NON_DATA_GIDS]
     for i, (r, s) in enumerate(plotted):
         if not s.key.startswith("asym:"):
             continue
@@ -1162,7 +1170,7 @@ def _draw_branch_fit_lines(ax, results, spec, style, plotted):
         return
     # marker snapshot: exclude reflines (the H=0 axhline precedes the data at ax.lines[0])
     # and any fit lines so plotted[i] stays 1:1 with markers[i]
-    markers = [ln for ln in ax.lines if ln.get_gid() not in ("refline", "fit", "fit-extrap")]
+    markers = [ln for ln in ax.lines if ln.get_gid() not in NON_DATA_GIDS]
     for i, (r, s) in enumerate(plotted):
         if not (s.key.startswith("rawpos:") or s.key.startswith("rawneg:")):
             continue
@@ -1192,7 +1200,7 @@ def _draw_rxy_mirror_fit_lines(ax, results, spec, style, plotted):
     branch has >=1 raw point. Not envelope-clipped: the centroid anchor keeps it on-scale."""
     if not spec.fit_line:
         return
-    markers = [ln for ln in ax.lines if ln.get_gid() not in ("refline", "fit", "fit-extrap")]
+    markers = [ln for ln in ax.lines if ln.get_gid() not in NON_DATA_GIDS]
     for i, (r, s) in enumerate(plotted):
         if not s.key.startswith("raw:"):
             continue
@@ -3077,7 +3085,7 @@ def _acms_axis_view(ax, spec, style):
         return
     los, his = [], []
     for ln in ax.lines:
-        if ln.get_gid() in ("refline", "fit", "fit-extrap"):
+        if ln.get_gid() in NON_DATA_GIDS:
             continue
         a = np.asarray(ln.get_ydata(), float)
         a = a[np.isfinite(a)]
@@ -3571,7 +3579,7 @@ def _tto_full_view(ax, spec, style):
     if not use or ax.get_yscale() != "linear" or spec.ymin is not None or spec.ymax is not None:
         return
     vals = [np.asarray(ln.get_ydata(), float) for ln in ax.lines
-            if ln.get_gid() not in ("refline", "fit", "fit-extrap")]
+            if ln.get_gid() not in NON_DATA_GIDS]
     a = np.concatenate(vals) if vals else np.array([])
     a = a[np.isfinite(a)]
     if a.size == 0:
