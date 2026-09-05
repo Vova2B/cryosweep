@@ -265,3 +265,20 @@ fixed-position class as items 1 and 4: `Dulong–Petit` covered 93 of 858 points
 `resistivity_superconductor.dat` (`resistivity_rho_t`), and `Wiedemann–Franz (L = L₀)` 4 of
 135 on `thermal_transport.dat` (`tto_lorenz_t`). Distinct from item 11 (legend entries
 overprinting each other): this is line labels over the measured curve itself.
+
+**24. The Hall summary's third axis clips its label at the default canvas size.**
+`examples/hall_mixed_sweeps.dat`, `hall_tdep_summary` with a width supplied (so the J axis
+exists at all — see item 21): the offset right-hand spine carries its `J (A/m²)` label past
+the figure's right edge, where it is cut off. Reproduced through `cryosweep plot`, which
+renders at the bare `GlobalStyle()` default, so this is the out-of-the-box result rather
+than a large-font edge case; at an explicit export size the layout has room and the label
+reads cleanly.
+
+The J axis had never been drawn before item 21 was implemented, because the field it plots
+was never assigned — so this is a latent layout defect that item 21 exposed rather than
+introduced. A related one was fixed there: the spine's position was hardcoded at axes
+fraction 1.18 and collided with the µ label, and is now measured against that label's
+realized extent.
+
+**Display only.** Every value on the axis is correct and reaches the JSON and the CSV; it is
+the axis *label* that is clipped, not the data.
