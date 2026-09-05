@@ -2526,7 +2526,10 @@ def render_resistivity_arrhenius(results, spec=None, style=None, overlay=None):
                 flags = set(f.get("quality_flags") or [])
                 declined = flags & {"insufficient_rho_span", "ea_unresolved"}
                 if declined:
-                    lines.append("Arrhenius fit declined — " + "; ".join(sorted(declined)))
+                    # two lines: the flag names are long and a single line clips at the
+                    # right edge of the default 90 mm canvas (seen, not guessed)
+                    lines.append("Arrhenius fit declined —")
+                    lines.append("  " + "; ".join(sorted(declined)))
                     continue                              # a non-measurement gets no line
                 p_ = f["params"]; ea = p_["e_a_mev"]
                 if spec.fit_line:
@@ -2541,7 +2544,9 @@ def render_resistivity_arrhenius(results, spec=None, style=None, overlay=None):
                 if "window_sensitive" in flags:
                     spread = b.get("arrhenius_ea_spread_mev")
                     if spread is not None:
-                        lines.append(f"WINDOW-SENSITIVE: E$_a$ moves {spread:.1f} meV across windows")
+                        # wrapped like the decline note: one line clips at 90 mm (seen)
+                        lines.append("WINDOW-SENSITIVE:")
+                        lines.append(f"  E$_a$ moves {spread:.1f} meV across windows")
         if lines:
             fam = {"fontfamily": style.font_family} if style.font_family else {}
             ax.text(0.02, 0.98, "\n".join(lines), transform=ax.transAxes, va="top",

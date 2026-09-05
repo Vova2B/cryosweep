@@ -495,10 +495,11 @@ def series_resistivity_arrhenius(result, field_unit="Oe"):
     import numpy as _np
     out = []
     bridges = (result.data or {}).get("bridges", [])
-    multi = _multi_channel(bridges, "rho_t_curves")
-    for b in bridges:
-        if b.get("arrhenius") is None:
-            continue
+    fitted = [b for b in bridges if b.get("arrhenius") is not None]
+    # multi over the FITTED bridges only: the metallic channel never appears on this plot,
+    # so it must not force a channel prefix onto a lone insulating curve.
+    multi = len(fitted) > 1
+    for b in fitted:
         ch = b.get("channel")
         for c in sorted(b.get("rho_t_curves", []),
                         key=lambda c: -len(c.get("temperature") or []))[:1]:
@@ -506,7 +507,7 @@ def series_resistivity_arrhenius(result, field_unit="Oe"):
             m = _np.isfinite(T) & _np.isfinite(rho) & (T > 0) & (rho > 0)
             if int(m.sum()) < 4:
                 continue
-            out.append(Series(key=f"b{ch}:arrh", label=f"{_chan_prefix(ch, multi)}Ch{ch}",
+            out.append(Series(key=f"b{ch}:arrh", label=f"{_chan_prefix(ch, multi)}ρ(T)",
                               x=(1000.0 / T[m]).tolist(), y=rho[m].tolist(),
                               group=f"Bridge {ch}", default_on=True))
     return out
