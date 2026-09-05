@@ -221,7 +221,16 @@ visible in the CSV rather than merely in a plot. Under the project's own decline
 derived quantity whose parent was not measured should be withheld, not published from the
 untrusted stage.
 
-**21. `current_density_J` is declared and consumed but never assigned.** Not a defect in a
+**21. `current_density_J` is declared and consumed but never assigned.** *FIXED 2026-09-05
+(00aa7e7): every temp-dep Hall point now reports the instrument's excitation current I
+directly (`Bridge N Excitation (uA)` canonicalized at last), and J = I/(w·t) fills
+`current_density_J` as a capability that activates only when sample width (`--width-mm`, or
+the new Width field on the Hall panel) and thickness are both supplied — an ungated J on
+unset geometry would be scale-arbitrary. The capability reason carries the caveat that I is
+the instrument-reported current, not necessarily the requested drive. `hall_tdep_J_T` and
+the summary's third axis now render (a constant-drive file draws a flat line — the correct
+result), and hall_tdep gained a real per-point CSV.*
+Not a defect in a
 result — a feature that is wired up at both ends with nothing in the middle.
 `hall_tempdep.py:52` declares the field; `catalog.py:901-932` builds two plot series from it;
 `render.py:2295` already documents it as "always None on ..." — and a search of
