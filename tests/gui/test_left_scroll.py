@@ -17,7 +17,9 @@ def test_left_pane_is_scroll_area(qapp):
     pane0 = tab._splitter.widget(0)
     assert isinstance(pane0, QScrollArea)
     assert pane0.widgetResizable() is True
-    assert pane0.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    # AsNeeded since KNOWN-ISSUES #17: AlwaysOff turned any content overflow into
+    # invisible, unreachable controls (the clipped "Colour…" button).
+    assert pane0.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
 
 
 def test_no_hc_widget_overlap_at_650px(qapp):

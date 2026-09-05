@@ -52,9 +52,12 @@ def test_save_plot_keeps_dense_legend_canvas_growth(qapp, tmp_path):
     tab.show_result(res)
     win.show(); qapp.processEvents()
     # export the MR card's figure (dense legend)
-    dense = next(f for f in (c.figure for c in tab.output._cards)
-                 if getattr(f, "_cryosweep_legend_grown", False))
-    tab.output.last_figure = dense
+    # last_figure is a derived property since KNOWN-ISSUES #22 (focused card in Focus
+    # mode): focus the dense-legend card instead of assigning the snapshot directly.
+    idx, dense = next((i, c.figure) for i, c in enumerate(tab.output._cards)
+                      if getattr(c.figure, "_cryosweep_legend_grown", False))
+    tab.output._on_focus_mode(); tab.output._focus_index = idx; tab.output._apply_mode()
+    assert tab.output.last_figure is dense
     out = tmp_path / "dense.png"
     tab._save_plot_to(str(out))
     style = tab.controls.style

@@ -585,7 +585,6 @@ class OutputPanel(QWidget):
         root.addWidget(self.table)
 
         # test/back-compat hooks
-        self.last_figure = None
         self.placeholder_shown = False
         self.status_stamped = False
 
@@ -606,6 +605,20 @@ class OutputPanel(QWidget):
     def _on_focus_mode(self):
         self._mode = "focus"
         self._apply_mode()
+
+    @property
+    def last_figure(self):
+        """The figure "Save plot" writes: the FOCUSED card's in Focus mode, else the first
+        card that has one. A derived property, never a stored snapshot (KNOWN-ISSUES #22):
+        it used to be captured once while the layout rendered — first card only, guarded by
+        `and self.last_figure is None` — so navigating in Focus mode and pressing Save plot
+        silently wrote a different figure than the one on screen."""
+        n = len(self._cards)
+        if n == 0:
+            return None
+        if self._mode == "focus":
+            return self._cards[max(0, min(self._focus_index, n - 1))].figure
+        return next((c.figure for c in self._cards if c.figure is not None), None)
 
     def _step_focus(self, delta: int):
         """Move the focused card by delta (wraps); only acts in Focus mode."""
@@ -677,7 +690,6 @@ class OutputPanel(QWidget):
             c.hide()
             self._grid.removeWidget(c); c.setParent(None); c.deleteLater()
         self._cards = []
-        self.last_figure = None
 
     # ---- live "model (manual)" overlay (ROADMAP 2b) ----
     # Display-only: it never enters the analysis result, so CSV/JSON/report and the
@@ -741,8 +753,6 @@ class OutputPanel(QWidget):
             card = PlotCard(results, entry, self.style, overlay, parent=self)  # parented -> no window flash
             self._cards.append(card)
             card.edited.connect(self.layout_edited)
-            if card.figure is not None and self.last_figure is None:
-                self.last_figure = card.figure
         if not self._cards or all(c.figure is None for c in self._cards):
             self.placeholder_shown = True
         self._relayout_grid()

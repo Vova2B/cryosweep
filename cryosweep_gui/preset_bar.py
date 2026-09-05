@@ -24,6 +24,11 @@ class PresetBar(QWidget):
         for txt, fn in (("Save As", self._on_save_as), ("Del", self._on_delete),
                         ("Import", self._on_import), ("Export", self._on_export)):
             b = QPushButton(txt); b.clicked.connect(fn); b.setMaximumWidth(64)
+            # KNOWN-ISSUES #17: the platform style's 80 px button minimum EXCEEDED the 64 px
+            # cap above, so the row's minimum width (combo + 4x80) forced the whole left
+            # panel to ~392 px and the pane clipped its tail. An explicit minimum below the
+            # cap lets the layout honour the intended 64 px buttons.
+            b.setMinimumWidth(48)
             lay.addWidget(b); self._btns[txt] = b
         self._set_enabled(False)
 
