@@ -19,10 +19,24 @@ def test_cli_analyze_probe_override():
     assert p.returncode == 0, p.stderr
     assert json.loads(p.stdout)["data"]["probe"] == "hall"
 
-def test_cli_hall_missing_channel_errors():
+def test_cli_hall_missing_channel_gates():
+    # Repinned 2026-09-05 (was exit 2 / status error): missing --hall-channel now follows
+    # the gate discipline every other missing input uses — exit 10 with a remedy an agent
+    # can act on, instead of a hard error with an empty gate[].
     p = _run(["hall", SYNTH])                          # no --hall-channel
-    assert p.returncode == 2
-    assert json.loads(p.stdout)["status"] == "error"
+    assert p.returncode == 10
+    env = json.loads(p.stdout)
+    assert env["status"] == "gated"
+    g = next(g for g in env["gate"] if g["need"] == "hall_channel")
+    assert g["remedy"]["flag"] == "--hall-channel"
+
+
+def test_cli_hall_tdep_missing_channel_gates():
+    p = _run(["hall-tdep", SYNTH])                     # no --hall-channel
+    assert p.returncode == 10
+    env = json.loads(p.stdout)
+    assert env["status"] == "gated"
+    assert any(g["need"] == "hall_channel" for g in env["gate"])
 
 def test_cli_hall_thickness_unit_um():
     p = _run(["hall", SYNTH, "--hall-channel", "1", "--thickness", "100", "--thickness-unit", "um"])

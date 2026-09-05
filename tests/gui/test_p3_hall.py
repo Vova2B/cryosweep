@@ -42,15 +42,20 @@ def test_hall_two_file_longitudinal_parity(qapp, hall_path, hall_long_synth_path
     assert gui.status == "ok"
     assert gui.data["longitudinal_source"].startswith("file:")
 
-def test_hall_missing_channel_is_error(qapp, hall_path):
+def test_hall_missing_channel_is_gated(qapp, hall_path):
+    # Repinned 2026-09-05 (was status=="error"/export disabled): a missing hall channel now
+    # gates like every other missing input. Gated results are exportable by the existing
+    # _EXPORTABLE contract (header-only CSVs, same as a gated MPMS file), so the export
+    # button is enabled.
     from cryosweep_gui.main_window import MainWindow
     win = MainWindow(); win.load_path(hall_path)
     tab = _hall_tab(win)
     tab.panel.hall_channel_edit.setText("")     # clear the auto-detected channel
     res = tab.analyze()
-    assert res.status == "error"
+    assert res.status == "gated"
+    assert any(g.need == "hall_channel" for g in res.gate)
     tab.show_result(res)
-    assert not tab.export_btn.isEnabled()
+    assert tab.export_btn.isEnabled()
 
 def test_hall_ui_state_ok(qapp, hall_path):
     from cryosweep_gui.main_window import MainWindow

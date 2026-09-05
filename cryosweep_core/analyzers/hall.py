@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict
 from cryosweep_core.io.columns import canonicalize_columns
 from cryosweep_core.detect.sweeps import segment_sweeps
 from cryosweep_core.fitting.transport import LinearFitModel
-from cryosweep_core.result import Result, Provenance
+from cryosweep_core.result import Result, Provenance, Gate
 from cryosweep_core.registry import Need
 from cryosweep_core.io.loader import load_dat
 from cryosweep_core.grouping import cluster_field_setpoints
@@ -335,8 +335,13 @@ class HallAnalyzer:
                           sha256=_sha256(getattr(rawtable, "path", None)),
                           app_version=header.app_version, config=cfg.model_dump(mode="json"))
         if hc.hall_channel is None:
-            return Result(status="error", errors=["hall_channel required (which bridge is the Hall signal)"],
-                          data={"probe": "hall"}, provenance=prov)
+            # A missing hall channel is a missing USER INPUT, not a broken file: gate with
+            # a remedy (like molar_mass on VSM), never a hard error with an empty gate[].
+            return Result(status="gated", confidence=0.5, data={"probe": "hall"},
+                          gate=[Gate(need="hall_channel",
+                                     reason="which bridge carries the transverse (Hall) signal is not stated in the file",
+                                     remedy={"flag": "--hall-channel", "example": "--hall-channel 1"})],
+                          provenance=prov)
         rkey = f"resistance_ch{hc.hall_channel}"
         if rkey not in cmap.logical or "temperature" not in cmap.logical or "field" not in cmap.logical:
             return Result(status="error",

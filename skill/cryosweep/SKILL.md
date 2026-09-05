@@ -25,7 +25,7 @@ Probes: `vsm`, `heatcapacity`, `resistivity`, `hall`, `hall_tdep`, `acms`, `tto`
 | `cryosweep plot <file> --out stem` | analyze + render; `data.plot`/`data.plots` list the files |
 | `cryosweep probes` / `fits` / `plots` / `observables` | all four print the SAME registry dump `{probes, fits, plots, observables}` |
 | `cryosweep schema <name>` | JSON Schema; names: `result`, `fit`, `config`, `analyze:vsm`, `analyze:hc`, `analyze:resistivity`, `analyze:hall`, `analyze:hall_tdep`. Bad/missing name → usage on stderr, exit 3 |
-| `cryosweep run pipeline.json` | `{"steps": [{"command": "analyze", "file": "a.dat"}, ...]}` → `{"results": [...], "exit": <worst step>}` — worst by SEVERITY (error > gated > low_confidence > ok), NOT by numeric code |
+| `cryosweep run pipeline.json` | `{"steps": [{"command": "analyze", "file": "a.dat"}, ...]}` → `{"results": [...], "exit": <worst step>}` — worst by SEVERITY (error > gated > low_confidence > ok), NOT by numeric code. ONLY `detect`/`analyze` are legal step commands (step `options`: `molar_mass`, `mass_mg`, `unit_system`); any other command fails validation and ABORTS the whole pipeline (`results: []`, exit 2). To batch export/plot, loop the shell over `cryosweep export`/`plot` instead |
 
 ## Result envelope + exit codes (branch on BOTH)
 
@@ -34,7 +34,7 @@ Envelope keys: `{status, confidence, confidence_parts, data, diagnostics, warnin
 | status | exit | meaning | recovery |
 |---|---|---|---|
 | ok | 0 | usable result | — |
-| gated | 10 | a required input is missing | each `gate[]` entry carries `need`, `reason`, `remedy.flag` + `remedy.example` — re-run with the flag (e.g. `--molar-mass 200`) |
+| gated | 10 | a required input is missing | each `gate[]` entry carries `need`, `reason`, `remedy.flag` + `remedy.example` — re-run with the flag |
 | low_confidence | 11 | result emitted, but read `warnings` before trusting it | e.g. CW window reaches below \|θ\| → inspect `cw_ladder` |
 | error | 2 | bad/unreadable input | fix the file/args |
 
@@ -43,14 +43,52 @@ Even `error` prints an envelope (with `errors[]`), never a bare traceback.
 `export` on a gated file still exits 10 and writes the CSV files, but they hold headers/no
 rows — supply the gate remedies to get data.
 
+**Remedy examples are SYNTAX, not values.** `remedy.example` (e.g. `--molar-mass 200.0`)
+shows how to spell the flag; the NUMBER must come from the actual sample (its formula
+weight, measured mass, measured thickness). Plugging in the example number produces
+quantitatively wrong physics (χ_mol and μ_eff scale with it) with no warning — the one
+failure this tool exists to prevent. If you cannot obtain the real value, STOP AND ASK;
+never substitute a plausible one.
+
 ## Options
 
 - Common: `--out STEM` (default `cryosweep_out`), `--unit-system CGS|SI` (default CGS), `--molar-mass G_PER_MOL`, `--mass-mg MG`
 - Resistivity geometry (switches ρ to recompute): `--width-mm`, `--thickness-mm`, `--length-mm`
+  (`--width-mm` also feeds the hall-tdep current-density-J capability)
 - Probe override: `--probe KEY` (e.g. force `hall` on a resistivity-format file with `export`/`plot`)
-- Hall: `--hall-channel N` (required), `--thickness T --thickness-unit mm|um|nm`, `--long-channel M` or `--long-file F` (un-gates mobility), `--geometry-sign 1|-1`, `--temp-interval K` (hall-tdep binning)
+- Hall: `--hall-channel N` (required; omitting it gates with a remedy), `--thickness T --thickness-unit mm|um|nm`, `--long-channel M` or `--long-file F` (un-gates mobility), `--geometry-sign 1|-1`, `--temp-interval K` (hall-tdep binning)
+- `--config FILE` — a RunConfig JSON (`cryosweep schema config` prints its schema). This is
+  the ONLY route to the heat-capacity controls (`heatcapacity.schottky_enabled`,
+  `transitions_enabled`, fit windows, `entropy_*`, `full_init`/`full_fixed`) and to
+  `quality.exclude_outliers`; explicit flags override the file per key.
+  E.g. `{"heatcapacity": {"schottky_enabled": true}}`.
 - Plot: `--plot-kind KEY` (default: probe's default kind; keys from `cryosweep plots`), `--all` (every kind → `<prefix>_<kind>.<fmt>`; mutually exclusive with `--plot-kind`), `--format png,pdf,svg` (comma list, default png), `--dpi N`, `--tight`, `--style-file JSON`, `--layout-file JSON`
 - An unavailable plot kind is NOT an error: `data.plot` is null and a warning explains — check it.
+
+### --layout-file / --style-file shapes
+
+`--layout-file` is a PlotLayout: per-plot settings live under each entry's `"spec"`
+(fields: `xmin/xmax/ymin/ymax`, `xscale/yscale`, `curves`, `error_band`,
+`fit_window_shade`, `robust_view`, `width_mm/height_mm`, …). `--style-file` is a flat
+GlobalStyle (`grid`, `legend_loc`, `font_pt`, `field_unit: "Oe"|"T"`, …). Both are defined
+in `cryosweep_core/plotting/spec.py`.
+
+```json
+{"plots": [{"kind": "tto_kappa_t", "spec": {"error_band": true}}]}
+```
+
+Unknown keys (a typo, or a spec boolean at the wrong nesting level) are IGNORED with a
+warning in `warnings[]` and on stderr — after supplying either file, check `warnings[]`
+before claiming the figure has the requested feature.
+
+### Choosing --hall-channel on an unfamiliar file
+
+The Hall bridge is the one whose resistance is odd in B (sign flips with field). The GUI
+auto-detects it; the CLI does not — but `cryosweep analyze <file>` (as resistivity) runs
+the same detector when the file contains field sweeps: `data.excluded_hall_channel` is the
+detected Hall-wired bridge (`excluded_hall_source: "detected"`). On a pure
+temperature-sweep file nothing can be detected — the channel must come from the
+measurement notes; do not guess.
 
 ## DECLINE discipline — read flags before numbers
 
@@ -90,9 +128,14 @@ Resistivity, hall, hall_tdep, acms and tto results carry `data.capabilities`: a 
 
 ## Try it
 
-`examples/` ships one runnable file per scenario (details in `examples/README.md`):
+`examples/` ships one runnable file per scenario (details in `examples/README.md`) — in
+the REPOSITORY only, not in the wheel. After a plain `pip install`, fetch one first:
+`curl -O https://raw.githubusercontent.com/Vova2B/cryosweep/main/examples/heat_capacity.dat`
+(same form for every file named below).
 `magnetization_vsm.dat` (CW θ = −10 K), `magnetization_mpms.dat` (bare-CSV MPMS — gated
-until `--molar-mass 200 --mass-mg 5`), `magnetization_vsm_multifield.dat` (real, exits 11
+until `--molar-mass 200 --mass-mg 5` — the pair the README and its tests use for this
+file; they are NOT numbers to reuse on real data, and note the generator builds it at
+10 mg, so the reported C scales accordingly), `magnetization_vsm_multifield.dat` (real, exits 11
 by design), `heat_capacity.dat` + `heat_capacity_multifield.dat`, `ac_susceptibility.dat`,
 `resistivity_superconductor.dat` (Tc detector + decline demo), `resistivity_semiconductor.dat` (Arrhenius E_a = 60 meV; the gap column is named
 `e_g_assuming_intrinsic_mev` because E_g = 2·E_a only if intrinsic), `thermal_transport.dat`,

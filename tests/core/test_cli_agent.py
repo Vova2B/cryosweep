@@ -59,7 +59,10 @@ def test_skill_documents_contract():
     seven probes shipped)."""
     t = SKILL.read_text()
     for token in ("cryosweep analyze", "cryosweep schema", "cryosweep probes", "gated",
-                  "low_confidence", "exit", "10", "11", "--molar-mass", "pipeline"):
+                  "low_confidence", "exit", "10", "11", "--molar-mass", "pipeline",
+                  # 2026-09-05 agent-surface additions: the placeholder-remedy warning,
+                  # the config route, the hall-channel rule, and the option-file lint
+                  "SYNTAX, not values", "--config", "excluded_hall_channel", "Unknown keys"):
         assert token in t, token
 
     from cryosweep_core.registry import build_default_registry
