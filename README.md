@@ -31,8 +31,13 @@ use — is documented in [`docs/physics-reference.md`](https://github.com/Vova2B
 ## Install
 
 ```bash
-pip install cryosweep          # core + command line
-pip install 'cryosweep[gui]'   # adds the desktop app
+pip install cryosweep
+```
+
+That gives you the analysis core and the `cryosweep` command line. To add the desktop app:
+
+```bash
+pip install 'cryosweep[gui]'
 ```
 
 The GUI is optional because the analysis core and CLI are Qt-free by design, and Qt is by far
@@ -66,12 +71,15 @@ cryosweep analyze heat_capacity.dat
 ```
 
 ```bash
-cryosweep analyze examples/magnetization_vsm.dat        # Curie-Weiss: theta = -10 K
+cryosweep analyze examples/magnetization_vsm.dat
 cryosweep analyze examples/heat_capacity.dat
 cryosweep analyze examples/thermal_transport.dat
-cryosweep report  examples/resistivity_superconductor.dat   # Markdown summary
-cryosweep-gui                                           # the desktop app
+cryosweep report examples/resistivity_superconductor.dat
+cryosweep-gui
 ```
+
+The first fits Curie-Weiss and reports θ = −10 K; `report` prints a Markdown summary instead
+of JSON; `cryosweep-gui` opens the desktop app.
 
 Some measurements need inputs the file does not carry. MPMS files hold no molar mass or sample
 mass, so the analyzer **gates** rather than guessing — supply them and it proceeds:
@@ -86,8 +94,9 @@ so the Hall analyzer is invoked explicitly, with the channel and the sample thic
 ```bash
 cryosweep hall examples/hall_field_sweeps.dat \
     --hall-channel 1 --thickness 0.5 --thickness-unit mm --long-channel 2
-# R_H = -2.500e-07 m^3/C
 ```
+
+which reports `R_H = -2.500e-07 m^3/C`.
 
 ## Built to be driven by a program
 
@@ -95,12 +104,12 @@ Every command prints **one JSON object** on stdout (logs go to stderr) and sets 
 exit code, so cryosweep is usable from a script, a pipeline, or an LLM agent without screen
 scraping:
 
-```bash
-cryosweep probes                     # available measurement types and what each one needs
-cryosweep schema analyze:vsm         # JSON Schema for the result shape
-cryosweep export <file> --out result # tidy long-format CSVs, units in the headers
-cryosweep run pipeline.json          # batch
-```
+| Command | What it gives you |
+|---|---|
+| `cryosweep probes` | available measurement types and what each one needs |
+| `cryosweep schema analyze:vsm` | JSON Schema for the result shape |
+| `cryosweep export <file> --out result` | tidy long-format CSVs, units in the headers |
+| `cryosweep run pipeline.json` | batch |
 
 Exit codes distinguish *no result* from *a result you should look at*: `0` ok, `10` gated (a
 required input is missing — the payload names the flag), `11` low confidence, `2` bad input.
@@ -132,13 +141,13 @@ Regenerate with (the two real-derived files are skipped, and left untouched, on 
 without the private source data):
 
 ```bash
-python tools/make_examples.py
+.venv/bin/python tools/make_examples.py
 ```
 
 ## Tests
 
 ```bash
-QT_QPA_PLATFORM=offscreen python -m pytest
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest
 ```
 
 Run it from the repository root — some tests build fixture paths relative to the working
