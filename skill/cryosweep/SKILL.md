@@ -94,6 +94,7 @@ Resistivity, hall, hall_tdep, acms and tto results carry `data.capabilities`: a 
 `magnetization_vsm.dat` (CW θ = −10 K), `magnetization_mpms.dat` (bare-CSV MPMS — gated
 until `--molar-mass 200 --mass-mg 5`), `magnetization_vsm_multifield.dat` (real, exits 11
 by design), `heat_capacity.dat` + `heat_capacity_multifield.dat`, `ac_susceptibility.dat`,
-`resistivity_superconductor.dat` (Tc detector + decline demo), `thermal_transport.dat`,
+`resistivity_superconductor.dat` (Tc detector + decline demo), `resistivity_semiconductor.dat` (Arrhenius E_a = 60 meV; the gap column is named
+`e_g_assuming_intrinsic_mev` because E_g = 2·E_a only if intrinsic), `thermal_transport.dat`,
 and `hall_field_sweeps.dat` / `hall_temperature_dependence.dat` — run those two as
 `cryosweep hall|hall-tdep <file> --hall-channel 1 --thickness 0.5 --long-channel 2`.

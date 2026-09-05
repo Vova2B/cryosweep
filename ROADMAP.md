@@ -99,5 +99,5 @@ individually.
 
 Analyses that are recognized but not implemented are reported as `applicable: false` in each
 result's `capabilities[]` list, with a reason. That list is the authoritative statement of what
-the app does not yet do — spin-glass relaxation fits, the Callaway phonon model, activated
-transport, and others. They are deferred, not forgotten, and none of them blocks 1.0.
+the app does not yet do — spin-glass relaxation fits, the Callaway phonon model, Mott
+variable-range hopping as a fitted model, and others. They are deferred, not forgotten, and none of them blocks 1.0.
