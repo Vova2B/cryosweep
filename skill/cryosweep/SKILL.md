@@ -23,7 +23,7 @@ Probes: `vsm`, `heatcapacity`, `resistivity`, `hall`, `hall_tdep`, `acms`, `tto`
 | `cryosweep export <file> --out stem` | analyze + write CSVs; `data.exported` maps name → path |
 | `cryosweep report <file>` | Markdown on stdout (NOT JSON); exit code still per status |
 | `cryosweep plot <file> --out stem` | analyze + render; `data.plot`/`data.plots` list the files |
-| `cryosweep probes` / `fits` / `plots` / `observables` | all four print the SAME registry dump `{probes, fits, plots, observables}` |
+| `cryosweep probes` / `fits` / `plots` / `observables` | with no file, all four print the SAME global registry dump `{probes, fits, plots, observables}`. With a file, the dump becomes file-aware: `plots` filters to the detected probe and each entry carries `available` (can THIS file draw it, with the flags supplied) plus top-level `probe`/`file` — use `cryosweep plots <file>` after a render refuses with `no series selected` |
 | `cryosweep schema <name>` | JSON Schema; names: `result`, `fit`, `config`, `analyze:vsm`, `analyze:hc`, `analyze:resistivity`, `analyze:hall`, `analyze:hall_tdep`. Bad/missing name → usage on stderr, exit 3 |
 | `cryosweep run pipeline.json` | `{"steps": [{"command": "analyze", "file": "a.dat"}, ...]}` → `{"results": [...], "exit": <worst step>}` — worst by SEVERITY (error > gated > low_confidence > ok), NOT by numeric code. ONLY `detect`/`analyze` are legal step commands (step `options`: `molar_mass`, `mass_mg`, `unit_system`); any other command fails validation and ABORTS the whole pipeline (`results: []`, exit 2). To batch export/plot, loop the shell over `cryosweep export`/`plot` instead |
 
