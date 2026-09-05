@@ -73,6 +73,26 @@ def fmt_field(value_oe, unit="Oe"):
     return f"{v:g} Oe"
 
 
+def fmt_field_setpoint(value_oe, unit="Oe"):
+    """Display label for a HELD-field setpoint (KNOWN-ISSUES #14). A held field is a
+    setpoint, and printing the group median to machine precision labels instrument noise:
+    the multifield HC example's legend read '0.524968 Oe', '50000.5 Oe', '100001 Oe'.
+    |H| < 50 Oe collapses to the nominal 0 (the probe-wide zero-field convention, as in
+    #8), everything else rounds to 4 significant figures — enough to keep 130000 and
+    129900 apart while '100001' becomes the 100000 the operator set. Display only: group
+    keys and every exported value keep the measured median."""
+    if value_oe is None:
+        return ""
+    try:
+        v = float(value_oe)
+    except (TypeError, ValueError):
+        return ""
+    if not np.isfinite(v):
+        return ""
+    v = 0.0 if abs(v) < 50.0 else float(f"{v:.4g}")
+    return fmt_field(v, unit) if unit == "T" else f"{v:g} Oe"
+
+
 def _field_scale(unit):
     """Display scale for a field magnitude stored in Oe. 'T' -> 1e-4 (Oe->Tesla); else 1.0."""
     return 1e-4 if unit == "T" else 1.0
@@ -1017,7 +1037,7 @@ def series_hc_lowt_multifield(result, field_unit="Oe"):
     for g in fg:
         if g["status"] != "ok" or not g.get("t2"):
             continue
-        tag = fmt_field(g['field_oe'], field_unit) if field_unit == "T" else f"{g['field_oe']:g} Oe"
+        tag = fmt_field_setpoint(g['field_oe'], field_unit)   # #14: setpoints display rounded
         out.append(Series(key=f"mf:{g['field_oe']:g}", label=tag,
                           x=list(g["t2"]), y=list(g["cp_over_t"]),
                           group=tag))
@@ -1067,7 +1087,7 @@ def series_hc_schottky_multifield(result, field_unit="Oe"):
     out = []
     for g in _schottky_groups(result):
         sc = g["schottky"]
-        tag = fmt_field(g['field_oe'], field_unit) if field_unit == "T" else f"{g['field_oe']:g} Oe"
+        tag = fmt_field_setpoint(g['field_oe'], field_unit)   # #14: setpoints display rounded
         if sc.get("t_data"):
             out.append(Series(key=f"schdata:{g['field_oe']:g}", label=tag,
                               x=list(sc["t_data"]), y=list(sc["cp_data"]), group=tag))
@@ -1108,7 +1128,7 @@ def series_hc_transition_multifield(result, field_unit="Oe"):
     """Per field group: raw Cp vs T (data points) + the fitted transition curve, group-colored."""
     out = []
     for g in _transition_groups(result):
-        trd = g["transition"]; tag = fmt_field(g['field_oe'], field_unit) if field_unit == "T" else f"{g['field_oe']:g} Oe"
+        trd = g["transition"]; tag = fmt_field_setpoint(g['field_oe'], field_unit)   # #14: setpoints display rounded
         if trd.get("t_data"):
             out.append(Series(key=f"trdata:{g['field_oe']:g}", label=tag,
                               x=list(trd["t_data"]), y=list(trd["cp_data"]), group=tag))
@@ -1122,7 +1142,7 @@ def series_hc_transition_signal(result, field_unit="Oe"):
     """Per field group: background-subtracted residual signal vs T, group-colored."""
     out = []
     for g in _transition_groups(result):
-        trd = g["transition"]; tag = fmt_field(g['field_oe'], field_unit) if field_unit == "T" else f"{g['field_oe']:g} Oe"
+        trd = g["transition"]; tag = fmt_field_setpoint(g['field_oe'], field_unit)   # #14: setpoints display rounded
         if trd.get("resid_signal"):
             out.append(Series(key=f"trsig:{g['field_oe']:g}", label=tag,
                               x=list(trd["t_data"]), y=list(trd["resid_signal"]), group=tag))

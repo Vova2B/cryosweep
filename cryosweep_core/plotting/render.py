@@ -2276,13 +2276,35 @@ def render_hc_c_over_t_linear(results, spec=None, style=None, overlay=None):
     _finish(ax, kind, spec, style, "Temperature (K)", "Cp/T (J/mol·K²)")
     return fig
 
+# #15: model -> linestyle on hc_lowt_multifield (colour is taken by the field group).
+# Display names match the GUI's fit-line checkbox labels (plot_controls.py).
+_LOWT_MODEL_LS = {"debye_t3": "-", "debye_t3_t5": "--",
+                  "spin_fluct_noninteracting": "-.", "spin_fluct_weak": ":"}
+_LOWT_MODEL_NAMES = {"debye_t3": "Debye T³", "debye_t3_t5": "Debye T³+T⁵",
+                     "spin_fluct_noninteracting": "spin-fl non-int",
+                     "spin_fluct_weak": "spin-fl weak"}
+
+
 def render_hc_lowt_multifield(results, spec=None, style=None, overlay=None):
+    """KNOWN-ISSUES #15: four fields x four models is sixteen fit curves — readable only if
+    the fit wears its FIELD's colour (matching its data series) and its MODEL's linestyle,
+    with grey linestyle proxies naming the models in the legend (the tto_wf_t field-proxy
+    idiom). The y-view is framed by the DATA: a diverging spin-fluctuation fit used to
+    stretch the axes around its own overshoot and crush every data series."""
     results, kind, spec, style, fig, ax = _setup(results, "hc_lowt_multifield", spec, style)
     if overlay is None and kind.group_colored:
         plotted, handles = _plot_data_grouped(ax, results, kind, spec, style)
     else:
         plotted = _plot_data(ax, results, kind, spec, style, overlay); handles = None
     if overlay is None and spec.fit_line:                  # N3: master fit-line toggle gates all lines
+        from cryosweep_core.plotting.catalog import fmt_field_setpoint
+        # rebuild the SAME group->colour map _plot_data_grouped used (first-appearance order)
+        groups = []
+        for _, s in plotted:
+            if s.group not in groups:
+                groups.append(s.group)
+        gcolor = _group_color_map(groups, style)
+        models_drawn = []
         want = spec.fit_lines                              # None => all per-(model,field) lines
         for r in results:
             for g in (r.data or {}).get("field_groups", []):
@@ -2296,12 +2318,31 @@ def render_hc_lowt_multifield(results, spec=None, style=None, overlay=None):
                         continue
                     xg = np.asarray(f["t2_grid"], float)
                     yg = np.asarray(f["cp_over_t_fit"], float)
-                    ln = _fit_plot(ax, xg, yg, style, label=lkey)
+                    tag = fmt_field_setpoint(g['field_oe'], style.field_unit)
+                    ln = _fit_plot(ax, xg, yg, style, series_color=gcolor.get(tag),
+                                   label=lkey, linestyle=_LOWT_MODEL_LS.get(f["key"], "-"))
+                    if f["key"] not in models_drawn:
+                        models_drawn.append(f["key"])
                     fn = _LOWT_FUNCS.get(f["key"]); prm = f.get("params") or {}
                     if fn is not None and prm and xg.size and float(xg.min()) > 0.0:
                         xe = np.linspace(0.0, float(xg.min()), 40)
                         _extrap_plot(ax, xe, fn(xe, prm), style, ln.get_color(), yg)
+        if handles is not None and models_drawn:
+            handles = handles + [Line2D([], [], color="0.35", ls=_LOWT_MODEL_LS.get(k, "-"),
+                                        label=_LOWT_MODEL_NAMES.get(k, k))
+                                 for k in models_drawn]
     _finish(ax, kind, spec, style, "T² (K²)", "Cp/T (J/mol·K²)", legend_handles=handles)
+    # Frame the view by the data series alone (fits clip at the panel edge instead of
+    # stretching the axes around their own overshoot). After _finish: its robust view
+    # already excludes gid="fit", but plain autoscale does not.
+    if spec.ymin is None and spec.ymax is None and ax.get_yscale() == "linear":
+        dy = [np.asarray(ln.get_ydata(), float) for ln in ax.lines if ln.get_gid() is None]
+        dy = np.concatenate(dy) if dy else np.array([])
+        dy = dy[np.isfinite(dy)]
+        if dy.size:
+            dlo, dhi = float(dy.min()), float(dy.max())
+            pad = _ROBUST_PAD * (dhi - dlo) if dhi > dlo else max(abs(dhi), 1e-12) * 0.1
+            ax.set_ylim(dlo - pad, dhi + pad)
     return fig
 
 def _render_param_vs_field(results, kind_key, ylabel, spec=None, style=None, overlay=None):
