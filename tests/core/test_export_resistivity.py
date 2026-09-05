@@ -24,10 +24,13 @@ def test_derived_csv_has_tc_columns(tmp_path, res_path):
     out = export_result(res, str(tmp_path / "res"), fmt="csv")
     header = Path(out["derived"]).read_text().splitlines()[0]
     # F1 (final-review): the four honesty columns are appended AFTER the Tc trio, so the
-    # original 13 keep their names and order.
+    # original 13 keep their names and order. 2026-09-05: the Arrhenius block appends after
+    # them in turn (17 -> 23) — same name-keyed growth, the header end moves with it.
     assert "tc_onset_k,tc_mid_k,tc_zero_k" in header
+    assert "rrr_std,power_law_n_sigma,power_law_n_spread,power_law_flags" in header
     assert header.endswith(
-        "rrr_std,power_law_n_sigma,power_law_n_spread,power_law_flags")
+        "arrhenius_ea_mev,arrhenius_ea_sigma_mev,arrhenius_ea_spread_mev,"
+        "arrhenius_r2,e_g_assuming_intrinsic_mev,arrhenius_flags")
 
 
 def test_derived_csv_carries_the_window_sensitivity_beside_the_number(tmp_path, res_path):

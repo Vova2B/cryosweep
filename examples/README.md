@@ -43,6 +43,12 @@ rho(T) with a resistive superconducting transition (Tc_mid ~ 8 K, RRR ~ 80) - ex
 
 **In the GUI:** Opens in the Resistivity tab: resistive transition on Ch1 (onset 8.8 / mid 8.0 / zero 7.5 K), featureless metal on Ch2, RRR ~ 80. The outlier badge counts the below-Tc points: the superconducting state sits far outside the normal-state scatter band, which is physics, not bad data.
 
+## resistivity_semiconductor.dat
+
+Semiconductor rho(T), 80-300 K: Arrhenius activated transport with a planted E_a = 60 meV - the fit reports E_a as measured, and E_g = 120 meV ONLY under the intrinsic-conduction assumption (the factor-of-two trap).
+
+**In the GUI:** Opens in the Resistivity tab: Ch1 is an insulating (semiconducting) channel and gets the Arrhenius fit - E_a = 60 meV as measured. The row also shows 'E_g = 2*E_a = 120 meV ONLY IF intrinsic': for extrinsic conduction the factor is 1, and transport alone cannot tell the regimes apart, so the assumption travels with the number everywhere it goes. Ch2 is a featureless metal and gets no Arrhenius row - the fit is gated on the insulating classification.
+
 ## hall_field_sweeps.dat
 
 R_xy(H) loops at 10 / 100 / 300 K - Hall antisymmetrization and R_H.

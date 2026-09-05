@@ -178,3 +178,113 @@ def fit_rho_powerlaw_ladder(T, rho, yunit="Ohm*cm",
     if flags != list(primary_res.quality_flags):           # FitResult is frozen: copy
         primary_res = primary_res.model_copy(update={"quality_flags": flags})
     return primary_res, ladder, n_spread
+
+
+# --------------------------- activated transport (Arrhenius) ---------------------------
+
+KB_MEV_PER_K = 8.617333262e-2   # Boltzmann constant, meV/K (CODATA exact)
+
+ARRHENIUS_SPREAD_FLOOR_MEV = 1.0
+"""window_sensitive floor for the E_a ladder spread (meV): the smallest activation-energy
+drift worth a reader's attention. Deliberately loose, NOT finely tuned — the verdict on all
+three validation datasets is identical for any floor from 0.5 to 2 meV (pinned by test); if
+that ever narrows, the noise/physics separation has collapsed and the rule needs rethinking,
+not retuning (the 1/chi-guard convention)."""
+
+ARRHENIUS_DECLINE_FLAGS = frozenset({"insufficient_rho_span", "ea_unresolved"})
+"""Flags that make E_a not a measurement. `insufficient_rho_span`: under one e-fold of rho
+change an exponential deviates from its chord by < ~12% — indistinguishable from a straight
+line at instrument scatter (measured on the corpus' ONE real insulating channel: x1.3 change
+over 3-340 K gives r2 = 0.10 and E_a drifting 0.054 -> 7.96 meV purely with the window).
+`ea_unresolved`: sigma swamps the slope. Every surface (fit line, CSV cells, GUI row,
+capability) declines on these and shows the reason instead.
+
+`window_sensitive` deliberately does NOT decline: on non-Arrhenius insulators (Mott VRH) the
+fit still measures a slope on every window — the drift across windows IS the finding, and
+hiding the number would hide it."""
+
+
+def _arrhenius_one(T, rho):
+    """OLS of ln rho vs 1/T -> E_a in meV. Reports the ACTIVATION ENERGY as measured and
+    never silently converts to a gap: for intrinsic conduction rho ~ exp(+E_g/2k_BT) so
+    E_g = 2*E_a, but for extrinsic conduction the activation is a donor/acceptor level and
+    the factor is 1 (or 1/2 under compensation) — TRANSPORT ALONE CANNOT TELL THE REGIMES
+    APART. The only gap field is therefore named `e_g_assuming_intrinsic_mev`, so the
+    assumption travels in the name everywhere the number goes."""
+    T = np.asarray(T, float); rho = np.asarray(rho, float)
+    m = np.isfinite(T) & np.isfinite(rho) & (T > 0) & (rho > 0)
+    T, rho = T[m], rho[m]
+    if T.size < 4 or float(np.ptp(T)) == 0.0:
+        raise ValueError("arrhenius fit needs >= 4 points spanning a temperature range")
+    y = np.log(rho)
+    r = linregress(1.0 / T, y)
+    ea = KB_MEV_PER_K * float(r.slope)
+    sigma = KB_MEV_PER_K * float(r.stderr)
+    flags: list[str] = []
+    if float(np.ptp(y)) < 1.0:
+        flags.append("insufficient_rho_span")
+    if sigma >= abs(ea):
+        flags.append("ea_unresolved")
+    return FitResult(
+        model="arrhenius_rho",
+        params={"e_a_mev": ea, "ln_rho0": float(r.intercept),
+                "e_g_assuming_intrinsic_mev": 2.0 * ea},
+        sigma={"e_a_mev": sigma, "e_g_assuming_intrinsic_mev": 2.0 * sigma},
+        covariance=[], r2=float(r.rvalue ** 2), n_points=int(T.size),
+        fit_range=[float(T.min()), float(T.max())],
+        units={"e_a_mev": "meV", "ln_rho0": "", "e_g_assuming_intrinsic_mev": "meV"},
+        quality_flags=flags)
+
+
+def fit_arrhenius_ladder(T, rho):
+    """(primary FitResult with ladder flags attached, ladder, ea_spread_mev, alt_models).
+
+    Ladder rungs at T >= quantile {0, 25, 50, 75}% of the fitted window — activation is a
+    whole-window statement, so rungs shrink from the low-T side (where extrinsic freeze-out
+    and VRH curvature live). Rungs carrying a decline flag are excluded from the spread (a
+    non-measurement cannot vouch for window stability). `window_sensitive` fires when the
+    spread exceeds max(3 sigma, ARRHENIUS_SPREAD_FLOOR_MEV).
+
+    alt_models: r2 of ln rho against 1/T (Arrhenius), T^-1/4 (Mott 3D VRH) and T^-1/2
+    (Efros-Shklovskii) on the SAME window — reported with the note that r2 over one window
+    cannot select a conduction mechanism, precisely so nobody can pretend it can."""
+    T = np.asarray(T, float); rho = np.asarray(rho, float)
+    primary = _arrhenius_one(T, rho)
+    ladder: list[dict] = []
+    eas: list[float] = []
+    for q in (0.0, 0.25, 0.50, 0.75):
+        tmin = float(np.quantile(T, q))
+        m = T >= tmin
+        try:
+            fr = primary if q == 0.0 else _arrhenius_one(T[m], rho[m])
+        except ValueError:
+            continue
+        ladder.append({"t_min_k": float(fr.fit_range[0]), "n_points": int(fr.n_points),
+                       "e_a_mev": float(fr.params["e_a_mev"]),
+                       "sigma_mev": float(fr.sigma["e_a_mev"]),
+                       "r2": float(fr.r2), "flags": list(fr.quality_flags)})
+        if not fr.quality_flags:
+            eas.append(float(fr.params["e_a_mev"]))
+    spread = float(max(eas) - min(eas)) if len(eas) >= 2 else None      # None, NEVER 0.0
+    flags = list(primary.quality_flags)
+    declined = bool(set(flags) & ARRHENIUS_DECLINE_FLAGS)
+    if spread is None and not declined:
+        flags.append("ladder_incomplete")
+    if (spread is not None
+            and spread > max(3.0 * float(primary.sigma["e_a_mev"]),
+                             ARRHENIUS_SPREAD_FLOOR_MEV)):
+        flags.append("window_sensitive")
+    if flags != list(primary.quality_flags):               # FitResult is frozen: copy
+        primary = primary.model_copy(update={"quality_flags": flags})
+    y = np.log(rho[np.isfinite(rho) & (rho > 0) & np.isfinite(T) & (T > 0)])
+    Tm = T[np.isfinite(rho) & (rho > 0) & np.isfinite(T) & (T > 0)]
+    alt = {"models": [], "note": ("r2 over one temperature window cannot select a conduction "
+                                  "mechanism: Arrhenius, Mott VRH and Efros-Shklovskii all "
+                                  "fit a smooth insulating rho(T) comparably well there; "
+                                  "discrimination needs a wide range or an independent probe "
+                                  "(Hall, thermopower).")}
+    for name, x in (("arrhenius", 1.0 / Tm), ("mott_vrh_3d", Tm ** -0.25),
+                    ("efros_shklovskii", Tm ** -0.5)):
+        rr = linregress(x, y)
+        alt["models"].append({"model": name, "r2": float(rr.rvalue ** 2)})
+    return primary, ladder, spread, alt

@@ -146,7 +146,7 @@ def _cw_theta_row(data: dict) -> str:
     return head + " — WINDOW-SENSITIVE: " + "; ".join(parts)
 
 
-from cryosweep_core.fitting.transport import POWER_LAW_DECLINE_FLAGS
+from cryosweep_core.fitting.transport import POWER_LAW_DECLINE_FLAGS, ARRHENIUS_DECLINE_FLAGS
 
 
 def _rho_powerlaw_row(pl: dict, ladder: list | None, n_spread) -> str:
@@ -187,6 +187,34 @@ def _rho_powerlaw_row(pl: dict, ladder: list | None, n_spread) -> str:
     if nsig is not None:
         parts.append(f"σ_stat {nsig:.3g}"
                      " (fit scatter only, not the uncertainty on n)")
+    joiner = " — WINDOW-SENSITIVE: " if sensitive else "; "
+    return head + joiner + "; ".join(parts)
+
+
+def _arrhenius_row(ar: dict, spread) -> str:
+    """Activated-transport row — same idiom as _rho_powerlaw_row. E_a is reported AS
+    MEASURED; the gap line says ONLY IF intrinsic (the factor-of-two trap), and a declined
+    fit reports why with the numbers behind the refusal, never a headline E_a."""
+    flags = list(ar.get("quality_flags") or [])
+    declined = [f for f in flags if f in ARRHENIUS_DECLINE_FLAGS]
+    ea = (ar.get("params") or {}).get("e_a_mev")
+    sig = (ar.get("sigma") or {}).get("e_a_mev")
+    if declined:
+        bits = [f"declined — {', '.join(declined)}"]
+        if ea is not None and sig is not None:
+            bits.append(f"E_a would be {float(ea):.3g} meV with σ_stat {float(sig):.3g}")
+        if ar.get("r2") is not None:
+            bits.append(f"r² {float(ar['r2']):.3g}")
+        return "; ".join(bits)
+    sensitive = "window_sensitive" in flags
+    head = f"E_a ≈ {float(ea):.0f} meV" if sensitive else f"E_a = {float(ea):.3g} meV"
+    parts = [f"E_g = 2·E_a = {2 * float(ea):.3g} meV ONLY IF intrinsic"]
+    if spread is not None:
+        parts.append(f"E_a(window spread) = {float(spread):.3g} meV")
+    if flags:
+        parts.append("flags: " + ", ".join(flags))
+    if sig is not None:
+        parts.append(f"σ_stat {float(sig):.3g} (fit scatter only)")
     joiner = " — WINDOW-SENSITIVE: " if sensitive else "; "
     return head + joiner + "; ".join(parts)
 
@@ -268,6 +296,10 @@ def flatten_rows(data: dict) -> list[tuple[str, str]]:
                 rows.append((f"ch{ch}.ρ = ρ₀ + A·Tⁿ",
                              _rho_powerlaw_row(pl, b.get("power_law_ladder"),
                                                b.get("power_law_n_spread"))))
+            ar = b.get("arrhenius")
+            if ar:
+                rows.append((f"ch{ch}.ρ = ρ₀·exp(E_a/k_BT)",
+                             _arrhenius_row(ar, b.get("arrhenius_ea_spread_mev"))))
             for c in b.get("rho_h_curves") or []:
                 mr = c.get("mr_percent_at_max_field")
                 t = c.get("held_temp_k")
