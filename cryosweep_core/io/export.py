@@ -37,6 +37,50 @@ def _export_hall(result, stem) -> dict:
     return out
 
 
+def _export_hall_tdep(result, stem) -> dict:
+    """Per-point CSV for the temp-dep Hall reconstruction. Before 2026-09-05 (KNOWN-ISSUES
+    21) hall_tdep fell through to the probe-generic exporter, whose point-column scan finds
+    no top-level numeric lists on this schema — the CSV was an EMPTY shell. New file, no
+    existing readers to break; columns name-keyed like every other probe."""
+    d = result.data
+    out = {}
+    pts = d.get("points", [])
+    pp = stem.with_suffix(".points.csv")
+    fields = ["temperature (K)", "R_H (m^3/C)", "r_h_method", "r2", "antisym_points",
+              "carrier_n (1/m^3)", "carrier_type", "rho_xx (Ohm*m)", "mobility (m^2/Vs)",
+              "low_confidence", "excitation (uA)", "current_density_J (A/m^2)"]
+    with pp.open("w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=fields); w.writeheader()
+        for p_ in pts:
+            w.writerow({"temperature (K)": p_.get("temperature"),
+                        "R_H (m^3/C)": p_.get("R_H"),
+                        "r_h_method": p_.get("r_h_method"),
+                        "r2": p_.get("r2"),
+                        "antisym_points": p_.get("antisym_points"),
+                        "carrier_n (1/m^3)": p_.get("carrier_n"),
+                        "carrier_type": p_.get("carrier_type"),
+                        "rho_xx (Ohm*m)": p_.get("rho_xx"),
+                        "mobility (m^2/Vs)": p_.get("mobility"),
+                        "low_confidence": p_.get("low_confidence"),
+                        "excitation (uA)": p_.get("excitation_uA"),
+                        "current_density_J (A/m^2)": p_.get("current_density_J")})
+    out["points"] = str(pp)
+    cap = stem.with_suffix(".capabilities.csv")
+    with cap.open("w", newline="") as f:
+        w = csv.writer(f); w.writerow(["name", "applicable", "reason"])
+        for c in d.get("capabilities", []):
+            w.writerow([c["name"], c["applicable"], c["reason"]])
+    out["capabilities"] = str(cap)
+    meta = {"source": result.provenance.file, "sha256": result.provenance.sha256,
+            "hall_channel": d.get("hall_channel"), "thickness_m": d.get("thickness_m"),
+            "sample_width_m": d.get("sample_width_m"),
+            "longitudinal_source": d.get("longitudinal_source"),
+            "config": result.provenance.config}
+    mp = stem.with_suffix(".meta.json"); mp.write_text(json.dumps(meta, indent=2, sort_keys=True))
+    out["meta"] = str(mp)
+    return out
+
+
 def _export_resistivity(result, stem) -> dict:
     d = result.data
     out = {}
@@ -493,6 +537,8 @@ def export_result(result, stem, fmt="csv") -> dict:
         return _export_resistivity(result, stem)
     if d.get("probe") == "hall":
         return _export_hall(result, stem)
+    if d.get("probe") == "hall_tdep":
+        return _export_hall_tdep(result, stem)
     if d.get("probe") == "heatcapacity":
         return _export_heatcapacity(result, stem)
     # Probe-generic point columns: any data key whose value is a list of numbers

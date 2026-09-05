@@ -922,7 +922,9 @@ def series_hall_rh_n_twin(result, field_unit="Oe"):
 
 
 def series_hall_tdep_j_t(result, field_unit="Oe"):
-    """Current density J vs T — gated; returns [] when J absent (always None currently)."""
+    """Current density J vs T — gated; [] when J absent (J = I/(w·t) activates only when
+    sample width and thickness are both supplied; a constant-drive file draws a flat
+    line, which is the honest result)."""
     pts = _tdep_points(result, "current_density_J")
     if not pts:
         return []

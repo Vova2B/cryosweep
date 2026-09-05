@@ -457,15 +457,22 @@ def test_hall_tdep_summary_j_absent_gives_two_axes(hall_tdep_synth_path):
 def test_hall_tdep_summary_j_present_gives_three_color_matched_axes(hall_tdep_synth_path):
     res = _tdep_res(hall_tdep_synth_path)
     for i, p in enumerate(res.data["points"]):
-        p["current_density_J"] = 1.0e4 + i              # hand-add J (never produced by analyzer)
+        p["current_density_J"] = 1.0e4 + i              # hand-add J (analyzer needs width+thickness)
     fig = render_kind(res, "hall_tdep_summary")
     assert len(fig.axes) == 3
     host, tax, oax = fig.axes
     assert host.yaxis.label.get_color() == "C0"
     assert tax.yaxis.label.get_color() == "C3"
     assert oax.yaxis.label.get_color() == "C2"
+    # KNOWN-ISSUES 21: the J spine position is MEASURED, not the old fixed 1.18 — it starts
+    # there and moves outward until it clears the mu label's realized extent. The invariant
+    # is the clearance, not a magic number.
     pos_type, pos_val = oax.spines["right"].get_position()
-    assert pos_type == "axes" and pos_val == pytest.approx(1.18)
+    assert pos_type == "axes" and pos_val >= 1.18 - 1e-9
+    fig.canvas.draw()
+    rend = fig.canvas.get_renderer()
+    assert (oax.spines["right"].get_window_extent(rend).x0
+            >= tax.yaxis.label.get_window_extent(rend).x1)
 
 
 def test_hall_tdep_summary_merged_legend_three_entries(hall_tdep_synth_path):

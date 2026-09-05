@@ -2657,9 +2657,9 @@ def render_hall_two_panel(results, spec=None, style=None, overlay=None):
 def render_hall_tdep_summary(results, spec=None, style=None, overlay=None):
     """R_H (left) / mobility (first twin) / J (offset second twin, when present) vs a shared T
     axis -- port of Step3_Hall_fit_field_dep_Mobility_sept.py:554-614's triple-axis summary
-    figure. The J axis appears only when >=1 point carries current_density_J (always None on
-    real analyzer output today); absent J degrades cleanly to a two-axis figure (no dead third
-    spine). Each axis carries exactly one series, so per-axis robust view (`_apply_robust_view`)
+    figure. The J axis appears only when >=1 point carries current_density_J (populated since
+    KNOWN-ISSUES 21: J = I/(w*t), gated on width AND thickness both supplied); absent J
+    degrades cleanly to a two-axis figure (no dead third spine). Each axis carries exactly one series, so per-axis robust view (`_apply_robust_view`)
     is well-defined and applied to the host + every twin/offset axis (real data: a single
     pathological R_H point at one T can crush the whole left-axis view otherwise)."""
     if overlay is not None:
@@ -2716,6 +2716,31 @@ def render_hall_tdep_summary(results, spec=None, style=None, overlay=None):
     if oax is not None:
         _apply_robust_view(oax, spec, style)
     _apply_frame(ax, style, spec)
+    # First real exercise of the third axis (KNOWN-ISSUES 21) showed _offset_axis's fixed
+    # pos=1.18 colliding with the mu axis' realized tick+label extents at >=14 pt: measure
+    # the first twin's tight bbox and push the J spine past it — placement by measurement,
+    # the same rule as the legend/inset/label choosers. No-op at small fonts (max with the
+    # shipped 1.18 keeps those figures byte-identical when the labels already fit).
+    if tax is not None and oax is not None:
+        # Convergence loop, not a one-shot: constrained_layout re-flows after every spine
+        # move, shifting the pixel geometry the measurement was taken in. Three passes
+        # settle on every case measured (9/14 pt); the loop exits early once the J spine
+        # clears the mu label's realized right edge.
+        for _ in range(15):
+            fig.canvas.draw()
+            rend = fig.canvas.get_renderer()
+            mu_x1 = tax.yaxis.label.get_window_extent(rend).x1
+            sp_x = oax.spines["right"].get_window_extent(rend).x0
+            if sp_x >= mu_x1 + 4:
+                break
+            axbb = ax.get_window_extent(rend)
+            # 2x overshoot on the measured shortfall: every spine move consumes right
+            # margin, constrained_layout shrinks the axes and the mu label chases the
+            # spine, so a same-geometry step undershoots in the re-flowed one (measured:
+            # 3 exact steps left 23 px short; 8 at 1.5x still 4.5 px short at 14 pt).
+            cur = float(oax.spines["right"].get_position()[1])
+            shortfall_frac = (mu_x1 + 8 - sp_x) / max(axbb.width, 1e-9)
+            oax.spines["right"].set_position(("axes", cur + 2.0 * shortfall_frac))
     _merged_legend(ax, handles, labels, style, spec)
     return fig
 

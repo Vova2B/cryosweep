@@ -72,6 +72,12 @@ class HallTDepPoint(BaseModel):
     carrier_n_sigma_instrument: float | None = None
     mobility_sigma_instrument: float | None = None
     sigma_zero_dof: bool = False
+    # --- KNOWN-ISSUES 21 (2026-09-05, appended last: append-only JSON key order) ---
+    # Instrument-REPORTED excitation current at this T (median of the hall channel's
+    # rows within +-temp_interval/2). What the instrument reports need not equal the
+    # requested drive. current_density_J above becomes I/(w*t) when sample width AND
+    # thickness are both supplied; otherwise it stays None (gated, never guessed).
+    excitation_uA: float | None = None
 
 
 class HallTDepStage(BaseModel):
@@ -118,6 +124,7 @@ class HallTempDepData(BaseModel):
     interp_curves: list[InterpCurve] = []
     dual_method: list[DualMethodPoint] = []
     capabilities: list[Capability] = []
+    sample_width_m: float | None = None     # provenance of J = I/(w*t); None -> J gated off
 
 
 # ---- pure helpers ----------------------------------------------------------
@@ -548,6 +555,39 @@ def _sigma_mu_J(pt, rho_fn):
     return pt
 
 
+def _fill_excitation_and_J(points, df, cmap, hall_channel, temp_interval,
+                           width_m, thickness_m):
+    """Report the instrument's excitation current per T point, and J when geometry allows.
+
+    I = median of the hall channel's finite `Bridge N Excitation (uA)` rows within
+    +-temp_interval/2 of the point's grid T — a local median over measured rows, never an
+    interpolation (nothing is fabricated between rows). J = I/(w*t) activates only when
+    sample width AND thickness are both supplied (KNOWN-ISSUES 21, owner decision): an
+    ungated J on unset geometry would be scale-arbitrary, the exact failure the
+    resistivity geometry-unset warning names. uA/mm^2 == A/m^2, so with w and t in metres
+    J[A/m^2] = I[uA]*1e-6 / (w*t).
+    """
+    ekey = f"excitation_ch{hall_channel}"
+    if ekey not in cmap.logical:
+        return
+    T = pd.to_numeric(df[cmap.logical["temperature"]], errors="coerce").to_numpy(float)
+    I = pd.to_numeric(df[cmap.logical[ekey]], errors="coerce").to_numpy(float)
+    m = np.isfinite(T) & np.isfinite(I)
+    T, I = T[m], I[m]
+    if not len(T):
+        return
+    half = temp_interval / 2.0
+    for pt in points:
+        sel = np.abs(T - pt.temperature) <= half
+        if not sel.any():
+            continue
+        pt.excitation_uA = float(np.median(I[sel]))
+        if width_m is not None and thickness_m is not None:
+            area_m2 = width_m * thickness_m
+            if area_m2 > 0:
+                pt.current_density_J = float(pt.excitation_uA * 1e-6 / area_m2)
+
+
 # ---- capabilities assembler -----------------------------------------------
 
 def _capabilities(points, has_thickness, long_source, has_dual, min_antisym_pts=3):
@@ -571,6 +611,16 @@ def _capabilities(points, has_thickness, long_source, has_dual, min_antisym_pts=
                    reason="field-sweep loops also present" if has_dual
                    else "no field sweeps in file"),
     ]
+    any_J = any(p.current_density_J is not None for p in points)
+    any_I = any(p.excitation_uA is not None for p in points)
+    caps.append(Capability(
+        name="current_density",
+        applicable=any_J,
+        reason=("J = I/(w*t) from --width-mm and thickness; I is the instrument-reported "
+                "excitation, which need not equal the requested drive" if any_J else
+                ("sample width required (--width-mm); excitation current I is still "
+                 "reported per point" if any_I else
+                 "no excitation column in this file"))))
     n_two_point = sum(1 for p in points if getattr(p, "r_h_method", None) == "2point")
     caps.append(Capability(name="two_point_extended", applicable=n_two_point > 0,
                 reason=(f"{n_two_point} extra T via 0-field+1 estimate" if n_two_point
@@ -635,6 +685,9 @@ class HallTempDepAnalyzer:
                                              sd_curves=sd_curves)
         for p in points:
             _sigma_mu_J(p, rho_fn)
+        width_m = (cfg.geometry.width_mm * 1e-3) if cfg.geometry.width_mm else None
+        _fill_excitation_and_J(points, df, cmap, hc.hall_channel, hc.temp_interval,
+                               width_m, thickness_m)
 
         # --- dual-method: field sweeps present in same file ---
         fsegs = [s for s in segment_sweeps(df, cmap, cfg) if s.swept.name == "field"]
@@ -673,6 +726,7 @@ class HallTempDepAnalyzer:
             interp_curves=interp,
             dual_method=dual,
             capabilities=caps,
+            sample_width_m=width_m,
         )
 
         # thickness omitted -> R_H is unscaled (all None); report the true cause, not "no fit"

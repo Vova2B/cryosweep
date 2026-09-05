@@ -17,12 +17,14 @@ class HallInputPanel(InputPanel):
         self.thickness_unit = QComboBox(); self.thickness_unit.addItems(["mm", "um", "nm"])
         self.geometry_sign = QComboBox(); self.geometry_sign.addItems(["+1", "-1"])
         self.long_channel_edit = QLineEdit(); self.long_channel_edit.setPlaceholderText("bridge # (optional, mobility)")
+        self.width_edit = QLineEdit(); self.width_edit.setPlaceholderText("mm (optional, for J)")
         self.long_file_btn = QPushButton("Choose longitudinal file…")
         self.long_file_label = QLabel("(same file)")
         form.addRow("Hall channel", self.hall_channel_edit)
         form.addRow("Thickness", self.thickness_edit)
         form.addRow("Thickness unit", self.thickness_unit)
         form.addRow("Geometry sign", self.geometry_sign)
+        form.addRow("Width", self.width_edit)
         form.addRow("Longitudinal channel", self.long_channel_edit)
         form.addRow("Longitudinal file", self.long_file_btn)
         form.addRow("", self.long_file_label)
@@ -35,6 +37,7 @@ class HallInputPanel(InputPanel):
         self.thickness_unit.currentTextChanged.connect(lambda *_: self.refit_requested.emit())
         self.thickness_edit.editingFinished.connect(self.refit_requested)
         self.long_channel_edit.editingFinished.connect(self.refit_requested)
+        self.width_edit.editingFinished.connect(self.refit_requested)
 
     def _choose_long_file(self):
         path, _ = QFileDialog.getOpenFileName(self, "Longitudinal file", "", "PPMS data (*.dat);;All files (*)")
@@ -63,11 +66,18 @@ class HallInputPanel(InputPanel):
             hall["longitudinal_channel"] = int(lch)
         if self._long_file:
             hall["longitudinal_file"] = self._long_file
-        return {"hall": hall}
+        ov = {"hall": hall}
+        w = opt_float(self.width_edit.text())
+        if w is not None:
+            # J = I/(w*t) capability: width rides the existing SampleGeometry route
+            # (the same override key the resistivity panel uses), never a new flag.
+            ov["geometry"] = {"width_mm": w}
+        return ov
 
     def get_state(self) -> dict:
         return {"hall_channel": self.hall_channel_edit.text(),
                 "thickness": self.thickness_edit.text(),
+                "width": self.width_edit.text(),
                 "thickness_unit": self.thickness_unit.currentText(),
                 "geometry_sign": self.geometry_sign.currentText(),
                 "long_channel": self.long_channel_edit.text(),
@@ -76,6 +86,7 @@ class HallInputPanel(InputPanel):
     def set_state(self, state: dict) -> None:
         self.hall_channel_edit.setText(state.get("hall_channel", ""))
         self.thickness_edit.setText(state.get("thickness", ""))
+        self.width_edit.setText(state.get("width", ""))
         for combo, key, default in ((self.thickness_unit, "thickness_unit", "mm"),
                                     (self.geometry_sign, "geometry_sign", "+1")):
             combo.blockSignals(True)                 # restore must not emit refit_requested

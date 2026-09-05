@@ -131,3 +131,20 @@ def test_hall_panel_sign_change_requests_refit(qapp):
     # set_state per file entry -> would recurse)
     p.set_state({"geometry_sign": "+1"})
     assert len(hits) == 1
+
+
+def test_hall_panel_width_feeds_geometry_and_roundtrips(qapp):
+    """KNOWN-ISSUES 21: the width field activates J = I/(w*t). It rides the existing
+    SampleGeometry override route (the resistivity panel's key), never a new flag, and
+    survives the get_state/set_state round trip like every other input."""
+    import cryosweep_gui.inputs.hall   # noqa: F401
+    from cryosweep_gui.inputs.base import build_panel
+    p = build_panel("hall_tdep")
+    p.width_edit.setText("2.0")
+    ov = p.build_overrides()
+    assert ov["geometry"] == {"width_mm": 2.0}
+    q = build_panel("hall_tdep")
+    q.set_state(p.get_state())
+    assert q.build_overrides() == ov
+    q.set_state({})                                   # blank state clears it
+    assert "geometry" not in q.build_overrides()

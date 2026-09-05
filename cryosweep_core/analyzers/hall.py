@@ -185,6 +185,13 @@ def _capabilities(points, has_thickness, long_source) -> list[Capability]:
         Capability(name="mobility", applicable=any_mu,
                    reason=f"mu = |R_H|/rho_xx ({long_source})" if any_mu
                    else "no longitudinal channel/file supplied for rho_xx"),
+        # Recognized-but-deferred (2026-09-05): decomposing rho_xy = R0*B + R_s*mu0*M
+        # requires M(H) of the SAME sample, which no file in this corpus provides. See
+        # docs/physics-reference.md, "Anomalous Hall effect".
+        Capability(name="anomalous_hall", applicable=False,
+                   reason="requires M(H) of the same sample measured in a magnetometer "
+                          "(VSM/MPMS); without it R0 and the anomalous term are not "
+                          "separable and no partial extraction is defensible"),
     ]
 
 
