@@ -36,12 +36,19 @@ empty — on `hall_temperature_dependence.dat` the same inset lands in genuinely
 looks correct, because that curve rises; this one is flat, so the fixed position sits on data.
 
 **2. Two different estimators are drawn in one R_H(T) panel with no visual separation.**
+*FIXED 2026-09-05 (d7ce963): the 0-field+1 fallback series is drawn visually secondary —
+hollow markers + dashed connector, keyed off its existing `role="two_point"` tag — and when
+both estimator families share the panel a title-slot note (width-fitted to the canvas) says
+the step between them is a change of method, not physics.*
 `examples/hall_temperature_dependence.dat`: `R_H (antisym)` covers 18–40 K at −3.0e−7 m³/C and
 the `R_H (0-field+1)` fallback covers 41–55 K at −2.5e−7, producing an apparent **20 % step at
 ~40 K that is a change of method, not physics**. The legend distinguishes them; nothing warns
 the reader not to read the discontinuity as a result.
 
-**3. Axis offset notation is unreadable at Hall magnitudes.**
+**3. Axis offset notation is unreadable at Hall magnitudes.** *FIXED 2026-09-05
+(d7ce963): the R_H axes (`hall_rh_t`, `hall_tdep_RH_T`) disable the ScalarFormatter offset
+and use a mathtext scale, so the header reads ×10⁻⁷ over absolute-valued ticks
+(−2.50000 …) and the headline R_H reads straight off the axis.*
 `examples/hall_field_sweeps.dat`, `hall_tdep_r_h_t`: the y-axis header renders as
 `1e-11-2.5e-7` — matplotlib's scale and offset concatenated. The headline value the docs
 advertise (R_H = −2.5e−7 m³/C) cannot be recovered from the plot.
@@ -62,14 +69,21 @@ whose data genuinely fills the panel still relocates, measured rather than assum
 `thermal_transport.dat` and `ac_susceptibility.dat` spent 20–25 % of canvas width on a
 **two-entry** legend, squeezing the panels.
 
-**6. No top headroom.** The κ peak (`thermal_transport.dat`, panel a) and the χ′ high-T plateau
-(`ac_susceptibility.dat`, top panel) touch the axes frame.
+**6. No top headroom.** *FIXED 2026-09-05 (4fb8654): a measured top-headroom pass raises
+the frame so the topmost data point keeps ≥8 % of the span clear (the old 5 % margin was
+eaten by the 7 pt marker glyph, and the χ″ peak tip was actually clipped at −0.5 %);
+bounded so a robust-view exclusion of a far outlier is never re-opened.* The κ peak
+(`thermal_transport.dat`, panel a) and the χ′ high-T plateau (`ac_susceptibility.dat`, top
+panel) touch the axes frame.
 
 **7. Large fields are labelled in Oe.** Legends read `90000 Oe` / `100000 Oe` rather than 9 T /
 10 T. There is a global Oe↔T display toggle and Oe is the deliberate default, so this is a
 default-choice question, not a bug — but at these magnitudes it costs readability.
 
-**8. A zero-field curve omits its field in TTO legends.** `thermal_transport.dat` reads
+**8. A zero-field curve omits its field in TTO legends.** *FIXED 2026-09-05 (4fb8654): on
+a multi-field file every curve names its field — the |H| < 50 Oe zero-field convention
+collapses the instrument's 0.077 Oe reading to a nominal `0 Oe, cooling`. Single-field
+files keep direction-only labels.* `thermal_transport.dat` read
 `cooling` for the zero-field curve beside `90000 Oe, cooling` for the other.
 
 ## Reporting
@@ -94,7 +108,11 @@ it everywhere else.
 
 ## CLI
 
-**10. `cryosweep plots <file>` ignores the file.** `probes`, `fits`, `plots` and `observables`
+**10. `cryosweep plots <file>` ignores the file.** *FIXED 2026-09-05 (bf24f96): with a
+file, the dump's `plots` filters to the detected probe and each entry carries `available`
+— whether its series builder yields anything against this analyzed result, the same
+predicate `reconcile_layout` uses for "backed" — plus top-level `probe`/`file`. The
+no-file dump is byte-identical to before.* `probes`, `fits`, `plots` and `observables`
 all emit the *same* global registry dump — verified byte-identical — so `plots` on a resistivity
 file lists ACMS kinds. There is no way to ask which kinds a given file can actually draw, which
 is exactly what you want after a render returns `data.plot: null` with
@@ -117,22 +135,35 @@ per-field magnetic overlays (explicit opt-ins) are untouched.*
 `heat_capacity.dat`, `hc_entropy_vs_t`: "S magnetic" appeared with a dashed swatch although no
 visible dashed curve existed, sending the reader hunting for a curve that was not there.
 
-**13. The `vsm_mh` low-field panel does not rescale its y-axis.**
+**13. The `vsm_mh` low-field panel does not rescale its y-axis.** *FIXED 2026-09-05
+(32ca24a): the zoom panel's y-view is fitted to the data inside its ±10 % field window,
+padded like the robust view; the main panel is untouched.*
 `magnetization_vsm_multifield.dat`: the right-hand "low field" panel inherits the full-range
 y-limits (0–0.55 µ_B) while its data spans 0–0.06, so the zoom panel is ~80 % empty and shows
 a short line in one corner — the opposite of what a zoom panel is for.
 
-**14. Field setpoint labels print raw floats.** `heat_capacity_multifield.dat`,
+**14. Field setpoint labels print raw floats.** *FIXED 2026-09-05 (7f708b5):
+`fmt_field_setpoint` display-rounds held-field labels — |H| < 50 Oe collapses to the
+nominal 0, the rest to 4 significant figures — so the legend reads 0 / 50000 / 100000 /
+130000 Oe. Display only; group keys and exported values keep the measured median. Tesla
+display remains the item-7 default question.* `heat_capacity_multifield.dat`,
 `hc_lowt_multifield`: the legend reads `0.524968 Oe`, `50000.5 Oe`, `100001 Oe`, `130000 Oe`
 for what `examples/README.md` correctly calls 0 / 5 / 10 / 13 T. Nominal zero field is printed
 to six significant figures. Setpoint labels should be rounded and, at these magnitudes, shown
 in tesla.
 
-**15. Multi-field low-T fits are unreadable.** Same figure: four fields × four low-T models
+**15. Multi-field low-T fits are unreadable.** *FIXED 2026-09-05 (7f708b5): each fit
+wears its field's colour (matching its data series) and its model's linestyle, with grey
+linestyle proxies naming the four models in the legend; the y-view is framed by the data
+alone, so a diverging fit clips at the panel edge instead of stretching the axes around
+its own overshoot.* Same figure: four fields × four low-T models
 draws sixteen curves whose colours do not match their data series, several of which overshoot
 the axes entirely. Which fit belongs to which field cannot be read off the plot.
 
-**16. `tto_lorenz_t` cannot show the thing it exists to show.** `thermal_transport.dat`: L/L₀
+**16. `tto_lorenz_t` cannot show the thing it exists to show.** *FIXED 2026-09-05
+(4fb8654): the kind is log-y by default and the view is extended to bracket L/L₀ = 1, so
+the divergence, the full curve and the labelled Wiedemann–Franz reference are all visible;
+`yscale: linear` still restores the old view.* `thermal_transport.dat`: L/L₀
 diverges at low T, so the linear y-axis runs to ~200 (`×10²`), the curve is clipped at the top,
 and the **Wiedemann-Franz reference line at L/L₀ = 1 — the entire point of the panel — is
 flattened onto the bottom axis**, where its annotation also collides with the data. This panel
@@ -141,6 +172,12 @@ wants a logarithmic y-axis.
 ## GUI
 
 **17. The "Colour…" button is clipped out of the left panel at the default width.**
+*FIXED 2026-09-05 (b83cbac): root cause was the preset bar's four buttons carrying the
+platform style's 80 px minimum against their own 64 px maximum, forcing the left panel's
+minimum to ~392 px. An explicit 48 px minimum restores the intended geometry, the
+splitter's initial left pane is measured from the content instead of a fixed 300 px
+(screenshot-verified at the 1100×650 default), and the scroll area's horizontal policy is
+AsNeeded so a future overflow shows a scrollbar instead of silently clipping controls.*
 `cryosweep_gui/file_manager.py:23` gives each of the three file-row buttons
 `setMaximumWidth(120)` — up to 360 px plus spacing — inside a panel whose minimum width is
 280 px (`probe_tab.py:49`), and the enclosing scroll area sets
@@ -239,7 +276,10 @@ Consequences: `hall_tdep_J_T` renders zero series, and `hall_tdep_summary` silen
 from three axes to two. Implementing it needs `Bridge N Excitation (uA)` canonicalized (it
 currently has zero hits in `cryosweep_core`) and the honest quantity is J = I/A.
 
-**22. "Save plot" saves the first plot, not the one on screen.** The figure that button writes
+**22. "Save plot" saves the first plot, not the one on screen.** *FIXED 2026-09-05
+(b83cbac): `last_figure` is a derived property — the focused card's figure in Focus mode,
+else the first card that has one — never a stored snapshot, so Save plot writes exactly
+what is on screen.* The figure that button writes
 is captured once while the layout renders — `cryosweep_gui/output_panel.py:670` assigns
 `last_figure` from the first card that has one, guarded by `and self.last_figure is None`, and
 nothing updates it afterwards. Focus mode steps a separate index (`output_panel.py:476`), so
@@ -248,8 +288,8 @@ any file with more than one plot in the layout.
 
 Choosing plots explicitly *does* work: the neighbouring **"Export plots…"** button
 (`cryosweep_gui/probe_tab.py:74`) opens a dialog with a checkbox per plot, PNG/PDF/SVG, DPI,
-tight crop and exact-mm sizing. Use that until this is fixed. Scheduled for 1.0 — see
-[ROADMAP.md](ROADMAP.md).
+tight crop and exact-mm sizing. That remains the way to save a chosen *set* of plots;
+the single-plot button now follows the screen (see [ROADMAP.md](ROADMAP.md), done).
 
 ## Display (found while verifying the item-1 fix, 2026-09-04)
 
@@ -267,6 +307,9 @@ fixed-position class as items 1 and 4: `Dulong–Petit` covered 93 of 858 points
 overprinting each other): this is line labels over the measured curve itself.
 
 **24. The Hall summary's third axis clips its label at the default canvas size.**
+*FIXED 2026-09-05 (d7ce963): constrained layout cannot see an offset spine, so the
+renderer now measures the J axis' realized right-side extent and reserves exactly that
+band via the layout rect, convergently; the label reads cleanly at the bare default.*
 `examples/hall_mixed_sweeps.dat`, `hall_tdep_summary` with a width supplied (so the J axis
 exists at all — see item 21): the offset right-hand spine carries its `J (A/m²)` label past
 the figure's right edge, where it is cut off. Reproduced through `cryosweep plot`, which
