@@ -30,7 +30,8 @@ def _res():
 def test_setpoint_labels_are_rounded_display_values():
     from cryosweep_core.plotting.catalog import series_hc_lowt_multifield
     labels = {s.label for s in series_hc_lowt_multifield(_res())}
-    assert labels == {"0 Oe", "50000 Oe", "100000 Oe", "130000 Oe"}
+    # kOe above 10 kOe since KNOWN-ISSUES #7 (the rounding under test is unchanged)
+    assert labels == {"0 Oe", "50 kOe", "100 kOe", "130 kOe"}
 
 
 def test_fit_lines_wear_their_field_groups_colour():

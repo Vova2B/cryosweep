@@ -56,7 +56,7 @@ def test_zero_field_curve_names_its_field_when_other_fields_present():
     from cryosweep_core.plotting.catalog import series_tto_kappa_t
     labels = [s.label for s in series_tto_kappa_t(_analyzed("examples/thermal_transport.dat"))]
     assert "0 Oe, cooling" in labels                # |H| < 50 Oe is the zero-field convention
-    assert "90000 Oe, cooling" in labels
+    assert "90 kOe, cooling" in labels       # kOe above 10 kOe since KNOWN-ISSUES #7
     assert "cooling" not in labels                  # no field-less orphan next to a named one
 
 

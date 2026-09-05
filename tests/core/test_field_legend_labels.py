@@ -24,7 +24,7 @@ def test_rho_t_label_reads_tesla_keys_unchanged():
         {"temperature": [10.0, 20.0], "rho": [1.0, 2.0], "held_field_oe": 90000.0, "direction": 0}]}]})
     oe = KINDS["resistivity_rho_t"].series(one, field_unit="Oe")
     t = KINDS["resistivity_rho_t"].series(one, field_unit="T")
-    assert oe[0].label == "90000 Oe"
+    assert oe[0].label == "90 kOe"           # kOe above 10 kOe since KNOWN-ISSUES #7
     assert t[0].label == "9 T"
     assert oe[0].key == t[0].key                       # KEY unit-invariant
 
@@ -34,7 +34,7 @@ def test_lowt_multifield_labels_and_group_tesla_keys_unchanged():
     oe = KINDS["hc_lowt_multifield"].series(res, field_unit="Oe")
     t = KINDS["hc_lowt_multifield"].series(res, field_unit="T")
     assert oe and len(oe) == len(t)
-    assert all(s.label.endswith(" Oe") for s in oe)
+    assert all(s.label.endswith((" Oe", " kOe")) for s in oe)   # kOe >= 10 kOe (#7)
     assert all(s.label.endswith(" T") for s in t)
     assert [s.group for s in t] == [s.label for s in t]      # group tracks label
     assert [s.key for s in oe] == [s.key for s in t]         # KEYS identical

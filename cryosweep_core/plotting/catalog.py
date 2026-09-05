@@ -53,13 +53,22 @@ def _arr(d, key):
     return np.asarray(d.get(key) or [], float)
 
 
+# |H| at or above this formats as kOe ('90 kOe', not '90000 Oe') — KNOWN-ISSUES #7, owner
+# decision 2026-09-05: keep the Oe unit system (no Tesla default, no mixed-unit legends),
+# fix the readability of 5-6 digit labels with a k prefix. 10 kOe is deliberate: it leaves
+# the low-field regime where Curie-Weiss fits live — and the MPMS oracle's 1000 Oe labels —
+# byte-identical.
+FIELD_KOE_THRESHOLD_OE = 10000.0
+
+
 def fmt_field(value_oe, unit="Oe"):
-    """Format a field magnitude for a label. Oe -> '500 Oe'; T -> 3-sig-fig Tesla with
-    trailing zeros trimmed ('9999'->'1 T', '10000'->'1 T', '500'->'0.05 T', '40000'->'4 T',
-    '137000'->'13.7 T'). NaN/None/non-finite -> '' (caller already guards). This IS the
-    single source of truth for field labels — five call sites used to bypass the Oe path
-    with inline ternaries and were collapsed here, so a change to this function reaches
-    every legend."""
+    """Format a field magnitude for a label. Oe -> '500 Oe' below 10 kOe, '90 kOe' at or
+    above `FIELD_KOE_THRESHOLD_OE` (trailing zeros trimmed: '45500' -> '45.5 kOe');
+    T -> 3-sig-fig Tesla with trailing zeros trimmed ('9999'->'1 T', '10000'->'1 T',
+    '500'->'0.05 T', '40000'->'4 T', '137000'->'13.7 T'). NaN/None/non-finite -> ''
+    (caller already guards). This IS the single source of truth for field labels — five
+    call sites used to bypass the Oe path with inline ternaries and were collapsed here,
+    so a change to this function reaches every legend."""
     if value_oe is None:
         return ""
     try:
@@ -73,6 +82,8 @@ def fmt_field(value_oe, unit="Oe"):
         # instrument field (e.g. 0.481 Oe on a nominal zero-field ramp) reads "0 T"
         # instead of scientific-notation clutter ("4.81e-05 T").
         return f"{round(v) / 1e4:.3g} T"
+    if abs(v) >= FIELD_KOE_THRESHOLD_OE:
+        return f"{v / 1000.0:g} kOe"
     return f"{v:g} Oe"
 
 

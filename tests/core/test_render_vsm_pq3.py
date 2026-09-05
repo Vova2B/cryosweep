@@ -733,7 +733,8 @@ def test_tblocks_same_field_chi_t_both_quantities():
 
 def test_tblocks_multi_field_labels_and_groups():
     ss = _get_kind("vsm_moment_t").series(_tblocks_multi_field())
-    assert [s.label for s in ss] == ["500 Oe ↑", "500 Oe ↓", "40000 Oe ↓"]
+    # 40 kOe since KNOWN-ISSUES #7 (labels only; keys/groups keep the raw Oe value)
+    assert [s.label for s in ss] == ["500 Oe ↑", "500 Oe ↓", "40 kOe ↓"]
     assert [s.linestyle for s in ss] == ["-", "--", "--"]
     # each field is one colour group; ↑/↓ within a field share the field group
     assert [s.group for s in ss] == ["500Oe", "500Oe", "40000Oe"]
@@ -929,8 +930,8 @@ def test_multifield_inv_chi_labels_prefixed():
     ss = _get_kind("vsm_chi_t").series(_tblocks_multi_field())
     chi = [s.label for s in ss if s.role != "inv_chi"]
     inv = [s.label for s in ss if s.role == "inv_chi"]
-    assert chi == ["500 Oe ↑", "500 Oe ↓", "40000 Oe ↓"]        # χ side unchanged
-    assert inv == ["1/χ 500 Oe ↑", "1/χ 500 Oe ↓", "1/χ 40000 Oe ↓"]
+    assert chi == ["500 Oe ↑", "500 Oe ↓", "40 kOe ↓"]        # χ side; 40 kOe per #7
+    assert inv == ["1/χ 500 Oe ↑", "1/χ 500 Oe ↓", "1/χ 40 kOe ↓"]
 
 
 def test_singlefield_inv_chi_labels_not_double_prefixed():
