@@ -525,6 +525,38 @@ def _apply_robust_view_core(ax, spec, style):
     ax.set_ylim(bottom=lo - _ROBUST_PAD * view_span, top=hi + _ROBUST_PAD * view_span)
 
 
+_TOP_HEADROOM_FRAC = 0.08   # matplotlib's 5% margin + roughly a marker radius
+
+
+def _ensure_top_headroom(ax, frac=_TOP_HEADROOM_FRAC, max_uncover=0.25):
+    """Guarantee clear space between the topmost drawn point and the axes frame
+    (KNOWN-ISSUES #6). matplotlib's 5% margin is measured to the data COORDINATE, so at the
+    shipped 7 pt markers the glyph itself eats most of it and a peak or plateau visually
+    touches the frame (measured: 4.55% on the κ panel, −0.5% — actual clipping — on the χ″
+    panel). Raises the top so the max finite y of the gid-None data lines sits ≥ `frac` of
+    the span below the frame. `max_uncover` bounds how far a robust-view clip may be
+    re-opened: when the robust view cut a genuine far outlier the shortfall is large and the
+    view is left alone — this is a headroom trim, not a robust-view override. No-op when the
+    headroom is already there, on empty axes, and under an explicit spec ymax (which
+    callers guard via _apply_robust_view's own spec check before invoking)."""
+    ys = [np.asarray(ln.get_ydata(), float) for ln in ax.lines if ln.get_gid() is None]
+    ys = np.concatenate(ys) if ys else np.array([])
+    ys = ys[np.isfinite(ys)]
+    if ys.size == 0:
+        return
+    lo, hi = ax.get_ylim()
+    span = hi - lo
+    if not np.isfinite(span) or span <= 0:
+        return
+    dmax = float(ys.max())
+    if (dmax - hi) > max_uncover * span:        # a robust-view exclusion, not tight headroom
+        return
+    if (hi - dmax) >= frac * span:
+        return
+    # solve for the top that leaves `frac` of the NEW span clear: (top-dmax)/(top-lo) = frac
+    ax.set_ylim(top=(dmax - frac * lo) / (1.0 - frac))
+
+
 def _axis_maxabs(lines, which):
     """Return max |value| in x or y data of all lines, excluding 'refline' gids."""
     vals = []
@@ -3474,6 +3506,11 @@ def render_acms_chi_t(results, spec=None, style=None, overlay=None):
     # two levels must BOTH stay inside the panel — see _acms_axis_view.
     _acms_axis_view(ax_top, spec, style)
     _acms_axis_view(ax_bot, spec, style)
+    # #6: the χ′ high-T plateau touched the top frame and the χ″ peak tip was clipped.
+    if spec.ymax is None:
+        for ax in (ax_top, ax_bot):
+            if ax.get_yscale() == "linear":
+                _ensure_top_headroom(ax)
     # Tc / T_f marker from the aggregated result (dotted + weaker when low-confidence, per PQ-4).
     sc = (results[0].data or {}).get("sc_transition")
     if sc and sc.get("tc_mid_k") is not None:
@@ -4017,9 +4054,10 @@ def _tto_single(results, kind_key, ylabel, spec, style, overlay):
     # every other kind keeps matplotlib's default formatter. MUST come after `_finish` —
     # its `ax.set_yscale(...)` reinstalls the scale's default formatter and would wipe this
     # (which is exactly why the earlier `ticklabel_format` call had no visible effect).
-    yfmt = ScalarFormatter(useMathText=True)
-    yfmt.set_powerlimits((-2, 2))       # also supersedes the PQ-1 comma formatter on this
-    ax.yaxis.set_major_formatter(yfmt)  # axis: an offset beats ",.0f" rounding for µV/K
+    if ax.get_yscale() == "linear":     # a ScalarFormatter on a log axis (tto_lorenz_t
+        yfmt = ScalarFormatter(useMathText=True)   # since #16) renders '0.010 x10^2' ticks;
+        yfmt.set_powerlimits((-2, 2))   # also supersedes the PQ-1 comma formatter on this
+        ax.yaxis.set_major_formatter(yfmt)  # axis: an offset beats ",.0f" rounding for µV/K
     if handles is not None:
         _tto_legend(ax, handles, spec, style)
     if empty:
@@ -4101,6 +4139,18 @@ def render_tto_lorenz_t(results, spec=None, style=None, overlay=None):
     spec = spec or PlotSpec(); style = style or GlobalStyle()
     fig = _tto_single(results, "tto_lorenz_t", "L/L₀", spec, style, overlay)
     ax = fig.axes[0]
+    # KNOWN-ISSUES #16: the kind is log-y by default now, and on the log axis the reference
+    # at 1 must actually be IN the view — autoscale covers only the data, so a curve that
+    # never reaches 1 (the shipped example spans ~8-200) would leave the line below the
+    # bottom edge, which is the linear-axis defect all over again. Extend the near limit to
+    # bracket 1.0 with a factor of clearance; user-set limits (spec.ymin/ymax) win, and an
+    # explicit linear yscale keeps the old data-driven view untouched.
+    if ax.get_yscale() == "log" and any(ln.get_gid() is None for ln in ax.lines):
+        lo, hi = ax.get_ylim()
+        if spec.ymin is None and lo > 0 and lo > 1.0 / 1.35:
+            ax.set_ylim(bottom=1.0 / 1.35)
+        if spec.ymax is None and hi < 1.35:
+            ax.set_ylim(top=1.35)
     ax.axhline(1.0, color="black", lw=0.8, gid="refline")
     # LABEL the line, same idiom as hc_full_cp_t's Dulong–Petit line: an unlabelled thin black
     # rule reads as a gridline, and the gallery reference this entry cites is characterised by a
@@ -4283,6 +4333,10 @@ def render_tto_summary_t(results, spec=None, style=None, overlay=None):
     _finish(ax_r, kind, spec, style, "Temperature (K)", f"ρ ({rho_unit})", draw_legend=False)
     for ax in (ax_k, ax_s, ax_r):
         _tto_expand_ylim_for_bands(ax, spec, style)
+    # #6: the κ peak sat a marker-radius under the frame. Top panel only — the lower panels'
+    # top edges are SHARED boundaries whose ticks are trimmed below, not free frame edges.
+    if spec.ymax is None and ax_k not in blank and ax_k.get_yscale() == "linear":
+        _ensure_top_headroom(ax_k)
     for ax in blank:                    # after _finish: set_yscale reinstalls the locator
         _tto_blank_yaxis(ax)
     # Abutting panels, part 2: drop the y ticks that sit against a SHARED edge (top panel:

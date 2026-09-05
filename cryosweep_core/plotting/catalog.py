@@ -1134,16 +1134,24 @@ _TTO_MARK = {"up": "o", "down": "^", "mixed": "s"}
 _TTO_DIRWORD = {"up": "warming", "down": "cooling", "mixed": "mixed"}
 
 
-def _tto_label(curve, field_unit="Oe"):
+def _tto_label(curve, field_unit="Oe", multi_field=False):
     """Legend label for one TTO curve. `field_unit` MUST keep its default — pq_compare's
     _render_v2 calls KINDS[kind].series(result) with no field_unit. The field is shown via the
     existing Oe/T display convention only when |H| >= 50 Oe, so a single-field file (the real
-    gate file sits at 0.077 Oe) gets a direction-only label."""
+    gate file sits at 0.077 Oe) gets a direction-only label.
+
+    `multi_field` (KNOWN-ISSUES #8): on a file holding several field groups, a sub-50-Oe
+    curve labels its field too — as the nominal "0 Oe" (|H| < 50 Oe IS the probe's zero-field
+    convention, the same threshold RRR uses), never the raw instrument reading. Without it
+    the legend read `cooling` beside `90000 Oe, cooling` and the zero-field curve's held
+    field had to be guessed. Single-field files keep direction-only labels."""
     d = curve.get("direction")
     word = _TTO_DIRWORD.get(d, d or "")
     f = curve.get("field_oe") or 0.0
     if abs(f) >= 50.0:
         return f"{fmt_field(f, field_unit)}, {word}"
+    if multi_field:
+        return f"{fmt_field(0.0, field_unit)}, {word}"
     return word
 
 
@@ -1163,12 +1171,18 @@ def _tto_curve_series(result, ykey, prefix, field_unit="Oe", group=None, linesty
     errorbars)."""
     d = result.data or {}
     out = []
-    for c in d.get("curves") or []:
+    # #8: field-in-label is a FILE property (several distinct field groups present), decided
+    # once across all curves with sub-50-Oe fields collapsed to the nominal zero setpoint.
+    curves = d.get("curves") or []
+    setpoints = {(c.get("field_oe") or 0.0) if abs(c.get("field_oe") or 0.0) >= 50.0 else 0.0
+                 for c in curves}
+    multi_field = len(setpoints) > 1
+    for c in curves:
         y = c.get(ykey)
         t = c.get("t") or []
         if not t or not y:
             continue
-        lbl = _tto_label(c, field_unit)
+        lbl = _tto_label(c, field_unit, multi_field=multi_field)
         f = c.get("field_oe") or 0.0
         # ±1σ source for the opt-in band (spec §3). Only the four MEASURED quantities feed
         # yerr. Since 2026-08-10 the derived quantities (kappa_e, kappa_ph, lorenz_ratio)
@@ -1238,7 +1252,10 @@ def tto_field_ls_map(curves):
 
 
 def tto_field_ls_label(field_oe, field_unit="Oe"):
-    """Legend text for a field-linestyle proxy (same display convention as `_tto_label`)."""
+    """Legend text for a field-linestyle proxy (same display convention as `_tto_label`,
+    including the |H| < 50 Oe -> nominal "0 Oe" zero-field collapse of #8)."""
+    if abs(field_oe or 0.0) < 50.0:
+        field_oe = 0.0
     return fmt_field(field_oe, field_unit) if field_unit == "T" else f"{field_oe:g} Oe"
 
 
@@ -1336,7 +1353,12 @@ BUILTIN_PLOTKINDS = [
     PlotKind("tto_seebeck_t", "S vs T", "tto", series_tto_seebeck_t, group_colored=True),
     PlotKind("tto_zt_t", "ZT vs T", "tto", series_tto_zt_t, group_colored=True),
     PlotKind("tto_wf_t", "κ decomposition vs T", "tto", series_tto_wf_t, group_colored=True),
-    PlotKind("tto_lorenz_t", "L/L₀ vs T", "tto", series_tto_lorenz_t, group_colored=True),
+    # log-y by default (KNOWN-ISSUES #16): L/L0 = kappa*rho/(L0*T) diverges at low T, so a
+    # linear axis runs to ~200, clips the divergence and flattens the Wiedemann-Franz
+    # reference at 1 — the whole point of the panel — onto the bottom axis. spec.yscale
+    # still overrides per the usual _finish precedence.
+    PlotKind("tto_lorenz_t", "L/L₀ vs T", "tto", series_tto_lorenz_t, group_colored=True,
+             default_yscale="log"),
 ]
 
 # ---- get_kind lookup (Task 7 C1) ----

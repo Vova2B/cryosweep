@@ -29,7 +29,9 @@ def test_kind_registered_with_its_label_and_group_colouring():
     assert k.probe == "tto"
     assert k.label == "L/L₀ vs T"
     assert k.group_colored is True
-    assert k.default_xscale == "linear" and k.default_yscale == "linear"
+    # log-y by default since KNOWN-ISSUES #16: a linear axis ran to ~200, clipped the
+    # low-T divergence and flattened the L/L0 = 1 reference onto the bottom axis.
+    assert k.default_xscale == "linear" and k.default_yscale == "log"
     assert "tto_lorenz_t" in _CONNECT_KINDS
     assert "tto_lorenz_t" in _RENDERERS
 
@@ -97,10 +99,23 @@ def test_the_label_scales_with_font_pt(tto_real_path):
         assert t.get_fontsize() == pytest.approx(pt - 1)
 
 
-def test_the_label_is_suppressed_when_one_is_out_of_view():
-    # The synth fixtures run 1.013-1.030, so the robust view excludes 1.0 and an unguarded
-    # label would be drawn on canvas outside the axes.
+def test_the_view_brackets_the_reference_even_when_data_hugs_it():
+    # The synth fixtures run 1.013-1.030. Pre-#16 the (linear) robust view excluded 1.0 and
+    # the label was suppressed — on a curve sitting essentially AT the Wiedemann-Franz value.
+    # On the default log axis the renderer now extends the near limit to bracket 1.0, so the
+    # reference line and its label are always shown against the data.
     fig = render_kind(_run(FX / "tto_synth.dat"), "tto_lorenz_t", PlotSpec(), GlobalStyle())
+    ax = fig.axes[0]
+    lo, hi = ax.get_ylim()
+    assert lo < 1.0 < hi
+    assert len(_refline_labels(ax)) == 1
+
+
+def test_explicit_linear_yscale_keeps_the_old_suppression():
+    # A user-set linear axis keeps the pre-#16 data-driven view: 1.0 falls out of view on
+    # this fixture and the label must not be drawn on blank canvas outside the axes.
+    fig = render_kind(_run(FX / "tto_synth.dat"), "tto_lorenz_t", PlotSpec(yscale="linear"),
+                      GlobalStyle())
     ax = fig.axes[0]
     assert ax.get_ylim()[0] > 1.0                     # premise: 1.0 really is out of view
     assert _refline_labels(ax) == []
