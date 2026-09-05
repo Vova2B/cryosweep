@@ -93,6 +93,9 @@ class PlotSpec(BaseModel):
     direction_arrows: bool = True  # legend up/down arrows on MR kinds (PQ-4)
     error_band: bool = False       # opt-in ±1σ shaded band on TTO kinds (default OFF keeps
                                    # every existing render byte-identical; E2)
+    fit_window_shade: bool = False # opt-in grey shade over the fitted x-window on
+                                   # cp_over_t / hc_c_over_t_linear / resistivity_rho_t —
+                                   # owner 2026-09-05: "useful, but switched off by default"
 
 class PlotEntry(BaseModel):
     """A single plot card: its kind key and per-plot overrides."""

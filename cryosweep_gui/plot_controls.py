@@ -220,7 +220,7 @@ class AxisStrip(QWidget):
                     cb.toggled.connect(self._commit_mf_fit_lines)
                     self._mf_fit_cbs[lkey] = cb; mf_row.addWidget(cb)
             mw = QWidget(); mw.setLayout(mf_row); lay.addWidget(mw)
-        from cryosweep_core.plotting.render import _TTO_BAND_KINDS
+        from cryosweep_core.plotting.render import _TTO_BAND_KINDS, _SHADE_KINDS
         if kind.key in _TTO_BAND_KINDS:
             # I6: PlotSpec.error_band is default-OFF, so without a control it is a feature no
             # user can reach. Same per-plot boolean idiom as cp_vs_t's model checkbox.
@@ -230,6 +230,15 @@ class AxisStrip(QWidget):
             self._error_band_cb.toggled.connect(self.set_error_band)
             band_row.addWidget(self._error_band_cb)
             bw = QWidget(); bw.setLayout(band_row); lay.addWidget(bw)
+        if kind.key in _SHADE_KINDS:
+            # fit_window_shade is default-OFF too (owner 2026-09-05) — same reachability
+            # rule as error_band: a default-OFF spec field needs a control.
+            shade_row = QHBoxLayout()
+            self._fit_shade_cb = QCheckBox("Fit-window shade")
+            self._fit_shade_cb.setChecked(bool(spec.fit_window_shade))
+            self._fit_shade_cb.toggled.connect(self.set_fit_window_shade)
+            shade_row.addWidget(self._fit_shade_cb)
+            sw = QWidget(); sw.setLayout(shade_row); lay.addWidget(sw)
         self._body.setVisible(False)            # collapsed by default -> canvas shows first
         outer.addWidget(self._body)
 
@@ -286,6 +295,10 @@ class AxisStrip(QWidget):
 
     def set_error_band(self, on):
         self._spec.error_band = bool(on)
+        self.spec_changed.emit()
+
+    def set_fit_window_shade(self, on):
+        self._spec.fit_window_shade = bool(on)
         self.spec_changed.emit()
 
     def set_axis(self, xmin=None, xmax=None, ymin=None, ymax=None):

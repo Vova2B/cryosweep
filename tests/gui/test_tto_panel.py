@@ -451,3 +451,27 @@ def _result(probe, path=None):
     from cryosweep_core.analyzers.dispatch import analyze_file
     from cryosweep_core.registry import build_default_registry
     return analyze_file(load_dat(str(path)), RunConfig(), build_default_registry())
+
+
+def test_fit_window_shade_checkbox_shown_and_wired_for_shade_kinds(qapp, hc_path):
+    """fit_window_shade mirrors error_band: default-OFF spec field -> needs a reachable
+    control (owner 2026-09-05: shade useful but off by default), and the WIDGET must drive
+    the setter (the error_band lesson: a disconnected checkbox passed both suites)."""
+    from PySide6.QtWidgets import QCheckBox
+    from cryosweep_core.plotting.catalog import get_kind
+    from cryosweep_core.plotting.spec import PlotSpec
+    from cryosweep_gui.plot_controls import AxisStrip
+    kind = get_kind("cp_over_t")
+    spec = PlotSpec()
+    strip = AxisStrip(kind.series(_result("heatcapacity", hc_path)), spec, kind)
+    cb = [c for c in strip.findChildren(QCheckBox) if c.text() == "Fit-window shade"]
+    assert len(cb) == 1
+    seen = []
+    strip.spec_changed.connect(lambda: seen.append(True))
+    assert spec.fit_window_shade is False           # default-OFF
+    cb[0].setChecked(True)
+    assert spec.fit_window_shade is True and seen == [True]
+    # and it is NOT offered where no shade exists
+    kind2 = get_kind("cp_vs_t")
+    strip2 = AxisStrip(kind2.series(_result("heatcapacity", hc_path)), PlotSpec(), kind2)
+    assert not [c for c in strip2.findChildren(QCheckBox) if c.text() == "Fit-window shade"]
