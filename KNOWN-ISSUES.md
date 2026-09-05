@@ -216,7 +216,7 @@ and most of its temperatures carry a single ± pair — and
 `tests/core/test_example_hall_real.py` pins all three fixed paths against it.*
 
 **18. `hall-tdep` reports `confidence 0.0` on a result that is correct.** *FIXED
-2026-09-02 (cc43b8c): a single ± pair now fits as an antisym point anchored at
+2026-09-02, before the public history begins: a single ± pair now fits as an antisym point anchored at
 R_asym(0) = 0; `tdep_min_antisym_points` defaults to 1; measured confidence 0.0 → 1.0 with
 every R_H bit-identical to ≤ 2 ulp, shipped example byte-identical.* Measured on the real
 file: `status = low_confidence`, `confidence = 0.0`, exit 11, 138 R_H(T) points of which 122
@@ -239,7 +239,7 @@ at R_asym(0) = 0, label it `antisym`, and rebase the fraction on the points actu
 and the report disowns it.
 
 **19. A drifting temperature setpoint is split in two, and the split fabricates a carrier
-density.** *FIXED 2026-09-02 (a72ca20): `cluster_field_setpoints` adopted for held
+density.** *FIXED 2026-09-02, before the public history begins: `cluster_field_setpoints` adopted for held
 temperatures (abs_floor 0.25 K) and for the two hall_tdep held-field groupers; the 199.9 K
 phantom row is gone, the 200 K group fits the full 182-point loop, all other points and
 both shipped examples byte-identical.* `hall.py:203` bins by `round(float(Tset), 1)`. On the real file the 200 K loop
@@ -257,7 +257,7 @@ on fields at `hall_tempdep.py:163` and `:219`; it does not bite on this file, bu
 same latent bug.
 
 **20. Derived quantities are published without the R_H they derive from.** *FIXED
-2026-09-02 (41019b5): Stage C now derives only from Stage B; when Stage B declines,
+2026-09-02, before the public history begins: Stage C now derives only from Stage B; when Stage B declines,
 carrier_n/carrier_type/mobility are withheld and `derived_flags = ["antisym_r_h_missing"]`
 is carried into JSON and a new CSV column; R_H_raw stays visible.*
 `hall.py:239` falls back to `R_H_raw` (the Stage A raw fit) for `carrier_n` and `mobility`
