@@ -133,9 +133,8 @@ the REPOSITORY only, not in the wheel. After a plain `pip install`, fetch one fi
 `curl -O https://raw.githubusercontent.com/Vova2B/cryosweep/main/examples/heat_capacity.dat`
 (same form for every file named below).
 `magnetization_vsm.dat` (CW θ = −10 K), `magnetization_mpms.dat` (bare-CSV MPMS — gated
-until `--molar-mass 200 --mass-mg 5` — the pair the README and its tests use for this
-file; they are NOT numbers to reuse on real data, and note the generator builds it at
-10 mg, so the reported C scales accordingly), `magnetization_vsm_multifield.dat` (real, exits 11
+until `--molar-mass 200 --mass-mg 10` — the values this synthetic file was built with,
+NOT numbers to reuse on real data), `magnetization_vsm_multifield.dat` (real, exits 11
 by design), `heat_capacity.dat` + `heat_capacity_multifield.dat`, `ac_susceptibility.dat`,
 `resistivity_superconductor.dat` (Tc detector + decline demo), `resistivity_semiconductor.dat` (Arrhenius E_a = 60 meV; the gap column is named
 `e_g_assuming_intrinsic_mev` because E_g = 2·E_a only if intrinsic), `thermal_transport.dat`,

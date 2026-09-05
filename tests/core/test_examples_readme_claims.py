@@ -2,7 +2,7 @@
 
 Added 2026-09-01 after the README was found claiming that magnetization_mpms.dat, given
 200 g/mol and 5 mg, produces "the same numbers as the VSM file". It does not - it is a
-different synthetic sample (theta = -30 K, C = 3) and the VSM file is theta = -10 K, C = 0.5.
+different synthetic sample (theta = -30 K, C = 1.5) and the VSM file is theta = -10 K, C = 0.5.
 Nothing tied the prose to the output, so the claim could rot silently; a reader running the
 example would have concluded the app was broken.
 
@@ -43,24 +43,26 @@ def test_vsm_example_matches_its_advertised_curie_weiss():
 
 def test_mpms_example_is_a_different_sample_and_the_readme_says_so():
     """The exact regression: the README claimed these two files agree. They do not."""
-    mpms = _analyze("magnetization_mpms.dat", molar_mass=200.0, mass_mg=5.0)["fit"]["params"]
+    # 10 mg, not 5: tests/core/fixtures/make_mpms.py:5 builds the file at MASS_MG = 10.0,
+    # so only this pair recovers the sample it encodes (5 mg doubles C and scales mu_eff by sqrt(2)).
+    mpms = _analyze("magnetization_mpms.dat", molar_mass=200.0, mass_mg=10.0)["fit"]["params"]
     vsm = _analyze("magnetization_vsm.dat")["fit"]["params"]
     assert mpms["theta"] == pytest.approx(-30.0, abs=0.05)
-    assert mpms["C"] == pytest.approx(3.0, abs=0.02)
-    assert mpms["mu_eff"] == pytest.approx(4.90, abs=0.02)
+    assert mpms["C"] == pytest.approx(1.5, abs=0.02)
+    assert mpms["mu_eff"] == pytest.approx(3.46, abs=0.02)
     assert mpms["theta"] != pytest.approx(vsm["theta"], abs=1.0), "the files disagree by design"
     txt = _readme()
-    assert "theta = -30 K, C = 3, mu_eff = 4.90" in txt
+    assert "theta = -30 K, C = 1.5, mu_eff = 3.46" in txt
     assert "same numbers as the VSM file" not in txt, "the disproved claim came back"
 
 
 def test_mpms_example_gates_without_the_inputs_the_readme_names():
-    """The README tells the reader to supply 200 g/mol and 5 mg. That must be why it gates."""
+    """The README tells the reader to supply 200 g/mol and 10 mg. That must be why it gates."""
     res = analyze_file(load_dat(str(EXAMPLES / "magnetization_mpms.dat")),
                        RunConfig(), build_default_registry())
     assert res.status == "gated"
     assert {g.need for g in res.gate} == {"molar_mass", "sample_mass"}
-    assert "200 g/mol, 5 mg" in _readme()
+    assert "200 g/mol, 10 mg" in _readme()
 
 
 def test_heat_capacity_example_matches_its_advertised_gamma_and_debye_temperature():
