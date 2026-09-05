@@ -258,6 +258,15 @@ def _plot_data(ax, results, kind, spec, style, overlay=None):
                       ms=style.marker_size, label=label)
             if getattr(s, "marker", None) is not None and spec.channel_markers:
                 kw["marker"] = s.marker
+            if s.role == "two_point":
+                # KNOWN-ISSUES #2: a fallback estimator (hall_tdep's 0-field+1 series) must
+                # be visually SECONDARY to the trusted one — hollow markers + dashed
+                # connector — or the offset between the two families reads as a step in the
+                # physics. Role-driven, so only the catalog's explicitly-tagged fallback
+                # series change; every other kind is byte-identical.
+                kw["markerfacecolor"] = "none"
+                if connect:
+                    kw["ls"] = "--"
             if connect:
                 kw["lw"] = style.line_width
             if ramp_mode:
@@ -2904,6 +2913,7 @@ def render_hall(results, spec=None, style=None, overlay=None):
     results, kind, spec, style, fig, ax = _setup(results, "hall_rh_t", spec, style)
     _plot_data(ax, results, kind, spec, style, overlay)
     _finish(ax, kind, spec, style, "Temperature (K)", "R_H (m³/C)")
+    _plain_offsetless_yaxis(ax)         # KNOWN-ISSUES #3: no scale+offset concatenation
     return fig
 
 def render_hall_mobility_t(results, spec=None, style=None, overlay=None):
@@ -3103,6 +3113,24 @@ def render_hall_tdep_summary(results, spec=None, style=None, overlay=None):
             cur = float(oax.spines["right"].get_position()[1])
             shortfall_frac = (mu_x1 + 8 - sp_x) / max(axbb.width, 1e-9)
             oax.spines["right"].set_position(("axes", cur + 2.0 * shortfall_frac))
+    # KNOWN-ISSUES #24: constrained layout cannot see an offset spine (position > 1.0 in
+    # axes fraction), so it reserves no right margin for the J axis' ticks + rotated label
+    # and the label runs past the figure edge at the bare GlobalStyle default size. Same
+    # remedy class as the spine loop above: MEASURE the J axis' realized right-side extent
+    # and reserve exactly that band via the layout rect. Convergent loop, because shrinking
+    # the rect re-flows the axes and moves the spine (axes-fraction position) with them.
+    if oax is not None:
+        eng = fig.get_layout_engine()
+        for _ in range(8):
+            fig.canvas.draw()
+            rend = fig.canvas.get_renderer()
+            bb = oax.yaxis.get_tightbbox(rend)
+            fig_w = fig.get_window_extent(rend).x1
+            if bb is None or bb.x1 <= fig_w - 2:
+                break
+            rect = getattr(eng, "get", lambda: {})().get("rect", (0, 0, 1, 1))
+            shrink = (bb.x1 - (fig_w - 4)) / max(fig_w, 1e-9)
+            eng.set(rect=(rect[0], rect[1], max(0.3, rect[2] - shrink), rect[3]))
     _merged_legend(ax, handles, labels, style, spec)
     return fig
 
@@ -3172,16 +3200,65 @@ def render_hall_tdep_rh_n_twin(results, spec=None, style=None, overlay=None):
     return _render_hall_rh_n_twin(results, "hall_tdep_rh_n_twin", "o", spec, style, overlay)
 
 # ---- Hall TempDep renderers ----
+def _estimator_method_note(ax, plotted, spec, style):
+    """KNOWN-ISSUES #2: when BOTH estimator families share one panel (antisym + the
+    role="two_point" 0-field+1 fallback), say so ON the figure — the legend names them,
+    but nothing warned the reader that the offset where one family hands over to the other
+    is a change of method, not physics. The title slot is used because constrained layout
+    reserves it: unlike an in-axes annotation it can never land on data. Skipped when the
+    user set an explicit title (their deliberate choice wins) and when only one family is
+    plotted (nothing to warn about)."""
+    if spec.title:
+        return
+    roles = {s.role for _, s in plotted}
+    if "two_point" not in roles or roles == {"two_point"}:
+        return
+    fam = {"fontfamily": style.font_family} if style.font_family else {}
+    # Two lines, then a measured width-fit (the _fit_tto_notes idiom): one line at font_pt-1
+    # is wider than the default 90 mm canvas and clips at BOTH edges — a warning no one can
+    # read. Floor at 6 pt with the layout re-measured after every shrink.
+    ax.set_title("open = 0-field+1 fallback estimator;\n"
+                 "steps between estimators are method, not physics",
+                 fontsize=style.font_pt - 1, **fam)
+    fig = ax.get_figure()
+    for _ in range(4):
+        fig.draw_without_rendering()
+        rend = fig.canvas.get_renderer()
+        t_w = ax.title.get_window_extent(rend).width
+        fig_w = fig.get_window_extent(rend).width * 0.96
+        size = ax.title.get_fontsize()
+        if t_w <= fig_w or size <= 6.0:
+            break
+        ax.title.set_fontsize(max(6.0, size * fig_w / t_w))
+
+
+def _plain_offsetless_yaxis(ax):
+    """KNOWN-ISSUES #3: at Hall magnitudes (span ~1e-11 around ~-2.5e-7) matplotlib's
+    default ScalarFormatter engages BOTH a scale and an offset and concatenates them into
+    an unreadable header ('1e-11-2.5e-7'). With the offset off, the ticks carry absolute
+    values under a single mathtext scale ('x10^-7', ticks -2.50001 ...), so the headline
+    R_H can be read straight off the axis. MUST run after `_finish` — its set_yscale
+    reinstalls the scale's default formatter (the _tto_single trap)."""
+    yfmt = ScalarFormatter(useMathText=True)
+    yfmt.set_useOffset(False)
+    ax.yaxis.set_major_formatter(yfmt)
+
+
 def render_hall_tdep_rh_t(results, spec=None, style=None, overlay=None):
     results, kind, spec, style, fig, ax = _setup(results, "hall_tdep_RH_T", spec, style)
-    _plot_data(ax, results, kind, spec, style, overlay)
+    plotted = _plot_data(ax, results, kind, spec, style, overlay)
     _finish(ax, kind, spec, style, "Temperature (K)", "R_H (m³/C)")
+    _plain_offsetless_yaxis(ax)
+    if overlay is None:
+        _estimator_method_note(ax, plotted, spec, style)
     return fig
 
 def render_hall_tdep_n_t(results, spec=None, style=None, overlay=None):
     results, kind, spec, style, fig, ax = _setup(results, "hall_tdep_n_T", spec, style)
-    _plot_data(ax, results, kind, spec, style, overlay)
+    plotted = _plot_data(ax, results, kind, spec, style, overlay)
     _finish(ax, kind, spec, style, "Temperature (K)", "n (1/m³)")
+    if overlay is None:
+        _estimator_method_note(ax, plotted, spec, style)
     return fig
 
 def render_hall_tdep_mobility_t(results, spec=None, style=None, overlay=None):
