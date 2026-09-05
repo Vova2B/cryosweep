@@ -1,5 +1,64 @@
 # Changelog
 
+## 0.3.0 — 2026-09-05
+
+Ten pull requests of analysis and figure work on top of the first published release. The
+theme is the same one the project already applies to numbers, now applied to figures: say
+what was measured, and place things by measurement rather than by a pinned constant.
+
+### Added
+
+- **Arrhenius activated-transport fit** for insulating ρ(T) (`activated_transport`), for
+  semiconductor gap analysis. The intrinsic/extrinsic factor-of-two is the classic way to
+  misreport this: intrinsic conduction gives ρ ∝ exp(+E_g/2k_BT), so a fitted E_a is half
+  the gap, while an extrinsic donor/acceptor level carries no such factor — and transport
+  alone cannot tell you which you have. The assumption therefore rides in the field name,
+  `e_g_assuming_intrinsic_mev`, instead of in a footnote. Reported with a window ladder,
+  because on variable-range-hopping data the Arrhenius fit reaches r² = 0.968 while E_a
+  drifts 24 → 45 meV across windows: r² cannot warn you, only the drift can. New example
+  `examples/resistivity_semiconductor.dat`.
+- **Fit curves extrapolate to their 0-intercept.** γ on `cp_over_t`, θ via the Curie-Weiss
+  line on `inverse_chi`, ρ₀ on the resistivity kinds are numbers the annotation already
+  claimed in text while the drawn curve stopped at the first measured point. The
+  continuation is dotted, thinner and half-alpha so it never reads as fitted range, and is
+  omitted where 0 K is not on the abscissa (`resistivity_arrhenius` plots against 1000/T).
+  The measured data is untouched.
+- **Excitation current** on temperature-dependent Hall results, with **current density J**
+  gated on sample width and thickness rather than assumed.
+- **Anonymised real Hall measurement** (`examples/hall_mixed_sweeps.dat`) — public
+  regression data for three known issues that previously had none.
+- Debye-Einstein parameters flow **both directions** between the GUI fit and its inputs.
+
+### Changed
+
+- **The fit-window shade is opt-in and off by default** (`PlotSpec.fit_window_shade`,
+  reachable from the GUI and from a CLI `--layout-file`). It was drawn unconditionally, and
+  on `hc_c_over_t_linear` it covered essentially the whole panel.
+- **Placement is measured, not pinned.** The legend, the low-T inset, reference-line labels
+  and the frameless stats boxes now choose their position from measured occupancy — data
+  points, other text, insets, and (for the stats boxes) reference lines. Where nothing is
+  clear, the inset drops out with a note rather than covering the curve. Positions that were
+  already clear are unchanged: 100 of 101 example × plot-kind renders are byte-identical.
+
+### Fixed
+
+- **An unphysical γ carries its verdict onto the figure**, not only into the data. On a real
+  heat-capacity file γ fits to −8.3×10⁻³ J/mol·K²; the annotation says so, and the
+  extrapolated curve now visibly crosses zero to show it.
+- **Reference lines no longer run through text.** A vertical T_c guide crossed the
+  `RRR = 86.7 / T_c = 8.03 K` stats box on the superconductor example.
+- KNOWN-ISSUES 1, 4, 5, 9, 11, 12, 21 and 23 — all instances of placement decided without
+  measuring.
+
+### Internal
+
+- Four new gates covering the defect classes above, each written to prove it can see:
+  text-over-data, text-over-reference-line, legend occupancy and inset occupancy. The
+  reference-line gate uses segment-vs-rectangle intersection, because vertex containment is
+  blind to it — an `axvline` has two vertices, both outside a mid-panel box, while the
+  segment between them crosses it, and a point-in-box scan reports a clean zero with the
+  defect on screen.
+
 ## 0.2.1 — 2026-09-04
 
 ### Fixed
