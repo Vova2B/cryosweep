@@ -111,6 +111,71 @@ source; the physics is reproducible from the formulas here.
 - **Stage B antisymmetrization is essential** — on real data the Hall (odd-in-H) signal can be ~1% of the even R_xx admixture; `R_asym(H)=[R(+H)−R(−H)]/2` (interpolated, tolerant of non-symmetric sweeps) removes it. Stage A (raw fit) reported for transparency; Stage B is trusted.
 - Stage C: n = 1/(e·|R_H|), e = 1.602176634e-19 C, carrier sign = sign(R_H); μ = |R_H|/ρ_xx where ρ_xx(T) comes from a longitudinal channel (same file) or a separate longitudinal file (interpolated over T). Mobility is capability-gated on longitudinal data.
 - Units SI: R_H m³/C, n 1/m³, μ m²/(V·s).
+- **Excitation current and current density** (2026-09-05): the temp-dep Hall points report the
+  instrument's **excitation current I** per temperature (`Bridge N Excitation (uA)`, local
+  median over the measured rows near each grid T — never interpolated). I answers the question
+  the file can answer alone: was the drive constant across the sweep, and low enough not to
+  heat the sample. **Caveat: I is what the instrument reports, which need not equal the
+  requested drive.** **Current density J = I/(w·t)** (A/m²; numerically µA/mm²) is a
+  capability that activates only when sample width (`--width-mm`, the shared SampleGeometry
+  route) AND thickness are both supplied — an ungated J on unset geometry would be
+  scale-arbitrary, the exact failure the resistivity geometry-unset warning names. A
+  constant-drive file (the shipped real Hall example: 7999.997 µA throughout) draws flat
+  I and J lines; that is the correct result.
+
+### Anomalous Hall effect (recognized, deferred)
+
+In a magnetic conductor the transverse resistivity has two parts:
+
+**ρ_xy = R₀·B + R_s·μ₀·M(B, T)**
+
+- **R₀** — the ordinary Hall coefficient: the Lorentz-force term, linear in the applied
+  field B, carrying the carrier density and sign exactly as in the pipeline above.
+- **R_s·μ₀·M** — the anomalous term: proportional to the sample's own magnetization, not
+  the field. It grows with M, then **saturates where M saturates**; R_s is typically much
+  larger than R₀.
+
+**Separating the two in practice.** Where M is saturated (high field, low enough T), the
+anomalous term is a constant offset: a linear fit of the antisymmetrized ρ_xy over the
+saturated region gives **R₀ from its slope** and **R_s·μ₀·M_sat from its zero-field
+intercept**. Substituting a measured M(B, T) instead lets both terms be fitted over the
+full field range. Either way the decomposition leans on M — the first to *demonstrate*
+saturation, the second explicitly.
+
+**What partial extraction without M(H) would and would not license.** Reporting the
+high-field slope as R₀ is defensible *only when M-saturation is demonstrated there* — and
+demonstrating it needs the magnetization data, so without M this claim rests on an
+unverifiable assumption. Publishing the zero-field intercept of a high-field fit as "the
+anomalous Hall resistivity" without M is **not** defensible: the intercept lumps a real
+anomalous term together with ordinary multi-band curvature and magnetoresistance leakage,
+and cannot tell them apart. This is why `anomalous_hall` is reported in `capabilities[]`
+as `applicable: false` with the missing measurement as the reason, rather than shipped as
+a fit that cannot be validated.
+
+**The scaling relation, and why it matters.** R_s is not a constant of the material the
+way R₀ is: empirically R_s ∝ ρ_xx (skew scattering) or R_s ∝ ρ_xx² (side-jump and the
+intrinsic Berry-phase mechanism). Measuring which power law R_s follows against the
+sample's own ρ_xx(T) is how the microscopic mechanism is identified — so a serious AHE
+analysis needs ρ_xx(T) alongside ρ_xy and M, and a fitting-model choice (constant R_s vs
+the two scalings) that the user must own, because the three conventions give different
+numbers.
+
+**The measurement prerequisite** — the part most treatments leave implicit: AHE
+decomposition needs **the same sample measured in both configurations** — ρ_xy(B, T) in a
+Hall-wired transport setup AND M(B, T) in a magnetometer (VSM/MPMS), on the same field
+axis of the same orientation, at matching temperatures, into clear M-saturation. No such
+pair exists in this corpus: no magnetization file accompanies any Hall-wired sample.
+
+**Indication from the shipped example's source** (method stated; an indication, not a
+settled result): antisymmetrizing the Hall channel of the real measurement behind
+`examples/hall_mixed_sweeps.dat` on an interpolated ±B grid and comparing the OLS slope
+over |B| ≤ 20 kOe with the slope over |B| ≥ 50 kOe gives low/high ratios of **0.76 at
+2 K and 0.74 at 50 K** (an independent re-derivation with different windows gave
+0.79/0.93 — the numbers move with window choice, the direction does not). A saturating
+anomalous term inflates the *low*-field slope, so its signature is a ratio **above 1**;
+this sample stiffens at high field instead. Two temperatures, one sample, raw Bridge-1
+signal — an argument that the deferral loses nothing *here*, not a claim about the
+material.
 
 ### Fit vs instrument uncertainty
 

@@ -57,6 +57,14 @@ def canonicalize_columns(df, header):
             ch = mr.group(1)
             logical[f"resistance_ch{ch}"] = real
             unit[f"resistance_ch{ch}"] = "Ohm"
+        # Bridge excitation current (uA) — the instrument-REPORTED drive, which need not
+        # equal the requested drive. Feeds the per-point excitation report and, with
+        # sample width x thickness, the current-density capability (KNOWN-ISSUES 21).
+        me = re.match(r"bridge (\d+) excitation", key)
+        if me:
+            ch = me.group(1)
+            logical[f"excitation_ch{ch}"] = real
+            unit[f"excitation_ch{ch}"] = "uA"
         # Instrument per-row std-dev columns (2026-08-10 spec §4): unit recorded so the
         # analyzer applies the SAME x100 (Ohm-m) / x1 (Ohm-cm) conversion as rho itself.
         ms = re.match(r"bridge (\d+) std\. dev\. \(ohm-m\)", key)
