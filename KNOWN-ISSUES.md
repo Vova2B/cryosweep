@@ -36,19 +36,22 @@ empty — on `hall_temperature_dependence.dat` the same inset lands in genuinely
 looks correct, because that curve rises; this one is flat, so the fixed position sits on data.
 
 **2. Two different estimators are drawn in one R_H(T) panel with no visual separation.**
-*FIXED 2026-09-05 (d7ce963): the 0-field+1 fallback series is drawn visually secondary —
-hollow markers + dashed connector, keyed off its existing `role="two_point"` tag — and when
-both estimator families share the panel a title-slot note (width-fitted to the canvas) says
-the step between them is a change of method, not physics.*
+*FIXED 2026-09-05 (d7ce963, note fitted in f52dcc9): the 0-field+1 fallback series is drawn
+visually secondary — hollow markers + dashed connector, keyed off its existing
+`role="two_point"` tag — and when both estimator families share the panel a title-slot note
+(width-fitted to the canvas) says the step between them is a change of method, not physics.*
 `examples/hall_temperature_dependence.dat`: `R_H (antisym)` covers 18–40 K at −3.0e−7 m³/C and
 the `R_H (0-field+1)` fallback covers 41–55 K at −2.5e−7, producing an apparent **20 % step at
 ~40 K that is a change of method, not physics**. The legend distinguishes them; nothing warns
 the reader not to read the discontinuity as a result.
 
 **3. Axis offset notation is unreadable at Hall magnitudes.** *FIXED 2026-09-05
-(d7ce963): the R_H axes (`hall_rh_t`, `hall_tdep_RH_T`) disable the ScalarFormatter offset
-and use a mathtext scale, so the header reads ×10⁻⁷ over absolute-valued ticks
-(−2.50000 …) and the headline R_H reads straight off the axis.*
+(d7ce963, extended in 9a83135): EVERY kind drawing an R_H axis — `hall_rh_t`,
+`hall_tdep_RH_T`, `hall_tdep_summary` and `hall_tdep_rh_n_twin`, overlay paths included —
+disables the ScalarFormatter offset and uses a mathtext scale, so the header reads ×10⁻⁷
+over absolute-valued ticks (−2.50000 …) and the headline R_H reads straight off the axis.
+The first fix reached only the two kinds the item named, leaving the summary and the twin
+rendering a plain `1e-7` for the same quantity.*
 `examples/hall_field_sweeps.dat`, `hall_tdep_r_h_t`: the y-axis header renders as
 `1e-11-2.5e-7` — matplotlib's scale and offset concatenated. The headline value the docs
 advertise (R_H = −2.5e−7 m³/C) cannot be recovered from the plot.
