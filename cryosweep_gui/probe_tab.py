@@ -85,7 +85,10 @@ class ProbeTab(QWidget):
 
         self._left_scroll = QScrollArea()
         self._left_scroll.setWidgetResizable(True)
-        self._left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # AsNeeded, not AlwaysOff (KNOWN-ISSUES #17): AlwaysOff turned any content overflow
+        # into invisible, unreachable controls — the exact failure this scroll area exists
+        # to prevent. With the measured pane width below the bar normally never shows.
+        self._left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._left_scroll.setWidget(left_widget)
 
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -95,7 +98,12 @@ class ProbeTab(QWidget):
         self._splitter.setStretchFactor(0, 0)     # left: fixed
         self._splitter.setStretchFactor(1, 1)     # center: absorbs extra space
         self._splitter.setStretchFactor(2, 0)     # right: fixed
-        self._splitter.setSizes([300, 800, 300])  # sensible initial widths
+        # Initial left width by MEASUREMENT (KNOWN-ISSUES #17): a fixed 300 px sat below
+        # the panel content's minimum width, so at every default window size the file row's
+        # third button ("Colour…") was clipped off with no scrollbar to reach it. Measure
+        # the realized minimum + a margin for the frame; the centre pane absorbs the rest.
+        left0 = max(300, left_widget.minimumSizeHint().width() + 20)
+        self._splitter.setSizes([left0, max(400, 1100 - left0), 300])
         self._cached_splitter_sizes: list[int] | None = None
         self._controls_visible: bool = True       # logical state (default open)
 

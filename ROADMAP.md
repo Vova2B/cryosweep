@@ -9,13 +9,13 @@ running the code rather than by reading it. Nothing here is a commitment to a da
 
 ## Targeted for 1.0 — GUI
 
-### 1. "Save plot" should save the plot you are looking at
+### 1. "Save plot" should save the plot you are looking at — **done**
 
-Today it always saves the **first** plot in the layout, whatever is on screen: the figure it
-saves is captured once at render time (`cryosweep_gui/output_panel.py:670`, guarded by
-`and self.last_figure is None`), while Focus navigation moves a separate index
-(`output_panel.py:476`). Stepping through plots in Focus mode does not change what the button
-writes.
+Shipped with the known-issues wave (KNOWN-ISSUES #22): `last_figure` is now a derived
+property — the focused card's figure in Focus mode, else the first card that has one — so
+the button writes exactly what is on screen. It used to be captured once at render time
+(first card only, guarded by `and self.last_figure is None`), while Focus navigation moved
+a separate index.
 
 Note that **choosing which plots to save is already implemented** — the neighbouring
 **"Export plots…"** button (`probe_tab.py:74`, `cryosweep_gui/export_dialog.py`) opens a dialog

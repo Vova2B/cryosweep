@@ -258,6 +258,15 @@ def _plot_data(ax, results, kind, spec, style, overlay=None):
                       ms=style.marker_size, label=label)
             if getattr(s, "marker", None) is not None and spec.channel_markers:
                 kw["marker"] = s.marker
+            if s.role == "two_point":
+                # KNOWN-ISSUES #2: a fallback estimator (hall_tdep's 0-field+1 series) must
+                # be visually SECONDARY to the trusted one — hollow markers + dashed
+                # connector — or the offset between the two families reads as a step in the
+                # physics. Role-driven, so only the catalog's explicitly-tagged fallback
+                # series change; every other kind is byte-identical.
+                kw["markerfacecolor"] = "none"
+                if connect:
+                    kw["ls"] = "--"
             if connect:
                 kw["lw"] = style.line_width
             if ramp_mode:
@@ -514,6 +523,38 @@ def _apply_robust_view_core(ax, spec, style):
         return
     view_span = hi - lo
     ax.set_ylim(bottom=lo - _ROBUST_PAD * view_span, top=hi + _ROBUST_PAD * view_span)
+
+
+_TOP_HEADROOM_FRAC = 0.08   # matplotlib's 5% margin + roughly a marker radius
+
+
+def _ensure_top_headroom(ax, frac=_TOP_HEADROOM_FRAC, max_uncover=0.25):
+    """Guarantee clear space between the topmost drawn point and the axes frame
+    (KNOWN-ISSUES #6). matplotlib's 5% margin is measured to the data COORDINATE, so at the
+    shipped 7 pt markers the glyph itself eats most of it and a peak or plateau visually
+    touches the frame (measured: 4.55% on the κ panel, −0.5% — actual clipping — on the χ″
+    panel). Raises the top so the max finite y of the gid-None data lines sits ≥ `frac` of
+    the span below the frame. `max_uncover` bounds how far a robust-view clip may be
+    re-opened: when the robust view cut a genuine far outlier the shortfall is large and the
+    view is left alone — this is a headroom trim, not a robust-view override. No-op when the
+    headroom is already there, on empty axes, and under an explicit spec ymax (which
+    callers guard via _apply_robust_view's own spec check before invoking)."""
+    ys = [np.asarray(ln.get_ydata(), float) for ln in ax.lines if ln.get_gid() is None]
+    ys = np.concatenate(ys) if ys else np.array([])
+    ys = ys[np.isfinite(ys)]
+    if ys.size == 0:
+        return
+    lo, hi = ax.get_ylim()
+    span = hi - lo
+    if not np.isfinite(span) or span <= 0:
+        return
+    dmax = float(ys.max())
+    if (dmax - hi) > max_uncover * span:        # a robust-view exclusion, not tight headroom
+        return
+    if (hi - dmax) >= frac * span:
+        return
+    # solve for the top that leaves `frac` of the NEW span clear: (top-dmax)/(top-lo) = frac
+    ax.set_ylim(top=(dmax - frac * lo) / (1.0 - frac))
 
 
 def _axis_maxabs(lines, which):
@@ -1795,6 +1836,22 @@ def render_vsm_mh(results, spec=None, style=None, overlay=None):
             if zoom_half > 0:
                 ax.set_xlim(-zoom_half, zoom_half)
         _apply_robust_view(ax, spec, style)
+        if ax is zoom_ax and zoom_half > 0:
+            # KNOWN-ISSUES #13: a zoom panel must zoom in y too. It used to inherit the
+            # full-range autoscale (0-0.55 µ_B on the multifield example) while its own
+            # window held 0-0.06, leaving the panel ~80% empty. Fit the y-view to the data
+            # INSIDE the ±10% window, padded like the robust view. AFTER _apply_robust_view,
+            # which scores the lines' FULL ydata and would re-frame the whole loop.
+            wy = []
+            for _, s in plotted:
+                sx = np.asarray(s.x, float); sy = np.asarray(s.y, float)
+                m = np.isfinite(sx) & np.isfinite(sy) & (np.abs(sx) <= zoom_half)
+                wy.append(sy[m])
+            wy = np.concatenate(wy) if wy else np.array([])
+            if wy.size:
+                wlo, whi = float(wy.min()), float(wy.max())
+                pad = _ROBUST_PAD * (whi - wlo) if whi > wlo else max(abs(whi), 1e-12) * 0.1
+                ax.set_ylim(wlo - pad, whi + pad)
         _apply_frame(ax, style, spec)
 
     main_ax.set_ylabel(_MH_YLABEL, fontsize=label_sz, **fam)
@@ -2219,13 +2276,35 @@ def render_hc_c_over_t_linear(results, spec=None, style=None, overlay=None):
     _finish(ax, kind, spec, style, "Temperature (K)", "Cp/T (J/mol·K²)")
     return fig
 
+# #15: model -> linestyle on hc_lowt_multifield (colour is taken by the field group).
+# Display names match the GUI's fit-line checkbox labels (plot_controls.py).
+_LOWT_MODEL_LS = {"debye_t3": "-", "debye_t3_t5": "--",
+                  "spin_fluct_noninteracting": "-.", "spin_fluct_weak": ":"}
+_LOWT_MODEL_NAMES = {"debye_t3": "Debye T³", "debye_t3_t5": "Debye T³+T⁵",
+                     "spin_fluct_noninteracting": "spin-fl non-int",
+                     "spin_fluct_weak": "spin-fl weak"}
+
+
 def render_hc_lowt_multifield(results, spec=None, style=None, overlay=None):
+    """KNOWN-ISSUES #15: four fields x four models is sixteen fit curves — readable only if
+    the fit wears its FIELD's colour (matching its data series) and its MODEL's linestyle,
+    with grey linestyle proxies naming the models in the legend (the tto_wf_t field-proxy
+    idiom). The y-view is framed by the DATA: a diverging spin-fluctuation fit used to
+    stretch the axes around its own overshoot and crush every data series."""
     results, kind, spec, style, fig, ax = _setup(results, "hc_lowt_multifield", spec, style)
     if overlay is None and kind.group_colored:
         plotted, handles = _plot_data_grouped(ax, results, kind, spec, style)
     else:
         plotted = _plot_data(ax, results, kind, spec, style, overlay); handles = None
     if overlay is None and spec.fit_line:                  # N3: master fit-line toggle gates all lines
+        from cryosweep_core.plotting.catalog import fmt_field_setpoint
+        # rebuild the SAME group->colour map _plot_data_grouped used (first-appearance order)
+        groups = []
+        for _, s in plotted:
+            if s.group not in groups:
+                groups.append(s.group)
+        gcolor = _group_color_map(groups, style)
+        models_drawn = []
         want = spec.fit_lines                              # None => all per-(model,field) lines
         for r in results:
             for g in (r.data or {}).get("field_groups", []):
@@ -2239,12 +2318,31 @@ def render_hc_lowt_multifield(results, spec=None, style=None, overlay=None):
                         continue
                     xg = np.asarray(f["t2_grid"], float)
                     yg = np.asarray(f["cp_over_t_fit"], float)
-                    ln = _fit_plot(ax, xg, yg, style, label=lkey)
+                    tag = fmt_field_setpoint(g['field_oe'], style.field_unit)
+                    ln = _fit_plot(ax, xg, yg, style, series_color=gcolor.get(tag),
+                                   label=lkey, linestyle=_LOWT_MODEL_LS.get(f["key"], "-"))
+                    if f["key"] not in models_drawn:
+                        models_drawn.append(f["key"])
                     fn = _LOWT_FUNCS.get(f["key"]); prm = f.get("params") or {}
                     if fn is not None and prm and xg.size and float(xg.min()) > 0.0:
                         xe = np.linspace(0.0, float(xg.min()), 40)
                         _extrap_plot(ax, xe, fn(xe, prm), style, ln.get_color(), yg)
+        if handles is not None and models_drawn:
+            handles = handles + [Line2D([], [], color="0.35", ls=_LOWT_MODEL_LS.get(k, "-"),
+                                        label=_LOWT_MODEL_NAMES.get(k, k))
+                                 for k in models_drawn]
     _finish(ax, kind, spec, style, "T² (K²)", "Cp/T (J/mol·K²)", legend_handles=handles)
+    # Frame the view by the data series alone (fits clip at the panel edge instead of
+    # stretching the axes around their own overshoot). After _finish: its robust view
+    # already excludes gid="fit", but plain autoscale does not.
+    if spec.ymin is None and spec.ymax is None and ax.get_yscale() == "linear":
+        dy = [np.asarray(ln.get_ydata(), float) for ln in ax.lines if ln.get_gid() is None]
+        dy = np.concatenate(dy) if dy else np.array([])
+        dy = dy[np.isfinite(dy)]
+        if dy.size:
+            dlo, dhi = float(dy.min()), float(dy.max())
+            pad = _ROBUST_PAD * (dhi - dlo) if dhi > dlo else max(abs(dhi), 1e-12) * 0.1
+            ax.set_ylim(dlo - pad, dhi + pad)
     return fig
 
 def _render_param_vs_field(results, kind_key, ylabel, spec=None, style=None, overlay=None):
@@ -2904,6 +3002,7 @@ def render_hall(results, spec=None, style=None, overlay=None):
     results, kind, spec, style, fig, ax = _setup(results, "hall_rh_t", spec, style)
     _plot_data(ax, results, kind, spec, style, overlay)
     _finish(ax, kind, spec, style, "Temperature (K)", "R_H (m³/C)")
+    _plain_offsetless_yaxis(ax)         # KNOWN-ISSUES #3: no scale+offset concatenation
     return fig
 
 def render_hall_mobility_t(results, spec=None, style=None, overlay=None):
@@ -3028,6 +3127,7 @@ def render_hall_tdep_summary(results, spec=None, style=None, overlay=None):
         results, kind, spec, style, fig, ax = _setup(results, "hall_tdep_summary", spec, style)
         _plot_data(ax, results, kind, spec, style, overlay)
         _finish(ax, kind, spec, style, "Temperature (K)", "R_H / μ / J")
+        _plain_offsetless_yaxis(ax)     # KNOWN-ISSUES #3: every R_H axis, not just RH_T
         return fig
 
     results, kind, spec, style, fig, ax = _setup(results, "hall_tdep_summary", spec, style)
@@ -3103,6 +3203,25 @@ def render_hall_tdep_summary(results, spec=None, style=None, overlay=None):
             cur = float(oax.spines["right"].get_position()[1])
             shortfall_frac = (mu_x1 + 8 - sp_x) / max(axbb.width, 1e-9)
             oax.spines["right"].set_position(("axes", cur + 2.0 * shortfall_frac))
+    # KNOWN-ISSUES #24: constrained layout cannot see an offset spine (position > 1.0 in
+    # axes fraction), so it reserves no right margin for the J axis' ticks + rotated label
+    # and the label runs past the figure edge at the bare GlobalStyle default size. Same
+    # remedy class as the spine loop above: MEASURE the J axis' realized right-side extent
+    # and reserve exactly that band via the layout rect. Convergent loop, because shrinking
+    # the rect re-flows the axes and moves the spine (axes-fraction position) with them.
+    if oax is not None:
+        eng = fig.get_layout_engine()
+        for _ in range(8):
+            fig.canvas.draw()
+            rend = fig.canvas.get_renderer()
+            bb = oax.yaxis.get_tightbbox(rend)
+            fig_w = fig.get_window_extent(rend).x1
+            if bb is None or bb.x1 <= fig_w - 2:
+                break
+            rect = getattr(eng, "get", lambda: {})().get("rect", (0, 0, 1, 1))
+            shrink = (bb.x1 - (fig_w - 4)) / max(fig_w, 1e-9)
+            eng.set(rect=(rect[0], rect[1], max(0.3, rect[2] - shrink), rect[3]))
+    _plain_offsetless_yaxis(ax)         # KNOWN-ISSUES #3: every R_H axis, not just RH_T
     _merged_legend(ax, handles, labels, style, spec)
     return fig
 
@@ -3119,6 +3238,7 @@ def _render_hall_rh_n_twin(results, kind_key, marker, spec=None, style=None, ove
         results, kind, spec, style, fig, ax = _setup(results, kind_key, spec, style)
         _plot_data(ax, results, kind, spec, style, overlay)
         _finish(ax, kind, spec, style, "Temperature (K)", "R_H (m³/C)")
+        _plain_offsetless_yaxis(ax)     # KNOWN-ISSUES #3: every R_H axis, not just RH_T
         return fig
 
     results, kind, spec, style, fig, ax = _setup(results, kind_key, spec, style)
@@ -3162,6 +3282,7 @@ def _render_hall_rh_n_twin(results, kind_key, marker, spec=None, style=None, ove
     if tax is not None:
         _apply_robust_view(tax, spec, style)     # log-scale -> no-op via _apply_robust_view's scale guard
     _apply_frame(ax, style, spec)
+    _plain_offsetless_yaxis(ax)         # KNOWN-ISSUES #3: every R_H axis, not just RH_T
     _merged_legend(ax, handles, labels, style, spec)
     return fig
 
@@ -3172,16 +3293,72 @@ def render_hall_tdep_rh_n_twin(results, spec=None, style=None, overlay=None):
     return _render_hall_rh_n_twin(results, "hall_tdep_rh_n_twin", "o", spec, style, overlay)
 
 # ---- Hall TempDep renderers ----
+def _estimator_method_note(ax, plotted, spec, style):
+    """KNOWN-ISSUES #2: when BOTH estimator families share one panel (antisym + the
+    role="two_point" 0-field+1 fallback), say so ON the figure — the legend names them,
+    but nothing warned the reader that the offset where one family hands over to the other
+    is a change of method, not physics. The title slot is used because constrained layout
+    reserves it: unlike an in-axes annotation it can never land on data. Skipped when the
+    user set an explicit title (their deliberate choice wins) and when only one family is
+    plotted (nothing to warn about)."""
+    if spec.title:
+        return
+    roles = {s.role for _, s in plotted}
+    if "two_point" not in roles or roles == {"two_point"}:
+        return
+    fam = {"fontfamily": style.font_family} if style.font_family else {}
+    # Two lines, then a measured width-fit (the _fit_tto_notes idiom): one line at font_pt-1
+    # is wider than the default 90 mm canvas and clips at BOTH edges — a warning no one can
+    # read. Floor at 6 pt with the layout re-measured after every shrink.
+    ax.set_title("open = 0-field+1 fallback estimator;\n"
+                 "steps between estimators are method, not physics",
+                 fontsize=style.font_pt - 1, **fam)
+    # Fit by EDGES, not raw width: the title is centred on the AXES, which wide y tick
+    # labels (hall_tdep_n_T's log ticks) push right of the figure centre — a raw-width
+    # check passes while the right edge still clips. Shrink until both edges are inside.
+    fig = ax.get_figure()
+    for _ in range(6):
+        fig.draw_without_rendering()
+        rend = fig.canvas.get_renderer()
+        bb = ax.title.get_window_extent(rend)
+        fig_w = fig.get_window_extent(rend).width
+        pad = 0.02 * fig_w
+        size = ax.title.get_fontsize()
+        if (bb.x0 >= pad * 0.25 and bb.x1 <= fig_w - pad * 0.25) or size <= 6.0:
+            break
+        centre = 0.5 * (bb.x0 + bb.x1)
+        half = max(0.5 * bb.width, 1e-9)
+        allowed = min(fig_w - pad - centre, centre - pad)   # tightest half-width that fits
+        ax.title.set_fontsize(max(6.0, size * max(allowed, 1e-9) / half))
+
+
+def _plain_offsetless_yaxis(ax):
+    """KNOWN-ISSUES #3: at Hall magnitudes (span ~1e-11 around ~-2.5e-7) matplotlib's
+    default ScalarFormatter engages BOTH a scale and an offset and concatenates them into
+    an unreadable header ('1e-11-2.5e-7'). With the offset off, the ticks carry absolute
+    values under a single mathtext scale ('x10^-7', ticks -2.50001 ...), so the headline
+    R_H can be read straight off the axis. MUST run after `_finish` — its set_yscale
+    reinstalls the scale's default formatter (the _tto_single trap)."""
+    yfmt = ScalarFormatter(useMathText=True)
+    yfmt.set_useOffset(False)
+    ax.yaxis.set_major_formatter(yfmt)
+
+
 def render_hall_tdep_rh_t(results, spec=None, style=None, overlay=None):
     results, kind, spec, style, fig, ax = _setup(results, "hall_tdep_RH_T", spec, style)
-    _plot_data(ax, results, kind, spec, style, overlay)
+    plotted = _plot_data(ax, results, kind, spec, style, overlay)
     _finish(ax, kind, spec, style, "Temperature (K)", "R_H (m³/C)")
+    _plain_offsetless_yaxis(ax)
+    if overlay is None:
+        _estimator_method_note(ax, plotted, spec, style)
     return fig
 
 def render_hall_tdep_n_t(results, spec=None, style=None, overlay=None):
     results, kind, spec, style, fig, ax = _setup(results, "hall_tdep_n_T", spec, style)
-    _plot_data(ax, results, kind, spec, style, overlay)
+    plotted = _plot_data(ax, results, kind, spec, style, overlay)
     _finish(ax, kind, spec, style, "Temperature (K)", "n (1/m³)")
+    if overlay is None:
+        _estimator_method_note(ax, plotted, spec, style)
     return fig
 
 def render_hall_tdep_mobility_t(results, spec=None, style=None, overlay=None):
@@ -3397,6 +3574,11 @@ def render_acms_chi_t(results, spec=None, style=None, overlay=None):
     # two levels must BOTH stay inside the panel — see _acms_axis_view.
     _acms_axis_view(ax_top, spec, style)
     _acms_axis_view(ax_bot, spec, style)
+    # #6: the χ′ high-T plateau touched the top frame and the χ″ peak tip was clipped.
+    if spec.ymax is None:
+        for ax in (ax_top, ax_bot):
+            if ax.get_yscale() == "linear":
+                _ensure_top_headroom(ax)
     # Tc / T_f marker from the aggregated result (dotted + weaker when low-confidence, per PQ-4).
     sc = (results[0].data or {}).get("sc_transition")
     if sc and sc.get("tc_mid_k") is not None:
@@ -3940,9 +4122,10 @@ def _tto_single(results, kind_key, ylabel, spec, style, overlay):
     # every other kind keeps matplotlib's default formatter. MUST come after `_finish` —
     # its `ax.set_yscale(...)` reinstalls the scale's default formatter and would wipe this
     # (which is exactly why the earlier `ticklabel_format` call had no visible effect).
-    yfmt = ScalarFormatter(useMathText=True)
-    yfmt.set_powerlimits((-2, 2))       # also supersedes the PQ-1 comma formatter on this
-    ax.yaxis.set_major_formatter(yfmt)  # axis: an offset beats ",.0f" rounding for µV/K
+    if ax.get_yscale() == "linear":     # a ScalarFormatter on a log axis (tto_lorenz_t
+        yfmt = ScalarFormatter(useMathText=True)   # since #16) renders '0.010 x10^2' ticks;
+        yfmt.set_powerlimits((-2, 2))   # also supersedes the PQ-1 comma formatter on this
+        ax.yaxis.set_major_formatter(yfmt)  # axis: an offset beats ",.0f" rounding for µV/K
     if handles is not None:
         _tto_legend(ax, handles, spec, style)
     if empty:
@@ -4024,6 +4207,18 @@ def render_tto_lorenz_t(results, spec=None, style=None, overlay=None):
     spec = spec or PlotSpec(); style = style or GlobalStyle()
     fig = _tto_single(results, "tto_lorenz_t", "L/L₀", spec, style, overlay)
     ax = fig.axes[0]
+    # KNOWN-ISSUES #16: the kind is log-y by default now, and on the log axis the reference
+    # at 1 must actually be IN the view — autoscale covers only the data, so a curve that
+    # never reaches 1 (the shipped example spans ~8-200) would leave the line below the
+    # bottom edge, which is the linear-axis defect all over again. Extend the near limit to
+    # bracket 1.0 with a factor of clearance; user-set limits (spec.ymin/ymax) win, and an
+    # explicit linear yscale keeps the old data-driven view untouched.
+    if ax.get_yscale() == "log" and any(ln.get_gid() is None for ln in ax.lines):
+        lo, hi = ax.get_ylim()
+        if spec.ymin is None and lo > 0 and lo > 1.0 / 1.35:
+            ax.set_ylim(bottom=1.0 / 1.35)
+        if spec.ymax is None and hi < 1.35:
+            ax.set_ylim(top=1.35)
     ax.axhline(1.0, color="black", lw=0.8, gid="refline")
     # LABEL the line, same idiom as hc_full_cp_t's Dulong–Petit line: an unlabelled thin black
     # rule reads as a gridline, and the gallery reference this entry cites is characterised by a
@@ -4206,6 +4401,10 @@ def render_tto_summary_t(results, spec=None, style=None, overlay=None):
     _finish(ax_r, kind, spec, style, "Temperature (K)", f"ρ ({rho_unit})", draw_legend=False)
     for ax in (ax_k, ax_s, ax_r):
         _tto_expand_ylim_for_bands(ax, spec, style)
+    # #6: the κ peak sat a marker-radius under the frame. Top panel only — the lower panels'
+    # top edges are SHARED boundaries whose ticks are trimmed below, not free frame edges.
+    if spec.ymax is None and ax_k not in blank and ax_k.get_yscale() == "linear":
+        _ensure_top_headroom(ax_k)
     for ax in blank:                    # after _finish: set_yscale reinstalls the locator
         _tto_blank_yaxis(ax)
     # Abutting panels, part 2: drop the y ticks that sit against a SHARED edge (top panel:

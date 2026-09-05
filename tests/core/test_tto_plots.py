@@ -55,7 +55,7 @@ def test_series_builders_default_field_unit_so_pq_compare_can_call_them():
 
 def test_label_omits_a_sub_50_oe_field_but_shows_a_real_one():
     assert _tto_label({"field_oe": 0.077, "direction": "down"}) == "cooling"
-    assert _tto_label({"field_oe": 90000.0, "direction": "down"}) == "90000 Oe, cooling"
+    assert _tto_label({"field_oe": 90000.0, "direction": "down"}) == "90 kOe, cooling"  # #7
     assert _tto_label({"field_oe": 90000.0, "direction": "down"}, "T") == "9 T, cooling"
 
 
@@ -209,10 +209,12 @@ def test_overlay_mode_still_labels_each_file():
                       overlay=[OverlayFile(0, "A"), OverlayFile(1, "B")])
     leg = fig.axes[0].get_legend()
     assert leg is not None
-    # tto_synth has two curves (0 Oe -> "cooling", 90000 Oe -> "90000 Oe, cooling")
+    # tto_synth has two curves; since KNOWN-ISSUES #8 the zero-field curve names its field
+    # too on a multi-field file ("0 Oe, cooling"), so no field-less orphan sits in a legend
+    # beside a named one.
     assert {t.get_text() for t in leg.get_texts()} == {
-        "A · cooling", "A · 90000 Oe, cooling",
-        "B · cooling", "B · 90000 Oe, cooling"}
+        "A · 0 Oe, cooling", "A · 90 kOe, cooling",
+        "B · 0 Oe, cooling", "B · 90 kOe, cooling"}
 
 
 def test_wf_figure_draws_three_distinct_colours_on_the_canvas():
@@ -233,7 +235,7 @@ def test_wf_folded_legend_names_the_fields_on_a_multi_field_file():
                       GlobalStyle()).axes[0].get_legend()
     texts = [t.get_text() for t in leg.get_texts()]
     assert texts[:3] == [K, KE, KPH]
-    assert texts[3:] == ["0 Oe", "90000 Oe"]
+    assert texts[3:] == ["0 Oe", "90 kOe"]   # kOe above 10 kOe since KNOWN-ISSUES #7
     styles = {h.get_linestyle() for h in leg.legend_handles[3:]}
     assert len(styles) == 2
 

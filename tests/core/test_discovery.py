@@ -52,3 +52,58 @@ def test_plots_sorted_and_includes_sp1_kinds():
     expected = {"vsm_chi_t_product", "resistivity_mr_pct", "resistivity_rho_t2",
                 "hall_n_t", "hall_r2_t", "hc_c_over_t_linear"}
     assert expected <= set(keys)
+
+
+# ---- KNOWN-ISSUES #10: discovery commands become file-aware ------------------------------
+# `cryosweep plots <file>` used to ignore the file entirely — probes/fits/plots/observables
+# all emitted the byte-identical global registry dump, so `plots` on a resistivity file
+# listed ACMS kinds and there was no way to ask which kinds a file can actually draw.
+
+def _analyzed(path):
+    from cryosweep_core.io.loader import load_dat
+    from cryosweep_core.config import RunConfig
+    from cryosweep_core.analyzers.dispatch import analyze_file
+    return analyze_file(load_dat(path), RunConfig.load(), build_default_registry())
+
+
+def test_discover_for_filters_plots_to_the_detected_probe():
+    from cryosweep_core.discovery import discover_for
+    res = _analyzed("examples/resistivity_semiconductor.dat")
+    d = discover_for(build_default_registry(), res)
+    assert d["probe"] == "resistivity"
+    probes = {p["probe"] for p in d["plots"]}
+    assert probes == {"resistivity"}                      # no ACMS kinds on a resistivity file
+    # every entry says whether THIS file can draw it
+    assert all(isinstance(p["available"], bool) for p in d["plots"])
+    # the headline kind is drawable; a kind whose series is empty on this file is not lied about
+    by_key = {p["key"]: p for p in d["plots"]}
+    assert by_key["resistivity_rho_t"]["available"] is True
+
+
+def test_discover_for_keeps_global_sections_and_envelope_keys():
+    from cryosweep_core.discovery import discover_for
+    res = _analyzed("examples/thermal_transport.dat")
+    d = discover_for(build_default_registry(), res)
+    base = discover(build_default_registry())
+    # fits/observables/probes are registry facts, not file facts: unchanged
+    assert d["fits"] == base["fits"] and d["observables"] == base["observables"]
+    assert d["probes"] == base["probes"]
+    assert d["probe"] == "tto"
+
+
+def test_cli_plots_with_file_differs_from_global_dump():
+    import json, subprocess, sys, pathlib
+    root = pathlib.Path(__file__).resolve().parents[2]
+    def run(*args):
+        return subprocess.run([sys.executable, "-m", "cryosweep_cli", *args],
+                              capture_output=True, text=True, cwd=root)
+    bare = run("plots")
+    with_file = run("plots", "examples/resistivity_semiconductor.dat")
+    assert bare.returncode == 0 and with_file.returncode == 0
+    assert bare.stdout != with_file.stdout                # the file is no longer ignored
+    d = json.loads(with_file.stdout)
+    assert d["probe"] == "resistivity"
+    assert {p["probe"] for p in d["plots"]} == {"resistivity"}
+    # the no-file dump is byte-identical to before (global registry dump, no probe key)
+    b = json.loads(bare.stdout)
+    assert "probe" not in b and "file" not in b

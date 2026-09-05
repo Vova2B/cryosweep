@@ -132,8 +132,24 @@ def main(argv=None):
                                            app_version=None, config={})).model_dump(mode="json"))
         return 2
 
-    # discovery / schema commands: no file needed
+    # discovery / schema commands: no file needed. WITH a file they become file-aware
+    # (KNOWN-ISSUES #10): the dump's `plots` filters to the detected probe and carries
+    # per-kind `available`, so an agent can ask which kinds this file can actually draw.
     if a.command in ("probes", "fits", "plots", "observables"):
+        if a.file:
+            from cryosweep_core.discovery import discover_for
+            try:
+                res = _analyze(_load(a.file, a.molar_mass, a.mass_mg), cfg)
+            except (FileNotFoundError, OSError, UnicodeError, ValueError, KeyError,
+                    ValidationError) as e:
+                sys.stderr.write(f"error: {e}\n")
+                _emit(Result(status="error", errors=[str(e)],
+                             provenance=Provenance(file=str(a.file), sha256="", app_version=None,
+                                                   config=cfg.model_dump(mode="json"))).model_dump(mode="json"))
+                return 2
+            d = discover_for(build_default_registry(), res)
+            d["file"] = str(a.file)
+            _emit(d); return 0
         _emit(discover(build_default_registry())); return 0
     if a.command == "schema":
         if not a.file or a.file not in SCHEMA_NAMES:

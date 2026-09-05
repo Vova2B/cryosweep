@@ -53,10 +53,22 @@ def _arr(d, key):
     return np.asarray(d.get(key) or [], float)
 
 
+# |H| at or above this formats as kOe ('90 kOe', not '90000 Oe') — KNOWN-ISSUES #7, owner
+# decision 2026-09-05: keep the Oe unit system (no Tesla default, no mixed-unit legends),
+# fix the readability of 5-6 digit labels with a k prefix. 10 kOe is deliberate: it leaves
+# the low-field regime where Curie-Weiss fits live — and the MPMS oracle's 1000 Oe labels —
+# byte-identical.
+FIELD_KOE_THRESHOLD_OE = 10000.0
+
+
 def fmt_field(value_oe, unit="Oe"):
-    """Format a field magnitude for a label. Oe -> '500 Oe'; T -> 3-sig-fig Tesla with
-    trailing zeros trimmed ('9999'->'1 T', '10000'->'1 T', '500'->'0.05 T', '40000'->'4 T',
-    '137000'->'13.7 T'). NaN/None/non-finite -> '' (caller already guards)."""
+    """Format a field magnitude for a label. Oe -> '500 Oe' below 10 kOe, '90 kOe' at or
+    above `FIELD_KOE_THRESHOLD_OE` (trailing zeros trimmed: '45500' -> '45.5 kOe');
+    T -> 3-sig-fig Tesla with trailing zeros trimmed ('9999'->'1 T', '10000'->'1 T',
+    '500'->'0.05 T', '40000'->'4 T', '137000'->'13.7 T'). NaN/None/non-finite -> ''
+    (caller already guards). This IS the single source of truth for field labels — five
+    call sites used to bypass the Oe path with inline ternaries and were collapsed here,
+    so a change to this function reaches every legend."""
     if value_oe is None:
         return ""
     try:
@@ -70,7 +82,29 @@ def fmt_field(value_oe, unit="Oe"):
         # instrument field (e.g. 0.481 Oe on a nominal zero-field ramp) reads "0 T"
         # instead of scientific-notation clutter ("4.81e-05 T").
         return f"{round(v) / 1e4:.3g} T"
+    if abs(v) >= FIELD_KOE_THRESHOLD_OE:
+        return f"{v / 1000.0:g} kOe"
     return f"{v:g} Oe"
+
+
+def fmt_field_setpoint(value_oe, unit="Oe"):
+    """Display label for a HELD-field setpoint (KNOWN-ISSUES #14). A held field is a
+    setpoint, and printing the group median to machine precision labels instrument noise:
+    the multifield HC example's legend read '0.524968 Oe', '50000.5 Oe', '100001 Oe'.
+    |H| < 50 Oe collapses to the nominal 0 (the probe-wide zero-field convention, as in
+    #8), everything else rounds to 4 significant figures — enough to keep 130000 and
+    129900 apart while '100001' becomes the 100000 the operator set. Display only: group
+    keys and every exported value keep the measured median."""
+    if value_oe is None:
+        return ""
+    try:
+        v = float(value_oe)
+    except (TypeError, ValueError):
+        return ""
+    if not np.isfinite(v):
+        return ""
+    v = 0.0 if abs(v) < 50.0 else float(f"{v:.4g}")
+    return fmt_field(v, unit)
 
 
 def _field_scale(unit):
@@ -129,7 +163,7 @@ def _split_from_tblocks(result, series, tblock_y, multi_label_prefix="", field_u
         arrow = _RAMP_ARROW.get(direction, "")
         ls = _RAMP_LINESTYLE.get(direction, "-")
         if multi:
-            flabel = fmt_field(field, field_unit) if field_unit == "T" else f"{field:.0f} Oe"
+            flabel = fmt_field(round(field), field_unit)   # round() keeps the old :.0f display
             out.append(Series(
                 key=f"{series.key}:{field:g}:{direction}",
                 label=f"{multi_label_prefix}{flabel}{arrow}", x=xs, y=ys, group=f"{field:g}Oe",
@@ -410,7 +444,7 @@ def series_resistivity_rho_t(result, field_unit="Oe"):
             if fld is None:
                 flabel = "ρ(T)"   # no Field column -> don't fake "na Oe"
             else:
-                flabel = fmt_field(fld, field_unit) if field_unit == "T" else f"{fld:.0f} Oe"
+                flabel = fmt_field(round(fld), field_unit)   # round() keeps the old :.0f display
             out.append(Series(key=key, label=f"{_chan_prefix(ch, multi)}{flabel}",
                               x=T.tolist(), y=rho.tolist(), group=f"Bridge {ch}",
                               default_on=(c is widest)))
@@ -432,7 +466,7 @@ def series_resistivity_rho_t2(result, field_unit="Oe"):
             if fld is None:
                 flabel = "ρ(T²)"   # no Field column -> don't fake "na Oe"
             else:
-                flabel = fmt_field(fld, field_unit) if field_unit == "T" else f"{fld:.0f} Oe"
+                flabel = fmt_field(round(fld), field_unit)   # round() keeps the old :.0f display
             out.append(Series(key=key, label=f"{_chan_prefix(ch, multi)}{flabel}",
                               x=(T * T).tolist(), y=rho.tolist(), group=f"Bridge {ch}",
                               default_on=(c is widest)))
@@ -1017,7 +1051,7 @@ def series_hc_lowt_multifield(result, field_unit="Oe"):
     for g in fg:
         if g["status"] != "ok" or not g.get("t2"):
             continue
-        tag = fmt_field(g['field_oe'], field_unit) if field_unit == "T" else f"{g['field_oe']:g} Oe"
+        tag = fmt_field_setpoint(g['field_oe'], field_unit)   # #14: setpoints display rounded
         out.append(Series(key=f"mf:{g['field_oe']:g}", label=tag,
                           x=list(g["t2"]), y=list(g["cp_over_t"]),
                           group=tag))
@@ -1067,7 +1101,7 @@ def series_hc_schottky_multifield(result, field_unit="Oe"):
     out = []
     for g in _schottky_groups(result):
         sc = g["schottky"]
-        tag = fmt_field(g['field_oe'], field_unit) if field_unit == "T" else f"{g['field_oe']:g} Oe"
+        tag = fmt_field_setpoint(g['field_oe'], field_unit)   # #14: setpoints display rounded
         if sc.get("t_data"):
             out.append(Series(key=f"schdata:{g['field_oe']:g}", label=tag,
                               x=list(sc["t_data"]), y=list(sc["cp_data"]), group=tag))
@@ -1108,7 +1142,7 @@ def series_hc_transition_multifield(result, field_unit="Oe"):
     """Per field group: raw Cp vs T (data points) + the fitted transition curve, group-colored."""
     out = []
     for g in _transition_groups(result):
-        trd = g["transition"]; tag = fmt_field(g['field_oe'], field_unit) if field_unit == "T" else f"{g['field_oe']:g} Oe"
+        trd = g["transition"]; tag = fmt_field_setpoint(g['field_oe'], field_unit)   # #14: setpoints display rounded
         if trd.get("t_data"):
             out.append(Series(key=f"trdata:{g['field_oe']:g}", label=tag,
                               x=list(trd["t_data"]), y=list(trd["cp_data"]), group=tag))
@@ -1122,7 +1156,7 @@ def series_hc_transition_signal(result, field_unit="Oe"):
     """Per field group: background-subtracted residual signal vs T, group-colored."""
     out = []
     for g in _transition_groups(result):
-        trd = g["transition"]; tag = fmt_field(g['field_oe'], field_unit) if field_unit == "T" else f"{g['field_oe']:g} Oe"
+        trd = g["transition"]; tag = fmt_field_setpoint(g['field_oe'], field_unit)   # #14: setpoints display rounded
         if trd.get("resid_signal"):
             out.append(Series(key=f"trsig:{g['field_oe']:g}", label=tag,
                               x=list(trd["t_data"]), y=list(trd["resid_signal"]), group=tag))
@@ -1134,16 +1168,24 @@ _TTO_MARK = {"up": "o", "down": "^", "mixed": "s"}
 _TTO_DIRWORD = {"up": "warming", "down": "cooling", "mixed": "mixed"}
 
 
-def _tto_label(curve, field_unit="Oe"):
+def _tto_label(curve, field_unit="Oe", multi_field=False):
     """Legend label for one TTO curve. `field_unit` MUST keep its default — pq_compare's
     _render_v2 calls KINDS[kind].series(result) with no field_unit. The field is shown via the
     existing Oe/T display convention only when |H| >= 50 Oe, so a single-field file (the real
-    gate file sits at 0.077 Oe) gets a direction-only label."""
+    gate file sits at 0.077 Oe) gets a direction-only label.
+
+    `multi_field` (KNOWN-ISSUES #8): on a file holding several field groups, a sub-50-Oe
+    curve labels its field too — as the nominal "0 Oe" (|H| < 50 Oe IS the probe's zero-field
+    convention, the same threshold RRR uses), never the raw instrument reading. Without it
+    the legend read `cooling` beside `90000 Oe, cooling` and the zero-field curve's held
+    field had to be guessed. Single-field files keep direction-only labels."""
     d = curve.get("direction")
     word = _TTO_DIRWORD.get(d, d or "")
     f = curve.get("field_oe") or 0.0
     if abs(f) >= 50.0:
         return f"{fmt_field(f, field_unit)}, {word}"
+    if multi_field:
+        return f"{fmt_field(0.0, field_unit)}, {word}"
     return word
 
 
@@ -1163,12 +1205,18 @@ def _tto_curve_series(result, ykey, prefix, field_unit="Oe", group=None, linesty
     errorbars)."""
     d = result.data or {}
     out = []
-    for c in d.get("curves") or []:
+    # #8: field-in-label is a FILE property (several distinct field groups present), decided
+    # once across all curves with sub-50-Oe fields collapsed to the nominal zero setpoint.
+    curves = d.get("curves") or []
+    setpoints = {(c.get("field_oe") or 0.0) if abs(c.get("field_oe") or 0.0) >= 50.0 else 0.0
+                 for c in curves}
+    multi_field = len(setpoints) > 1
+    for c in curves:
         y = c.get(ykey)
         t = c.get("t") or []
         if not t or not y:
             continue
-        lbl = _tto_label(c, field_unit)
+        lbl = _tto_label(c, field_unit, multi_field=multi_field)
         f = c.get("field_oe") or 0.0
         # ±1σ source for the opt-in band (spec §3). Only the four MEASURED quantities feed
         # yerr. Since 2026-08-10 the derived quantities (kappa_e, kappa_ph, lorenz_ratio)
@@ -1238,8 +1286,11 @@ def tto_field_ls_map(curves):
 
 
 def tto_field_ls_label(field_oe, field_unit="Oe"):
-    """Legend text for a field-linestyle proxy (same display convention as `_tto_label`)."""
-    return fmt_field(field_oe, field_unit) if field_unit == "T" else f"{field_oe:g} Oe"
+    """Legend text for a field-linestyle proxy (same display convention as `_tto_label`,
+    including the |H| < 50 Oe -> nominal "0 Oe" zero-field collapse of #8)."""
+    if abs(field_oe or 0.0) < 50.0:
+        field_oe = 0.0
+    return fmt_field(field_oe, field_unit)
 
 
 def series_tto_wf_t(result, field_unit="Oe"):
@@ -1336,7 +1387,12 @@ BUILTIN_PLOTKINDS = [
     PlotKind("tto_seebeck_t", "S vs T", "tto", series_tto_seebeck_t, group_colored=True),
     PlotKind("tto_zt_t", "ZT vs T", "tto", series_tto_zt_t, group_colored=True),
     PlotKind("tto_wf_t", "κ decomposition vs T", "tto", series_tto_wf_t, group_colored=True),
-    PlotKind("tto_lorenz_t", "L/L₀ vs T", "tto", series_tto_lorenz_t, group_colored=True),
+    # log-y by default (KNOWN-ISSUES #16): L/L0 = kappa*rho/(L0*T) diverges at low T, so a
+    # linear axis runs to ~200, clips the divergence and flattens the Wiedemann-Franz
+    # reference at 1 — the whole point of the panel — onto the bottom axis. spec.yscale
+    # still overrides per the usual _finish precedence.
+    PlotKind("tto_lorenz_t", "L/L₀ vs T", "tto", series_tto_lorenz_t, group_colored=True,
+             default_yscale="log"),
 ]
 
 # ---- get_kind lookup (Task 7 C1) ----
