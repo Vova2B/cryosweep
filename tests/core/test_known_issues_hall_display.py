@@ -80,6 +80,13 @@ def test_no_warning_when_only_one_estimator_family():
      dict(hall_channel=1, thickness_mm=0.5, longitudinal_channel=2)),
     ("hall_temperature_dependence.dat", "hall_tdep", "hall_tdep_RH_T",
      dict(hall_channel=1, thickness_mm=0.5)),
+    # Every kind that draws an R_H axis, not just the one the item named: the summary and
+    # the twin were rendering a plain "1e-7" header while hall_tdep_RH_T carried mathtext,
+    # i.e. the same quantity formatted two ways depending on which kind you opened.
+    ("hall_temperature_dependence.dat", "hall_tdep", "hall_tdep_summary",
+     dict(hall_channel=1, thickness_mm=0.5, longitudinal_channel=2)),
+    ("hall_temperature_dependence.dat", "hall_tdep", "hall_tdep_rh_n_twin",
+     dict(hall_channel=1, thickness_mm=0.5)),
 ])
 def test_r_h_axis_never_concatenates_scale_and_offset(example, probe, kind, hall):
     fig = render_kind(_analyze(example, probe, **hall), kind)

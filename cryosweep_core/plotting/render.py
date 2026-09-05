@@ -3127,6 +3127,7 @@ def render_hall_tdep_summary(results, spec=None, style=None, overlay=None):
         results, kind, spec, style, fig, ax = _setup(results, "hall_tdep_summary", spec, style)
         _plot_data(ax, results, kind, spec, style, overlay)
         _finish(ax, kind, spec, style, "Temperature (K)", "R_H / μ / J")
+        _plain_offsetless_yaxis(ax)     # KNOWN-ISSUES #3: every R_H axis, not just RH_T
         return fig
 
     results, kind, spec, style, fig, ax = _setup(results, "hall_tdep_summary", spec, style)
@@ -3220,6 +3221,7 @@ def render_hall_tdep_summary(results, spec=None, style=None, overlay=None):
             rect = getattr(eng, "get", lambda: {})().get("rect", (0, 0, 1, 1))
             shrink = (bb.x1 - (fig_w - 4)) / max(fig_w, 1e-9)
             eng.set(rect=(rect[0], rect[1], max(0.3, rect[2] - shrink), rect[3]))
+    _plain_offsetless_yaxis(ax)         # KNOWN-ISSUES #3: every R_H axis, not just RH_T
     _merged_legend(ax, handles, labels, style, spec)
     return fig
 
@@ -3236,6 +3238,7 @@ def _render_hall_rh_n_twin(results, kind_key, marker, spec=None, style=None, ove
         results, kind, spec, style, fig, ax = _setup(results, kind_key, spec, style)
         _plot_data(ax, results, kind, spec, style, overlay)
         _finish(ax, kind, spec, style, "Temperature (K)", "R_H (m³/C)")
+        _plain_offsetless_yaxis(ax)     # KNOWN-ISSUES #3: every R_H axis, not just RH_T
         return fig
 
     results, kind, spec, style, fig, ax = _setup(results, kind_key, spec, style)
@@ -3279,6 +3282,7 @@ def _render_hall_rh_n_twin(results, kind_key, marker, spec=None, style=None, ove
     if tax is not None:
         _apply_robust_view(tax, spec, style)     # log-scale -> no-op via _apply_robust_view's scale guard
     _apply_frame(ax, style, spec)
+    _plain_offsetless_yaxis(ax)         # KNOWN-ISSUES #3: every R_H axis, not just RH_T
     _merged_legend(ax, handles, labels, style, spec)
     return fig
 
