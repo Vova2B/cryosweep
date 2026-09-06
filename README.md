@@ -30,29 +30,61 @@ use — is documented in [`docs/physics-reference.md`](https://github.com/Vova2B
 
 ## Install
 
+Python 3.11 or newer (developed and tested on 3.14). Check with `python3 -V`.
+
+**To run cryosweep on your data:**
+
+```bash
+python3 -m venv ~/cryosweep
+~/cryosweep/bin/pip install 'cryosweep[gui]'
+~/cryosweep/bin/cryosweep-gui
+```
+
+That is plain pip installing the published wheel from PyPI into a directory of its own.
+To uninstall, delete `~/cryosweep`. To type `cryosweep` instead of the full path, add
+`alias cryosweep=~/cryosweep/bin/cryosweep` to your shell profile. (On Windows the
+executables are in `Scripts\` rather than `bin/`.)
+
+If `python3 -V` printed something older than 3.11, name a newer one explicitly —
+`python3.13 -m venv ~/cryosweep` — or install one, e.g. `brew install python@3.13`.
+
+If you already use uv or pipx, one line does the same: `uv tool install 'cryosweep[gui]'`.
+
+**To use cryosweep inside your own project, script, or agent:**
+
 ```bash
 pip install cryosweep
 ```
 
-That gives you the analysis core and the `cryosweep` command line. To add the desktop app:
-
-```bash
-pip install 'cryosweep[gui]'
-```
+This gives you the analysis core and the `cryosweep` command line, with no Qt.
+Add the desktop app with `pip install 'cryosweep[gui]'`.
 
 The GUI is optional because the analysis core and CLI are Qt-free by design, and Qt is by far
 the heaviest dependency here — leaving it out keeps an agent or CI install a quarter of the size.
 Installing without it still gives you every analyzer; only `cryosweep-gui` needs the extra, and it
 says so if you run it.
 
-From a clone, for development:
+### If pip refuses
+
+**`No matching distribution found for cryosweep`** — your pip belongs to a Python older
+than 3.11. pip filtered out every release and then reported "none", which reads as though
+the project does not exist; the real reason is one line higher in its output
+(`Ignored the following versions that require a different python version`). Check with
+`python3 -V` and use the venv route above.
+
+**`error: externally-managed-environment`** — your Python is managed by Homebrew or your
+distribution and refuses installs into itself ([PEP 668](https://peps.python.org/pep-0668/)).
+This is not a cryosweep restriction. Use the venv route above.
+
+**`command not found: cryosweep`** after a successful install — it went into a venv that is
+not on your `PATH`. Call it by full path, or add the alias above.
+
+**From a clone, for development:**
 
 ```bash
-python3 -m venv .venv
+python3 -m venv .venv          # python3 must be 3.11+; see above
 .venv/bin/pip install -e '.[gui]'
 ```
-
-Python ≥ 3.11 (developed and tested on 3.14).
 
 ## Quickstart
 
