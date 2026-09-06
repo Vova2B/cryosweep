@@ -45,38 +45,34 @@ plots…" (which re-render from the result) cannot carry it; "Save plot" saves t
 figure, where the curve travels **with its "model (manual)" label**. A refit or focus change
 clears it. **A hand-tuned curve is never presented as a fit** on any surface.
 
-### 3. Entropy fit off by default
+### 3. Entropy fit off by default — **done**
 
-The heat-capacity tab should not compute or show the entropy panel unless it is switched on.
-Scope is **GUI only**: the CLI, the JSON envelope and the exported CSVs stay byte-identical, so
-nothing downstream of the app changes and no goldens move. The entropy block sits at
-`cryosweep_core/analyzers/hc.py:388-448`; gating it behind a config flag that defaults to on
-keeps the headless path unchanged while the GUI checkbox defaults to off. The plot kind then
-disappears from the cards, the plot checklist and the capability banner through the capability
-gating that already exists — no new machinery.
+Shipped as designed: `HeatCapacityCfg.entropy_enabled` defaults **on**, so the headless
+path (CLI, JSON data, exported CSVs) is unchanged — hashed before/after on both
+heat-capacity examples: every data CSV and report is byte-identical, and the analyze JSON
+differs only by the new key appearing in the provenance **config echo**, as any new config
+field must. The GUI checkbox ("Compute entropy S(T)", Entropy group) defaults **off** and
+gates the other entropy controls; with it off the analyzer skips the entropy block
+entirely, so the `hc_entropy_vs_t` card, its plot-checklist entry and the entropy warnings
+all disappear through the existing empty-series capability gating — no new machinery.
 
-This is a **clarity change, not a performance one**: `compute_entropy` was **measured at
-~0 ms**, so nothing is being switched off to make the app faster. It also silences the entropy
-warning banner on samples with no magnetic entropy, where the warning is correct but not useful.
+This was a **clarity change, not a performance one**: `compute_entropy` re-measured at
+~1 ms of a ~237 ms analysis. It also silences the entropy warning banner on samples with
+no magnetic entropy, where the warning is correct but not useful.
 
-[KNOWN-ISSUES](KNOWN-ISSUES.md) item 12 — the legend on that figure listing a curve that was
-never visibly drawn — was fixed independently on 2026-09-04 (43e5e48), so this item no longer
-needs to carry a legend fix.
+### 4. Analysis off the GUI thread — **done**
 
-*Estimated effort: 0.5–1 day. About 4 existing GUI tests touched and ~3 added.*
-
-### 4. Analysis off the GUI thread
-
-Half of this already exists: the **Analyze button** runs off-thread (`AnalyzeWorker`,
-`probe_tab.py:140-152`, joined by `stop_worker` on close, covered by
-`tests/gui/test_probe_tab_async.py`). What remains synchronous is `analyze_and_render` — the
-path `refit_requested` and file-list changes use (`probe_tab.py:59-60`) — so every
-heat-capacity **refit** still freezes the interface for the 148–241 ms measured above, and
-item 3 makes refits more frequent. (Item 2(b) deliberately does not: the live curve is a
-~2–4 ms model evaluation, not a refit.) Moving `analyze_and_render` onto the same worker
-pattern, with a busy indicator, is the remaining fix.
-
-*Estimated effort: not yet costed — this needs a design pass before an estimate is meaningful.*
+The design pass confirmed the worker-reuse case, and it shipped: `refit_requested` and
+file-list changes now go through `request_analyze_and_render` — preparation (widget reads)
+stays on the GUI thread, the per-file analyses run on `BatchAnalyzeWorker`, and rendering
+happens on queued delivery, with the same busy indicator as the Analyze button and with a
+request arriving mid-flight **coalesced** into one rerun rather than dropped (a dropped
+refit would leave a stale display standing). `analyze_and_render` itself remains the
+synchronous seam. Responsiveness is measured, not assumed: `tests/gui/test_refit_async.py`
+counts GUI event-loop turns during the refit flight — ~21 turns during a ~240 ms analysis
+after the fix, zero on the old wiring (the test fails on it). Item 2(b)'s live curve is
+untouched. Still synchronous, out of this item's scope: `MainWindow._reanalyze_active`
+(tab switch / unit change / style change), the remaining candidate for the same pattern.
 
 ## Targeted for 1.0 — analysis
 
