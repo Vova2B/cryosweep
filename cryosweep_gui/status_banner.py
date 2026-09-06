@@ -19,8 +19,17 @@ class StatusBanner(QLabel):
     def show_result(self, result, notes=()) -> None:
         parts = [f"status: {result.status}", f"confidence: {_fmt_conf(result.confidence)}"]
         for g in (result.gate or []):
-            remedy = " ".join(f"{k}={v}" for k, v in (g.remedy or {}).items())
-            parts.append(f"gated[{g.need}]: {g.reason} → {remedy}")
+            # `field` is the GUI label for this need. Phrase it -- dumping it as another
+            # k=v pair would leave the on-screen diagnosis still pointing only at a CLI
+            # flag, which is what made this banner unusable to a GUI user.
+            remedy = dict(g.remedy or {})
+            field = remedy.pop("field", None)
+            tail = " ".join(f"{k}={v}" for k, v in remedy.items())
+            if field:
+                parts.append(f"gated[{g.need}]: {g.reason} → enter \u201c{field}\u201d "
+                             f"in the panel at left ({tail})")
+            else:
+                parts.append(f"gated[{g.need}]: {g.reason} → {tail}")
         for w in (result.warnings or []):
             parts.append(f"warning: {w}")
         for e in (result.errors or []):

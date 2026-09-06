@@ -49,6 +49,7 @@ import hashlib, pathlib
 import pandas as pd
 from pydantic import BaseModel, ConfigDict
 from cryosweep_core.io.columns import canonicalize_columns
+from cryosweep_core.io.header import sample_input_provenance
 from cryosweep_core.detect.vsm_blocks import ramps_from_temps
 from cryosweep_core.result import Result, Gate, Provenance
 from cryosweep_core.registry import Need
@@ -381,6 +382,8 @@ class ACMSAnalyzer:
                     "name": getattr(header, "title", None)},
             curves=curves, dropped_groups=dropped, sc_transition=best_sc,
             chi_dprime_peaks=peaks, capabilities=caps).model_dump(mode="json")
+        # chi_mol scales with both inputs; record which of them a person supplied.
+        data["sample_inputs"] = sample_input_provenance(header)
         warnings = ([f"{n_dropped_rows} non-finite/sentinel rows dropped"] if n_dropped_rows else [])
         return Result(status="ok", confidence=0.7,
                       confidence_parts={"detector": 1.0, "grouping": 1.0},

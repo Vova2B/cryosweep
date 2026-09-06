@@ -28,14 +28,10 @@ class PipelineCfg(BaseModel):
 
 
 def _apply_options(rt, base_cfg, options):
-    import dataclasses
     from cryosweep_core.config import RunConfig
-    mol = options.get("molar_mass"); mg = options.get("mass_mg")
-    if mol is not None or mg is not None:
-        h = rt.header
-        rt = dataclasses.replace(rt, header=dataclasses.replace(
-            h, molar_mass=mol if mol is not None else h.molar_mass,
-            mass_mg=mg if mg is not None else h.mass_mg))
+    from cryosweep_core.io.header import apply_sample_inputs
+    rt = apply_sample_inputs(rt, {"molar_mass": options.get("molar_mass"),
+                                  "mass_mg": options.get("mass_mg")})
     cfg = RunConfig.load(unit_system=options["unit_system"]) if "unit_system" in options else base_cfg
     return rt, cfg
 

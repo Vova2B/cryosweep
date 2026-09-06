@@ -22,7 +22,8 @@ class AnalysisState:
         rt = self._raw
         if rt is None or not header_patch:
             return rt
-        return dataclasses.replace(rt, header=dataclasses.replace(rt.header, **header_patch))
+        from cryosweep_core.io.header import apply_sample_inputs
+        return apply_sample_inputs(rt, header_patch)
 
     def cache_result(self, probe: str, result) -> None:
         self._results[probe] = result

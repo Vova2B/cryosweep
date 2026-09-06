@@ -47,6 +47,28 @@ _NO_INPUT_PROBES = {"tto"}
 _HINT_REMEDY = "   Set the required inputs in the panel at left."
 
 
+def _empty_message(result) -> str:
+    """Text for the empty plot area.
+
+    A gated result carries no series at all, so every plot kind is unbacked and the area is
+    empty for a reason the user did not cause. "(no plots selected)" blames them for the
+    analyzer's decision and sends them to a Plots checklist that is empty by construction --
+    the one place that cannot explain itself. Name the unmet inputs instead, using the GUI
+    label the core ships in each gate's `remedy.field`, and point at the panel that holds
+    them; the CLI flag belongs in the banner, not here, because a GUI user has no shell."""
+    if getattr(result, "status", None) != "gated":
+        return "(no plots selected)"
+    gates = getattr(result, "gate", None) or []
+    if not gates:
+        return "(no plots selected)"
+    names = [(getattr(g, "remedy", None) or {}).get("field") or g.need.replace("_", " ")
+             for g in gates]
+    listed = names[0] if len(names) == 1 else " and ".join((", ".join(names[:-1]), names[-1]))
+    it = "it" if len(names) == 1 else "them"
+    return (f"No plots: this file's header does not carry {listed}. "
+            f"Enter {it} in the panel at left, then press Analyze.")
+
+
 def _capability_hint(data: dict | None) -> str:
     """Build a one-line 'why is this empty' hint from a result's inapplicable capabilities,
     e.g. 'Not computed — R_H: thickness required for R_H · mobility: no longitudinal channel.'
@@ -230,6 +252,14 @@ def flatten_rows(data: dict) -> list[tuple[str, str]]:
             rows.append((f"fit.{pk}", str(pv)))
         if fit.get("r2") is not None:
             rows.append(("fit.r2", str(fit["r2"])))
+    # mu_eff and chi_mol scale with these, so the number behind the result belongs next to
+    # it -- and a value someone typed must not read like one the instrument wrote.
+    for f, rec in (data.get("sample_inputs") or {}).items():
+        if not isinstance(rec, dict):
+            continue
+        origin = ("from the file header" if rec.get("source") == "header"
+                  else "supplied by you — NOT from the file")
+        rows.append((f"input:{f}", f"{rec.get('value')} ({origin})"))
     for c in (data.get("capabilities") or []):
         rows.append((f"capability:{c['name']}", f"{c.get('applicable')} — {c.get('reason','')}"))
     if data.get("probe") == "vsm":
@@ -747,6 +777,7 @@ class OutputPanel(QWidget):
         self._cap_strip.setText(hint)
         self._cap_strip.setVisible(bool(hint))
         has_plots = len(layout.plots) > 0
+        self._empty.setText(_empty_message(primary))
         self._empty.setVisible(not has_plots)
         self._scroll.setVisible(has_plots)
         for entry in layout.plots:

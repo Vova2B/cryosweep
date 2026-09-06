@@ -1,5 +1,6 @@
 import json
 from cryosweep_core.io.loader import load_dat
+from cryosweep_core.io.header import apply_sample_inputs
 from cryosweep_core.config import RunConfig
 from cryosweep_core.analyzers.dispatch import analyze_file
 from cryosweep_core.registry import build_default_registry
@@ -35,7 +36,7 @@ def test_window_vsm_parity_through_shell(qapp, vsm_path):
     gui_res = tab.analyze()
     import dataclasses
     rt = load_dat(str(vsm_path))
-    rt = dataclasses.replace(rt, header=dataclasses.replace(rt.header, molar_mass=200.0, mass_mg=5.0))
+    rt = apply_sample_inputs(rt, {"molar_mass": 200.0, "mass_mg": 5.0})
     direct = analyze_file(rt, RunConfig.load(unit_system="CGS", probe_override="vsm"), build_default_registry())
     assert gui_res.model_dump_json() == direct.model_dump_json()
 

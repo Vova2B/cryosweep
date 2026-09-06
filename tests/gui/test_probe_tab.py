@@ -1,5 +1,6 @@
 import json
 from cryosweep_core.io.loader import load_dat
+from cryosweep_core.io.header import apply_sample_inputs
 from cryosweep_core.config import RunConfig
 from cryosweep_core.analyzers.dispatch import analyze_file
 from cryosweep_core.registry import build_default_registry
@@ -96,7 +97,9 @@ def test_probe_tab_vsm_parity_with_direct_pipeline(qapp, vsm_path):
     tab.panel.mass_mg_edit.setText("5.0")
     gui_res = tab.analyze()
     import dataclasses
-    rt2 = dataclasses.replace(rt, header=dataclasses.replace(rt.header, molar_mass=200.0, mass_mg=5.0))
+    # Both sides must patch through the ONE sanctioned helper: a bare dataclasses.replace
+    # skips the user-supplied record, so parity would fail on provenance alone.
+    rt2 = apply_sample_inputs(rt, {"molar_mass": 200.0, "mass_mg": 5.0})
     direct = analyze_file(rt2, RunConfig.load(unit_system="CGS", probe_override="vsm"),
                           build_default_registry())
     assert gui_res.model_dump_json() == direct.model_dump_json()

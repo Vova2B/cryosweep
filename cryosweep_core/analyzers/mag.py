@@ -3,6 +3,7 @@ import hashlib
 import numpy as np
 import pandas as pd
 from cryosweep_core.io.columns import canonicalize_columns
+from cryosweep_core.io.header import sample_input_provenance
 from cryosweep_core.detect.sweeps import segment_sweeps
 from cryosweep_core.detect.vsm_blocks import classify_vsm_blocks, ramps_from_temps
 from cryosweep_core.fitting.models import CurieWeissModel, fit_cw_ladder
@@ -196,10 +197,15 @@ class VSMAnalyzer:
         gates = []
         if mol is None:
             gates.append(Gate(need="molar_mass", reason="no MOLWGHT in header",
-                              remedy={"flag": "--molar-mass", "example": "--molar-mass 200.0"}))
+                              remedy={"flag": "--molar-mass", "example": "--molar-mass 200.0",
+                                      # `field` names the GUI box for this need, so the window
+                                      # can point at it instead of quoting a CLI flag at someone
+                                      # who has no command line. One spelling, pinned by a test.
+                                      "field": "Molar mass"}))
         if mass_g is None:
             gates.append(Gate(need="sample_mass", reason="no MASS in header",
-                              remedy={"flag": "--mass-mg", "example": "--mass-mg 5.0"}))
+                              remedy={"flag": "--mass-mg", "example": "--mass-mg 5.0",
+                                      "field": "Sample mass"}))
         if gates:
             return Result(status="gated", confidence=0.5, data={"probe": "vsm"}, gate=gates, provenance=prov)
         with np.errstate(divide="ignore", invalid="ignore"):
@@ -350,6 +356,10 @@ class VSMAnalyzer:
         # (these results are pinned byte-for-byte by the oracle tests).
         if moment_source == "m_dc":
             data["moment_source"] = moment_source
+        # mu_eff = 2.827*sqrt(C) and C scales with molar_mass/mass_mg, so the reported moment
+        # is only checkable against the numbers that produced it -- and whether a person typed
+        # them. Same idiom as moment_source above.
+        data["sample_inputs"] = sample_input_provenance(header)
         warnings.extend(_moment_notes(moment_source))
         conf = _cw_confidence(fit)
         status = "ok" if conf >= cfg.confidence_min else "low_confidence"
