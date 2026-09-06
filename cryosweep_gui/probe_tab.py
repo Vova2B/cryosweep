@@ -175,6 +175,12 @@ class ProbeTab(QWidget):
         restore = self._mw.preset_store.last_used.get(self.probe) if self._mw else None
         self.show_result(result, restore_layout=restore)
         self.absorb_result(result)               # fitted values -> boxes + focused entry state
+        # _pending_rerun is armed when EITHER worker is in flight, so it must be consumed by
+        # whichever one finishes: a file-list change arriving during an Analyze would
+        # otherwise never be run (stale display) and would leak one spurious rerun later.
+        if self._pending_rerun:
+            self._pending_rerun = False
+            self.request_analyze_and_render()
 
     def absorb_result(self, result) -> None:
         """2(a) for the paths that analyze from the LIVE panel widgets (the async Analyze

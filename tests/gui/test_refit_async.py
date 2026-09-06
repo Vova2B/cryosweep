@@ -171,3 +171,59 @@ def test_busy_state_disables_result_consumers(qapp):
         f"result consumers stayed enabled during a pending analysis: {pending}")
     assert tab.export_btn.isEnabled() and tab.report_btn.isEnabled()      # restored
     assert tab.saveplot_btn.isEnabled() and tab.exportplots_btn.isEnabled()
+
+
+def test_coalesced_rerun_survives_a_single_worker_completion(qapp):
+    """The coalesced rerun must be consumed by WHICHEVER worker finishes.
+
+    _worker_running() is true for either worker, so a file-list change arriving while the
+    Analyze button's AnalyzeWorker is in flight sets _pending_rerun — but only
+    _on_batch_analyzed used to clear it. The rerun was then never performed (the new file
+    renders nothing: exactly the stale display the coalescing comment promises to prevent)
+    and the flag survived to fire one spurious rerun on the next batch completion.
+
+    The pre-existing coalescing test fakes only _batch_worker, so it is structurally unable
+    to see this path.
+    """
+    win, tab = _hc_tab(qapp)
+
+    class _FakeRunning:
+        def isRunning(self): return True
+        def wait(self, *_): return True
+
+    tab._worker = _FakeRunning()                  # the SINGLE worker, not the batch one
+    tab.request_analyze_and_render()
+    assert tab._pending_rerun is True             # premise: the request really was coalesced
+    tab._worker = None
+
+    tab.analyze_and_render()                      # sync seam: gives us a real Result
+    res = tab._files[0].result
+    assert res is not None                        # premise
+    tab._pending_rerun = True                     # re-arm: the sync run above cleared state
+
+    calls = []
+    tab.request_analyze_and_render = lambda: calls.append(1)
+    tab._on_analyzed(res)
+
+    assert tab._pending_rerun is False, "_on_analyzed left the coalesced flag set"
+    assert calls == [1], "the coalesced rerun was dropped by _on_analyzed"
+
+
+def test_batch_worker_always_delivers_even_on_a_malformed_job(qapp):
+    """BatchAnalyzeWorker.run must emit whatever happens.
+
+    run_analysis itself never raises (it returns an error Result), but the comprehension
+    around it indexes each prep. If that raised, the thread would die without emitting,
+    _set_busy(False) would never run, and every result-consumer button would stay disabled
+    until the next analysis happened to recover them. The worker's contract is 'never
+    raises'; this pins it at the worker level too.
+    """
+    from cryosweep_gui.worker import BatchAnalyzeWorker
+    got = []
+    w = BatchAnalyzeWorker([("malformed-single-element",)], registry=None)
+    w.done.connect(got.append)
+    w.start(); w.wait(10000)
+    qapp.processEvents()
+    assert got, "BatchAnalyzeWorker died without emitting"
+    assert len(got[0]) == 1 and got[0][0] is not None
+    assert got[0][0].status == "error"
