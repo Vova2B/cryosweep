@@ -62,6 +62,10 @@ class HCInputPanel(InputPanel):
 
         # Entropy S(T) controls
         ent = QGroupBox("Entropy"); el = QFormLayout(ent)
+        # ROADMAP item 3: OFF by default in the GUI (the headless config default stays True).
+        self.entropy_enable = QCheckBox("Compute entropy S(T)")
+        self.entropy_enable.setChecked(False)
+        el.addRow(self.entropy_enable)
         self.entropy_source = QComboBox()
         self.entropy_source.addItems(["Fitted (Debye-Einstein)", "Reference file…"])
         self.entropy_source.setCurrentIndex(0)
@@ -80,6 +84,7 @@ class HCInputPanel(InputPanel):
         self._layout.addWidget(ent)
         self.entropy_source.currentIndexChanged.connect(self._sync_entropy_ref_enabled)
         self.entropy_ref_browse.clicked.connect(self._browse_entropy_ref)
+        self.entropy_enable.toggled.connect(self._sync_entropy_ref_enabled)
         self._sync_entropy_ref_enabled()
 
         # Schottky anomaly controls
@@ -208,7 +213,10 @@ class HCInputPanel(InputPanel):
         return self.entropy_source.currentIndex() == 1
 
     def _sync_entropy_ref_enabled(self) -> None:
-        on = self._entropy_ref_selected()
+        en = self.entropy_enable.isChecked()
+        for w in (self.entropy_source, self.entropy_extrapolate, self.entropy_rln_j):
+            w.setEnabled(en)
+        on = en and self._entropy_ref_selected()
         self.entropy_ref_path.setEnabled(on)
         self.entropy_ref_browse.setEnabled(on)
 
@@ -241,6 +249,7 @@ class HCInputPanel(InputPanel):
         hc["transition_universality"] = self.transition_universality.currentText()
         hc["transition_lattice_t5"] = bool(self.transition_t5.isChecked())
         hc["transition_compare_forms"] = bool(self.transition_compare.isChecked())
+        hc["entropy_enabled"] = bool(self.entropy_enable.isChecked())
         hc["entropy_extrapolate"] = bool(self.entropy_extrapolate.isChecked())
         if self._entropy_ref_selected():
             ref = self.entropy_ref_path.text().strip()
@@ -267,6 +276,7 @@ class HCInputPanel(InputPanel):
                 "transition_universality": self.transition_universality.currentText(),
                 "transition_t5": self.transition_t5.isChecked(),
                 "transition_compare": self.transition_compare.isChecked(),
+                "entropy_enabled": self.entropy_enable.isChecked(),
                 "entropy_source": self.entropy_source.currentIndex(),
                 "entropy_ref_path": self.entropy_ref_path.text(),
                 "entropy_extrapolate": self.entropy_extrapolate.isChecked(),
@@ -304,6 +314,7 @@ class HCInputPanel(InputPanel):
             self.transition_universality.setCurrentIndex(ui)
         self.transition_t5.setChecked(bool(state.get("transition_t5", False)))
         self.transition_compare.setChecked(bool(state.get("transition_compare", False)))
+        self.entropy_enable.setChecked(bool(state.get("entropy_enabled", False)))
         self.entropy_source.blockSignals(True)
         si = int(state.get("entropy_source", 0))
         self.entropy_source.setCurrentIndex(si if 0 <= si < self.entropy_source.count() else 0)

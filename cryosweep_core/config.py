@@ -107,6 +107,7 @@ class HeatCapacityCfg(BaseModel):
     transition_collapse_margin: float = 2.0      # residual ΔAICc ceiling after near-Tc point removal (λ only)
     transition_amp_max_frac: float = 1.0         # amplitude bound = frac × ptp(local Cp)
     # --- slice PQ-5: entropy S(T) ---
+    entropy_enabled: bool = True                 # master switch; True (headless default) keeps CLI/JSON/CSV unchanged — the GUI checkbox defaults off (ROADMAP item 3)
     entropy_extrapolate: bool = True             # integrate the low-T model tail (0..T_min) into S(T)
     entropy_lattice_ref_file: str | None = None  # reference .dat whose Cp(T) defines the lattice (Task 3b)
     entropy_rln_j: float | None = None           # override Rln(2J+1) plateau J (None/0 -> auto-suggest)

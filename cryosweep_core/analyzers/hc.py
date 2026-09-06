@@ -386,69 +386,74 @@ class HCAnalyzer:
         hd.full_fit = full; hd.full_fit_available = avail
         hd.full_fit_reason = reason; hd.comparison = comparison
         # --- entropy S(T) (additive; never downgrades the fit result) ---
-        from cryosweep_core.fitting.entropy import compute_entropy, suggest_rln
-        from cryosweep_core.fitting.heat_capacity import specific_heat_full, _FULL_PARAMS
-        lattice_cp = None; lat_src = None; lat_params = None
-        if full and full.get("ok"):
-            lat_params = {k: full["params"][k] for k in _FULL_PARAMS}
-            lattice_cp = specific_heat_full(np.asarray(hd.full_temperature, float),
-                                            **lat_params).tolist()
-            lat_src = "fit"
-        # Reference-file lattice override: when a reference .dat is configured, its Cp(T)
-        # replaces the fitted lattice for the magnetic-entropy subtraction (source="reference").
-        ref_path = getattr(hccfg, "entropy_lattice_ref_file", None)
-        if ref_path:
-            ref_lat = _reference_lattice_cp(ref_path, hd.full_temperature)
-            if ref_lat is not None:
-                lattice_cp = ref_lat; lat_src = "reference"
-            else:
-                warnings.append(f"entropy lattice reference file '{ref_path}' failed to load; "
-                                "using fitted lattice")
-        ent = compute_entropy(hd.full_temperature, hd.full_cp,
-                              lowt_model=(chosen_key, dict(fit.params)),
-                              lattice_cp=lattice_cp,
-                              extrapolate=getattr(hccfg, "entropy_extrapolate", True))
-        if lat_src and ent.get("s_magnetic") is not None:
-            ent["lattice_source"] = lat_src
-        hd.entropy_temperature = ent["temperature"]; hd.entropy_total = ent["s_total"]
-        hd.entropy_magnetic = ent["s_magnetic"]; hd.entropy_available = bool(ent["s_total"])
-        hd.entropy_reason = ent["reason"]; hd.entropy_extrapolated = ent["extrapolated"]
-        hd.entropy_lattice_source = ent["lattice_source"]
-        hd.entropy_rln_suggestion = suggest_rln(ent["s_magnetic"])
-        if getattr(hccfg, "entropy_rln_j", None) is not None and float(hccfg.entropy_rln_j) > 0:
-            import math
-            from cryosweep_core.fitting.entropy import rln_match_fields
-            j = float(hccfg.entropy_rln_j)
-            R = 8.314462618
-            val = R * math.log(2 * j + 1)
-            # owner-forced level still carries the honest O5 verdict against the data
-            hd.entropy_rln_suggestion = {"j": j, "value": val,
-                                         "label": f"R ln{int(2 * j + 1)}",
-                                         **rln_match_fields(val, ent["s_magnetic"])}
-        # Closed O5 always-on warning: a nearest-neighbor suggestion that matches nothing
-        # within tolerance is not evidence of a doublet — say so out loud.
-        _sug = hd.entropy_rln_suggestion
-        if _sug and _sug.get("rel_err") is not None and not _sug.get("matched"):
-            _fin = [v for v in (ent["s_magnetic"] or []) if v is not None and np.isfinite(v)]
-            if _fin:
-                warnings.append(
-                    f"S_mag saturation ({float(_fin[-1]):.2f} J/mol/K) matches no "
-                    f"R ln(2J+1) within {_sug['tol'] * 100:.0f}% — the {_sug['label']} "
-                    f"suggestion is nearest-neighbor only, not evidence of a doublet")
-        # per-field entropy: reuse the zero-field lattice, evaluated analytically on each
-        # group's own T grid (row-aligned by construction) so per-field magnetic S(T) is possible.
-        for g in fg:
-            g_lat = None
-            if lat_params is not None and g.get("full_temperature"):
-                g_lat = specific_heat_full(np.asarray(g["full_temperature"], float),
-                                           **lat_params).tolist()
-            gm = _group_lowt_model(g)
-            ent_g = compute_entropy(g.get("full_temperature", []), g.get("full_cp", []),
-                                    lowt_model=gm, lattice_cp=g_lat,
-                                    extrapolate=getattr(hccfg, "entropy_extrapolate", True))
-            if g_lat is not None and ent_g.get("s_magnetic") is not None:
-                ent_g["lattice_source"] = lat_src
-            g["entropy"] = ent_g if ent_g["s_total"] else None
+        # ROADMAP item 3: gated on entropy_enabled (default True, so the headless
+        # path is byte-identical); off skips the whole block, leaving the HCData
+        # entropy defaults (available=False) so the existing empty-series capability
+        # gating hides the plot kind, its checkbox and the entropy warnings.
+        if getattr(hccfg, "entropy_enabled", True):
+            from cryosweep_core.fitting.entropy import compute_entropy, suggest_rln
+            from cryosweep_core.fitting.heat_capacity import specific_heat_full, _FULL_PARAMS
+            lattice_cp = None; lat_src = None; lat_params = None
+            if full and full.get("ok"):
+                lat_params = {k: full["params"][k] for k in _FULL_PARAMS}
+                lattice_cp = specific_heat_full(np.asarray(hd.full_temperature, float),
+                                                **lat_params).tolist()
+                lat_src = "fit"
+            # Reference-file lattice override: when a reference .dat is configured, its Cp(T)
+            # replaces the fitted lattice for the magnetic-entropy subtraction (source="reference").
+            ref_path = getattr(hccfg, "entropy_lattice_ref_file", None)
+            if ref_path:
+                ref_lat = _reference_lattice_cp(ref_path, hd.full_temperature)
+                if ref_lat is not None:
+                    lattice_cp = ref_lat; lat_src = "reference"
+                else:
+                    warnings.append(f"entropy lattice reference file '{ref_path}' failed to load; "
+                                    "using fitted lattice")
+            ent = compute_entropy(hd.full_temperature, hd.full_cp,
+                                  lowt_model=(chosen_key, dict(fit.params)),
+                                  lattice_cp=lattice_cp,
+                                  extrapolate=getattr(hccfg, "entropy_extrapolate", True))
+            if lat_src and ent.get("s_magnetic") is not None:
+                ent["lattice_source"] = lat_src
+            hd.entropy_temperature = ent["temperature"]; hd.entropy_total = ent["s_total"]
+            hd.entropy_magnetic = ent["s_magnetic"]; hd.entropy_available = bool(ent["s_total"])
+            hd.entropy_reason = ent["reason"]; hd.entropy_extrapolated = ent["extrapolated"]
+            hd.entropy_lattice_source = ent["lattice_source"]
+            hd.entropy_rln_suggestion = suggest_rln(ent["s_magnetic"])
+            if getattr(hccfg, "entropy_rln_j", None) is not None and float(hccfg.entropy_rln_j) > 0:
+                import math
+                from cryosweep_core.fitting.entropy import rln_match_fields
+                j = float(hccfg.entropy_rln_j)
+                R = 8.314462618
+                val = R * math.log(2 * j + 1)
+                # owner-forced level still carries the honest O5 verdict against the data
+                hd.entropy_rln_suggestion = {"j": j, "value": val,
+                                             "label": f"R ln{int(2 * j + 1)}",
+                                             **rln_match_fields(val, ent["s_magnetic"])}
+            # Closed O5 always-on warning: a nearest-neighbor suggestion that matches nothing
+            # within tolerance is not evidence of a doublet — say so out loud.
+            _sug = hd.entropy_rln_suggestion
+            if _sug and _sug.get("rel_err") is not None and not _sug.get("matched"):
+                _fin = [v for v in (ent["s_magnetic"] or []) if v is not None and np.isfinite(v)]
+                if _fin:
+                    warnings.append(
+                        f"S_mag saturation ({float(_fin[-1]):.2f} J/mol/K) matches no "
+                        f"R ln(2J+1) within {_sug['tol'] * 100:.0f}% — the {_sug['label']} "
+                        f"suggestion is nearest-neighbor only, not evidence of a doublet")
+            # per-field entropy: reuse the zero-field lattice, evaluated analytically on each
+            # group's own T grid (row-aligned by construction) so per-field magnetic S(T) is possible.
+            for g in fg:
+                g_lat = None
+                if lat_params is not None and g.get("full_temperature"):
+                    g_lat = specific_heat_full(np.asarray(g["full_temperature"], float),
+                                               **lat_params).tolist()
+                gm = _group_lowt_model(g)
+                ent_g = compute_entropy(g.get("full_temperature", []), g.get("full_cp", []),
+                                        lowt_model=gm, lattice_cp=g_lat,
+                                        extrapolate=getattr(hccfg, "entropy_extrapolate", True))
+                if g_lat is not None and ent_g.get("s_magnetic") is not None:
+                    ent_g["lattice_source"] = lat_src
+                g["entropy"] = ent_g if ent_g["s_total"] else None
         conf = min(1.0, fit.r2) if fit.r2 else 0.5
         beta = fit.params.get("beta")
         is_lattice = chosen_key in ("debye_t3", "debye_t3_t5")

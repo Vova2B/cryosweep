@@ -32,8 +32,11 @@ def test_hc_tab_parity_and_theta_d(qapp, hc_synth_path):
     assert win.tabs.currentWidget().probe == "heatcapacity"     # auto-detected + preselected
     tab = win.tabs.currentWidget()
     gui = tab.analyze()
+    # item 3: the GUI panel defaults entropy OFF (headless config default stays True),
+    # so parity is against a direct run carrying the same effective config.
     direct = analyze_file(load_dat(str(hc_synth_path)),
-                          RunConfig.load(unit_system="CGS", probe_override="heatcapacity"),
+                          RunConfig.load(unit_system="CGS", probe_override="heatcapacity",
+                                         heatcapacity={"entropy_enabled": False}),
                           build_default_registry())
     assert gui.model_dump_json() == direct.model_dump_json()
     assert gui.status == "ok"

@@ -148,3 +148,30 @@ def test_field_groups_carry_full_cp_arrays(hc_result):
         if isinstance(g["entropy"], dict):
             s = g["entropy"]["s_total"]
             assert all(s[i] <= s[i + 1] + 1e-9 for i in range(len(s) - 1))
+
+
+def test_entropy_enabled_defaults_on():
+    """Headless default stays ON (ROADMAP item 3): an unconfigured run computes entropy,
+    so the CLI JSON envelope and the entropy CSV are byte-identical to before the flag."""
+    from cryosweep_core.config import HeatCapacityCfg
+    assert HeatCapacityCfg().entropy_enabled is True
+
+
+def test_entropy_disabled_skips_block_entirely():
+    """entropy_enabled=False: no entropy arrays, no Rln suggestion, no per-field entropy,
+    no entropy warnings — and hc_entropy_vs_t loses its backing, so the EXISTING capability
+    gating (empty series -> kind skipped) hides the card, checkbox and warning banner."""
+    from cryosweep_core.plotting.catalog import series_hc_entropy_vs_t
+    on = HCAnalyzer().analyze(_synth(), RunConfig())
+    off = HCAnalyzer().analyze(_synth(), RunConfig(heatcapacity={"entropy_enabled": False}))
+    d = off.data
+    assert d["entropy_available"] is False
+    assert d["entropy_temperature"] == [] and d["entropy_total"] == []
+    assert d["entropy_rln_suggestion"] is None
+    assert all(g["entropy"] is None for g in d["field_groups"])
+    assert series_hc_entropy_vs_t(off) == []
+    assert not any("R ln" in w or "entropy" in w.lower() for w in off.warnings), off.warnings
+    # nothing BUT entropy changes: same status/confidence, same fits
+    assert off.status == on.status and off.confidence == on.confidence
+    assert d["full_fit"]["params"] == on.data["full_fit"]["params"]
+    assert d["comparison"] == on.data["comparison"]
