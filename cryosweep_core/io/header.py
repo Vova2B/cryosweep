@@ -29,6 +29,8 @@ def parse_header(path) -> HeaderMeta:
     info: dict = {}
     info_rows: list = []
     molar_mass = n_atoms = mass_mg = None
+    # QD VSM dialect, collected separately so an explicit `KEY:` row always wins (see below).
+    bare_molar_mass = bare_mass_mg = None
     for ln in head:
         parts = [p.strip() for p in ln.split(",")]
         tag = parts[0].upper() if parts else ""
@@ -50,6 +52,21 @@ def parse_header(path) -> HeaderMeta:
                 n_atoms = _to_float(value)
             elif key == "MASS":
                 mass_mg = _to_float(value)
+            elif key is None:
+                # The QD VSM option writes these WITHOUT a "KEY:" prefix --
+                # `INFO,<mg>,SAMPLE_MASS` / `INFO,<g/mol>,SAMPLE_MOLECULAR_WEIGHT` -- so the
+                # branches above never fire and a file stating both values gates as if it
+                # stated neither. SAMPLE_MASS is in mg, the same unit as the MASS: row
+                # (the per-row `Mass (grams)` DATA column is an unrelated VSM diagnostic).
+                if desc.upper() == "SAMPLE_MASS":
+                    bare_mass_mg = _to_float(value)
+                elif desc.upper() == "SAMPLE_MOLECULAR_WEIGHT":
+                    bare_molar_mass = _to_float(value)
+    # A colon-keyed row is explicit and wins regardless of the order the two dialects appear in.
+    if molar_mass is None:
+        molar_mass = bare_molar_mass
+    if mass_mg is None:
+        mass_mg = bare_mass_mg
     return HeaderMeta(
         app=app, app_version=app_version, title=title,
         info=info, info_rows=tuple(info_rows), channels={},
