@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QFileDialog, QSplitter,
                              QScrollArea, QGroupBox)
 from cryosweep_core.config import RunConfig
-from cryosweep_gui.worker import AnalyzeWorker, run_analysis
+from cryosweep_gui.worker import AnalyzeWorker, BatchAnalyzeWorker, run_analysis
 from cryosweep_core.io.export import export_result
 from cryosweep_core.plotting.export import save_figure, export_plots
 from cryosweep_core.reports import build_report
@@ -40,6 +40,9 @@ class ProbeTab(QWidget):
         self._get_unit = get_unit
         self._last_result = None
         self._worker = None
+        self._batch_worker = None                # item 4: async analyze_and_render
+        self._batch_jobs = None                  # entries aligned with the running batch
+        self._pending_rerun = False              # a request arrived mid-flight (coalesced)
         self._files: list[_FileEntry] = []
         self._next_id = 0
         self._focus = 0                          # index of the focused entry (export/report target)
@@ -55,9 +58,12 @@ class ProbeTab(QWidget):
 
         self.preset_bar = PresetBar(self.probe)
         self.file_manager = FileManager(self)
-        self.file_manager.changed.connect(self.analyze_and_render)
+        # item 4: these two paths froze the UI for the full analysis (~150-250 ms per
+        # heat-capacity refit); they now go through the same worker pattern as Analyze.
+        # analyze_and_render itself stays as the synchronous seam (tests, _reanalyze_active).
+        self.file_manager.changed.connect(self.request_analyze_and_render)
         if hasattr(self.panel, "refit_requested"):
-            self.panel.refit_requested.connect(self.analyze_and_render)
+            self.panel.refit_requested.connect(self.request_analyze_and_render)
         if hasattr(self.panel, "param_edited"):
             self.panel.param_edited.connect(self._on_param_edited)
 
@@ -147,9 +153,12 @@ class ProbeTab(QWidget):
             return None
         return run_analysis(prep[0], prep[1], self._registry)
 
+    def _worker_running(self) -> bool:
+        return any(w is not None and w.isRunning() for w in (self._worker, self._batch_worker))
+
     def request_analysis(self):
         """Async: run analyze_file off the GUI thread; render on the GUI thread when done."""
-        if self._worker is not None and self._worker.isRunning():
+        if self._worker_running():
             return                               # ignore re-entrant requests while one is running
         prep = self._prepare()
         if prep is None:
@@ -196,9 +205,10 @@ class ProbeTab(QWidget):
             self.banner.show_message("analyzing…")
 
     def stop_worker(self):
-        """Join a running worker (called on window close so no QThread is destroyed mid-run)."""
-        if self._worker is not None and self._worker.isRunning():
-            self._worker.wait()
+        """Join running workers (called on window close so no QThread is destroyed mid-run)."""
+        for w in (self._worker, self._batch_worker):
+            if w is not None and w.isRunning():
+                w.wait()
 
     def _backed_kinds(self, results) -> list[str]:
         """Kinds with data behind them for these results (stamped into PlotLayout.known so a
@@ -357,6 +367,44 @@ class ProbeTab(QWidget):
         self._render_files()
         if self._files:                                       # restore the panel to the focused entry
             self.panel.set_state(self._files[self._focus].state)
+
+    def request_analyze_and_render(self):
+        """Item 4: analyze_and_render off the GUI thread. Preparation (widget reads) stays
+        here; the per-file analyses run on BatchAnalyzeWorker; rendering happens on queued
+        delivery. A request arriving mid-flight is COALESCED into one rerun — dropping a
+        refit would silently leave a stale display on screen."""
+        if self._worker_running():
+            self._pending_rerun = True
+            return
+        self.commit_focused_params()                          # snapshot live edits before the transient set_state loop
+        inc = self._included()
+        if not inc:
+            return
+        jobs = [(self._prepare_entry(e), e) for e in inc]
+        if self._files:                                       # panel back to the focused entry while we wait
+            self.panel.set_state(self._files[self._focus].state)
+        self._batch_jobs = jobs
+        self._set_busy(True)
+        self._batch_worker = BatchAnalyzeWorker([prep for prep, _ in jobs], self._registry)
+        self._batch_worker.done.connect(self._on_batch_analyzed)
+        self._batch_worker.start()
+
+    def _on_batch_analyzed(self, results):        # GUI thread (queued delivery)
+        self._set_busy(False)
+        for (prep, e), res in zip(self._batch_jobs, results):
+            e.result = res
+            # 2(a), same as the sync path: fold each entry's own fitted params into its state
+            if e.result is not None and hasattr(self.panel, "fitted_state_patch"):
+                patched = self.panel.fitted_state_patch(e.state, e.result)
+                if patched is not None:
+                    e.state = patched
+        self._batch_jobs = None
+        self._render_files()
+        if self._files:                                       # restore the panel to the focused entry
+            self.panel.set_state(self._files[self._focus].state)
+        if self._pending_rerun:                               # one coalesced rerun, with fresh widget/file state
+            self._pending_rerun = False
+            self.request_analyze_and_render()
 
     def sync_panel_to_focus(self):
         """Load the focused entry's saved params into the panel (no commit). Used after a remove."""
