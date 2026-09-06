@@ -1,12 +1,17 @@
-"""The version is written in four files and they must agree.
+"""The version is written in five files and they must agree.
 
 Added 2026-09-02, when they did not: `pyproject.toml` and `CITATION.cff` said 0.1.0 while
 `cryosweep_core/__init__.py` said 0.0.1 — and `test_smoke.py` pinned the wrong one, so the
 disagreement was load-bearing and still green. Nothing compared them to each other.
 
-A release bump touches all four plus the CHANGELOG date. This is what makes that a mechanical
+`.zenodo.json` was the unguarded one until 2026-09-06: it carries the version that becomes
+the archived record's DOI metadata, and nothing compared it to anything, so a bump could go
+green while the DOI described the previous release.
+
+A release bump touches all five plus the CHANGELOG date. This is what makes that a mechanical
 edit instead of a thing to remember: change one, the suite tells you about the other three.
 """
+import json
 import pathlib
 import re
 import tomllib
@@ -27,6 +32,10 @@ def _citation():
     return ver.group(1), rel.group(1)
 
 
+def _zenodo_version():
+    return json.loads((ROOT / ".zenodo.json").read_text())["version"]
+
+
 def _changelog_top():
     """The newest CHANGELOG heading: `## <version> — <date>` (or `— unreleased`)."""
     for ln in (ROOT / "CHANGELOG.md").read_text().splitlines():
@@ -36,7 +45,7 @@ def _changelog_top():
     pytest.fail("CHANGELOG.md has no `## <version> — <date>` heading")
 
 
-def test_all_four_version_strings_agree():
+def test_all_five_version_strings_agree():
     import cryosweep_core
     py = _pyproject_version()
     cff_ver, _ = _citation()
@@ -44,6 +53,7 @@ def test_all_four_version_strings_agree():
     assert cryosweep_core.__version__ == py, "cryosweep_core/__init__.py disagrees with pyproject"
     assert cff_ver == py, "CITATION.cff disagrees with pyproject"
     assert cl_ver == py, "the newest CHANGELOG entry disagrees with pyproject"
+    assert _zenodo_version() == py, ".zenodo.json disagrees with pyproject"
 
 
 def test_citation_and_changelog_dates_agree():
