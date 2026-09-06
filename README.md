@@ -46,7 +46,9 @@ To uninstall, delete `~/cryosweep`. To type `cryosweep` instead of the full path
 executables are in `Scripts\` rather than `bin/`.)
 
 If `python3 -V` printed something older than 3.11, name a newer one explicitly —
-`python3.13 -m venv ~/cryosweep` — or install one, e.g. `brew install python@3.13`.
+`python3.13 -m venv ~/cryosweep` — or install one from
+[python.org/downloads](https://www.python.org/downloads/). Its macOS installer is universal,
+so it covers Intel Macs as well, which Homebrew no longer supports.
 
 If you already use uv or pipx, one line does the same: `uv tool install 'cryosweep[gui]'`.
 
