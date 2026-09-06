@@ -38,11 +38,17 @@ jobs:
           pip install pytest
 
       # No real measurement data and no reference gallery in a public checkout; the tests that
-      # need either skip by design, so this must still be a clean pass.
+      # need either skip by design, so this must still be a clean pass. NOTE: no `-q` here —
+      # pytest.ini already sets it, and doubling it suppresses the summary line, which is how
+      # this job ran 209 silent skips for its whole history. See tools/suite_report.py.
       - name: Tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: pytest -q -p no:warnings
+        run: pytest -p no:warnings --junitxml=pytest-results.xml
+
+      # A green tick is not evidence on its own: it says nothing failed, not that anything ran.
+      - name: Suite completeness
+        run: python tools/suite_report.py pytest-results.xml --max-skipped 215 --min-total 2000
 
       - name: CLI smoke
         run: |
