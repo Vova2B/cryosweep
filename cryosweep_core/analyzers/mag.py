@@ -196,10 +196,15 @@ class VSMAnalyzer:
         gates = []
         if mol is None:
             gates.append(Gate(need="molar_mass", reason="no MOLWGHT in header",
-                              remedy={"flag": "--molar-mass", "example": "--molar-mass 200.0"}))
+                              remedy={"flag": "--molar-mass", "example": "--molar-mass 200.0",
+                                      # `field` names the GUI box for this need, so the window
+                                      # can point at it instead of quoting a CLI flag at someone
+                                      # who has no command line. One spelling, pinned by a test.
+                                      "field": "Molar mass"}))
         if mass_g is None:
             gates.append(Gate(need="sample_mass", reason="no MASS in header",
-                              remedy={"flag": "--mass-mg", "example": "--mass-mg 5.0"}))
+                              remedy={"flag": "--mass-mg", "example": "--mass-mg 5.0",
+                                      "field": "Sample mass"}))
         if gates:
             return Result(status="gated", confidence=0.5, data={"probe": "vsm"}, gate=gates, provenance=prov)
         with np.errstate(divide="ignore", invalid="ignore"):
