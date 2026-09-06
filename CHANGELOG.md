@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.5.0 — 2026-09-06
+
+The GUI stops blocking. Analysis, refit and file-list runs move onto a worker thread, so the
+window stays responsive on large files, and the actions that consume a result are disabled
+while a run is pending instead of operating on the previous one.
+
+Analysis output is unchanged. Every data CSV and report on both heat-capacity examples is
+byte-identical to 0.4.0, and every plot render is byte-identical across all 41 gallery figures.
+The one deliberate difference in the `analyze` JSON is the new `entropy_enabled` key appearing
+in the provenance config echo, as any new config field must.
+
+### Added
+
+- **Analysis runs off the GUI thread.** Refit and file-list analysis no longer freeze the
+  window. A rerun requested while one is still in flight is consumed by whichever worker
+  finishes, rather than being dropped or run twice.
+- **`entropy_enabled` switches entropy S(T) off.** `HeatCapacityCfg.entropy_enabled` defaults
+  to `True`, so the CLI, JSON, CSV and report paths are unchanged; the GUI checkbox defaults
+  off, where the extra panel is rarely what you came for.
+- **`suite_report --verify-block`** prints a pasteable verification block — commit, pass/skip/
+  fail counts, whether the real-data tests ran, and a hash of the JUnit XML — so a claim that
+  the suite passed can be checked against the tree it names rather than taken on trust.
+  `--require-real-data` fails when the data-gated tests silently skipped.
+- **CI reports what the suite actually covered** and fails when it shrinks. It had been
+  skipping 209 tests — 9.9 % of the suite — for its entire history without saying so.
+
+### Fixed
+
+- **Install instructions that work on a stock Mac.** `pip install cryosweep` led the README
+  while the Python ≥ 3.11 requirement was the last line of the section. On a default Python
+  older than 3.11 — the one macOS ships — pip filters out every release and reports
+  `No matching distribution found`, which reads as though the project does not exist. The
+  section now leads with the requirement and a virtual-environment route that works regardless
+  of the system Python, and decodes that error and PEP 668's `externally-managed-environment`
+  verbatim, so searching for either lands on the fix.
+- **Result actions no longer act on a stale analysis.** Export, report and plot saving are
+  disabled while a run is pending.
+
+### Changed
+
+- **Shared identifiers have one spelling.** The Oe↔T factor, the zero-field threshold, and the
+  low-temperature model keys, labels and fit-line keys are single-sourced
+  (`cryosweep_core/units.py`, `cryosweep_core/fitting/heat_capacity.py`) instead of retyped in
+  each consumer — the defect class that had already shipped one live bug, where a rounding
+  drift between two independently written f-strings silently dropped every fit line. Rendering
+  is unchanged: all 41 gallery figures, and 19 heat-capacity renders across four measurement
+  files, are byte-identical.
+- **GUI interaction invariants are tested** across every probe tab — that a pending run
+  freezes result actions, and that a control round-trips its own state.
+
 ## 0.4.0 — 2026-09-06
 
 Every open item in [KNOWN-ISSUES.md](KNOWN-ISSUES.md) is closed — thirteen of them, plus one
