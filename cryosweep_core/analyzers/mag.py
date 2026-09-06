@@ -3,6 +3,7 @@ import hashlib
 import numpy as np
 import pandas as pd
 from cryosweep_core.io.columns import canonicalize_columns
+from cryosweep_core.io.header import sample_input_provenance
 from cryosweep_core.detect.sweeps import segment_sweeps
 from cryosweep_core.detect.vsm_blocks import classify_vsm_blocks, ramps_from_temps
 from cryosweep_core.fitting.models import CurieWeissModel, fit_cw_ladder
@@ -355,6 +356,10 @@ class VSMAnalyzer:
         # (these results are pinned byte-for-byte by the oracle tests).
         if moment_source == "m_dc":
             data["moment_source"] = moment_source
+        # mu_eff = 2.827*sqrt(C) and C scales with molar_mass/mass_mg, so the reported moment
+        # is only checkable against the numbers that produced it -- and whether a person typed
+        # them. Same idiom as moment_source above.
+        data["sample_inputs"] = sample_input_provenance(header)
         warnings.extend(_moment_notes(moment_source))
         conf = _cw_confidence(fit)
         status = "ok" if conf >= cfg.confidence_min else "low_confidence"

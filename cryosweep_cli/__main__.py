@@ -22,14 +22,11 @@ def _emit(obj: dict) -> None:
     sys.stdout.write(json.dumps(obj, sort_keys=True, ensure_ascii=False, allow_nan=False) + "\n")
 
 def _load(path, molar_mass=None, mass_mg=None):
-    import dataclasses
-    rt = load_dat(path)
-    if molar_mass is not None or mass_mg is not None:
-        h = rt.header
-        rt = dataclasses.replace(rt, header=dataclasses.replace(
-            h, molar_mass=molar_mass if molar_mass is not None else h.molar_mass,
-            mass_mg=mass_mg if mass_mg is not None else h.mass_mg))
-    return rt
+    from cryosweep_core.io.header import apply_sample_inputs
+    # apply_sample_inputs ignores None entries, so passing both flags unconditionally does
+    # not mark an untouched input as user-supplied.
+    return apply_sample_inputs(load_dat(path),
+                               {"molar_mass": molar_mass, "mass_mg": mass_mg})
 
 def _analyze(rt, cfg):
     from cryosweep_core.analyzers.dispatch import analyze_file

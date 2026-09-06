@@ -638,6 +638,11 @@ def export_result(result, stem, fmt="csv") -> dict:
             "app_version": result.provenance.app_version,
             "unit_system": result.provenance.config.get("unit_system", "CGS"),
             "units": units, "config": result.provenance.config}
+    # The CSVs carrying mu_eff name no molar mass, so an export alone cannot be checked
+    # against the input that produced it. Omitted entirely when there is nothing to record:
+    # an empty object would read as "we looked and there is none".
+    if d.get("sample_inputs"):
+        meta["sample_inputs"] = d["sample_inputs"]
     mp = stem.with_suffix(".meta.json"); mp.write_text(json.dumps(meta, indent=2, sort_keys=True))
     out["meta"] = str(mp)
     return out

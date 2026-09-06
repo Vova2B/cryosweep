@@ -260,7 +260,10 @@ def test_mpms_zfc_fc_two_ramps_in_field_group(mpms_real_path):
 #   The three single-axis VSM kinds stay strictly byte-identical (the fix is gated on >1 axes).
 _NEW_KEYS = ("loops", "ramps", "fit_modified", "t_blocks",
              # 2026-08-10 uncertainty-honesty additive fields (CW ladder, spec §1.2):
-             "cw_ladder", "theta_spread_k", "mu_eff_spread")
+             "cw_ladder", "theta_spread_k", "mu_eff_spread",
+             # 2026-09-06: which molar mass / sample mass produced this mu_eff, and whether
+             # a person supplied it. Additive -- the oracle's own numbers are untouched.
+             "sample_inputs")
 _UNCHANGED_PNG_KINDS = ("vsm_moment_t", "vsm_chi_t_product")
 
 

@@ -1,4 +1,5 @@
 from __future__ import annotations
+import dataclasses
 import pathlib
 from cryosweep_core.model import HeaderMeta, ChannelMeta
 
@@ -18,6 +19,46 @@ def _to_float(s: str):
         return float(s.strip())
     except (ValueError, AttributeError):
         return None
+
+#: Header fields a person can supply, and that a reported quantity scales with.
+SAMPLE_INPUT_FIELDS = ("molar_mass", "mass_mg", "n_atoms")
+
+
+def apply_sample_inputs(rt, patch: dict):
+    """Return a copy of *rt* whose header carries *patch*, recorded as USER-supplied.
+
+    The single place a sample input may be overridden. It was previously done with a bare
+    `dataclasses.replace` at four sites (CLI, pipeline, GUI state, GUI tab), after which a
+    typed molar mass was indistinguishable from one the instrument wrote -- and mu_eff scales
+    with it. Route every override through here so the record follows the value.
+
+    A patch entry of None is a no-op, not an override: the CLI passes both flags always.
+    Empty patch -> the original object, unmarked.
+    """
+    real = {k: v for k, v in (patch or {}).items() if v is not None}
+    if not real:
+        return rt
+    h = rt.header
+    marked = frozenset(h.user_supplied) | {k for k in real if k in SAMPLE_INPUT_FIELDS}
+    return dataclasses.replace(rt, header=dataclasses.replace(
+        h, user_supplied=marked, **real))
+
+
+def sample_input_provenance(header) -> dict:
+    """`{field: {"value": v, "source": "header"|"user"}}` for the sample inputs in play.
+
+    Inputs neither the file nor the user supplied are OMITTED rather than reported as None:
+    a null entry reads as "we looked and there is none", which is the same shape as a value,
+    and the caller cannot tell an absent input from an unrecorded one."""
+    out = {}
+    for f in SAMPLE_INPUT_FIELDS:
+        v = getattr(header, f, None)
+        if v is None:
+            continue
+        out[f] = {"value": v,
+                  "source": "user" if f in (header.user_supplied or ()) else "header"}
+    return out
+
 
 def parse_header(path) -> HeaderMeta:
     lines = _read_lines(path)

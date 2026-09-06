@@ -136,7 +136,8 @@ class ProbeTab(QWidget):
         overrides.update(self.panel.build_overrides())
         patch = self.panel.build_header_patch()
         if patch:
-            rt = dataclasses.replace(rt, header=dataclasses.replace(rt.header, **patch))
+            from cryosweep_core.io.header import apply_sample_inputs
+            rt = apply_sample_inputs(rt, patch)
         return rt, RunConfig.load(**overrides)
 
     def _prepare(self):

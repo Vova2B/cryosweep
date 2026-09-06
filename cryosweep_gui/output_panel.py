@@ -252,6 +252,14 @@ def flatten_rows(data: dict) -> list[tuple[str, str]]:
             rows.append((f"fit.{pk}", str(pv)))
         if fit.get("r2") is not None:
             rows.append(("fit.r2", str(fit["r2"])))
+    # mu_eff and chi_mol scale with these, so the number behind the result belongs next to
+    # it -- and a value someone typed must not read like one the instrument wrote.
+    for f, rec in (data.get("sample_inputs") or {}).items():
+        if not isinstance(rec, dict):
+            continue
+        origin = ("from the file header" if rec.get("source") == "header"
+                  else "supplied by you — NOT from the file")
+        rows.append((f"input:{f}", f"{rec.get('value')} ({origin})"))
     for c in (data.get("capabilities") or []):
         rows.append((f"capability:{c['name']}", f"{c.get('applicable')} — {c.get('reason','')}"))
     if data.get("probe") == "vsm":

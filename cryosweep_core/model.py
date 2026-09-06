@@ -25,6 +25,11 @@ class HeaderMeta:
     data_line: int                  # 0-based index of the "[Data]" marker line
     raw_lines: tuple
     bare_csv: bool = False
+    # Sample-input fields a PERSON supplied (CLI flag or GUI box) rather than the instrument.
+    # mu_eff and chi_mol scale with molar_mass/mass_mg, so a reported moment is only checkable
+    # against the number that produced it; without this the two are indistinguishable once
+    # patched onto the header. Set only through io.header.apply_sample_inputs.
+    user_supplied: frozenset = frozenset()
 
 @dataclass
 class RawTable:
