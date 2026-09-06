@@ -48,7 +48,7 @@ jobs:
 
       # A green tick is not evidence on its own: it says nothing failed, not that anything ran.
       - name: Suite completeness
-        run: python tools/suite_report.py pytest-results.xml --max-skipped 215 --min-total 2000
+        run: python tools/suite_report.py pytest-results.xml --max-skipped 215 --min-total 2000 --verify-block
 
       - name: CLI smoke
         run: |

@@ -63,6 +63,21 @@ so the next person does not re-derive them.
 declined and why, rather than publishing a number. New analysis should follow that: a result
 that cannot be trusted is more useful reported as untrustworthy than as a value.
 
+**Say what your test run proved — paste the verification block.** Run
+
+```bash
+pytest --junitxml=pytest-results.xml
+python tools/suite_report.py pytest-results.xml --max-skipped 215 --min-total 2000 --verify-block
+```
+
+and paste the emitted block into the PR description. It carries the commit, the exact
+suite counts, whether the real-data tests actually ran, and the junit digest — every line
+is re-derivable by re-running the same command, so the block is checkable, not testimony.
+In a public checkout the real-data line will say `NOT RUN — ~209 local-only skips`; that
+is the expected shape (those tests need measurement files that are not distributed).
+Maintainers running in the data-bearing tree add `--require-real-data`, which turns that
+line into a failure instead of a note.
+
 **Don't commit measurement data.** `*.dat` is gitignored except for the committed fixtures and
 examples. If you add an example derived from a real measurement, it must go through the
 anonymization path in `tests/core/fixtures/_anonymize.py` — note that scrubbing the header is
