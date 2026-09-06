@@ -6,6 +6,8 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, Q
 from cryosweep_core.io.loader import load_dat
 from cryosweep_core.io.columns import canonicalize_columns
 from cryosweep_core.detect.probe import detect_probe
+from cryosweep_core.analyzers.dispatch import analyze_file
+from cryosweep_core.config import RunConfig
 from cryosweep_core.registry import build_default_registry
 from cryosweep_core.discovery import discover
 from cryosweep_core.plotting.presets import load_store, save_store
@@ -42,6 +44,9 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1100, 650)
         self.state = AnalysisState()
         self.registry = build_default_registry()
+        self._loaded_path = None
+        self._applicable: set[str] = set()
+        self._rerouting = False        # guard: the target tab re-enters _reanalyze_active
         self._needs = {p["key"]: p.get("needs", []) for p in discover(self.registry)["probes"]}
         # Migration read (Task 6): gate on `preset_path is None`, NOT on "the new file is
         # absent". One `self.preset_path` serves both load_store and save_store (:247/:259),
@@ -148,11 +153,13 @@ class MainWindow(QMainWindow):
     # ---- programmatic API (used by tests + the Load button) ----
     def load_path(self, path) -> None:
         self.state.load(path)
+        self._loaded_path = path
         self.path_label.setText(str(path))
         rt = self.state.get_raw()
         df, cmap = canonicalize_columns(rt.df, rt.header)   # imported at top (main_window.py:6)
         score, key = detect_probe(rt.header, set(df.columns), self.registry)
         applicable, det, note, long_ch = self._hall_autopopulate(df, cmap, score, key)
+        self._applicable = applicable            # _maybe_reroute may widen it
         # seed applicable tabs' file lists, clear the rest (D3 seed / D4 stale-clear)
         for i in range(self.tabs.count()):
             tab = self.tabs.widget(i)
@@ -240,8 +247,61 @@ class MainWindow(QMainWindow):
             return
         res = tab.analyze()
         if res is not None:
+            if self._maybe_reroute(tab, res):
+                return                           # landed on another tab; it renders itself
             tab.show_result(res, restore_layout=self.preset_store.last_used.get(tab.probe))
             tab.absorb_result(res)               # fitted values -> boxes + focused entry state
+
+    def _maybe_reroute(self, tab, res) -> bool:
+        """A gated result can mean the file belongs on a DIFFERENT probe. Ask the core.
+
+        The rule lives in `cryosweep_core.analyzers.dispatch`: when an analyzer gates on
+        something no user input can fix (every gate's remedy empty -- e.g. acms `ac_data` on
+        a DC-mode file), the core re-runs the runner-up probe and reports `rerouted_from`.
+        The window must NOT restate that rule; a second detection rule in the GUI is how the
+        two drift apart. It asks, and renders the answer.
+
+        Every tab forces `probe_override`, which returns from dispatch before the reroute
+        path is ever reached, so the question has to be asked with a clean config. That costs
+        one dispatch and only on a GATED result -- an `ok` file pays nothing, and an analyzer
+        that gates does so before its expensive work.
+
+        Returns True when the file was moved to another tab (the caller must not render).
+        """
+        if getattr(res, "status", None) != "gated" or self._rerouting:
+            return False
+        rt = self.state.get_raw()
+        if rt is None:
+            return False
+        self._rerouting = True                   # the target tab re-enters here; ask only once
+        try:
+            # Default config on purpose: routing depends on which analyzer can use the file
+            # at all, never on the display unit system or any panel input.
+            alt = analyze_file(rt, RunConfig.load(), self.registry)
+        except Exception:
+            return False                         # routing is a convenience, never a failure
+        finally:
+            self._rerouting = False
+        data = alt.data or {}
+        origin, target = data.get("rerouted_from"), data.get("probe")
+        if not origin or not target or target == tab.probe:
+            return False
+        if not any(self.tabs.widget(i).probe == target for i in range(self.tabs.count())):
+            return False                         # no tab for that probe in this window
+        path = self._loaded_path
+        for i in range(self.tabs.count()):
+            t = self.tabs.widget(i)
+            if t.probe == target and path is not None:
+                t.set_files([str(path)])
+        self._applicable = set(self._applicable) | {target}
+        self._set_tab_indicators(self._applicable)
+        # Never silent: a runner-up sits below confidence_min by construction, so the window
+        # is overruling its own detector and has to say so.
+        # Short by design: the chip shares one row with the file path. The full gate reason
+        # ("all rows sentinel or every group dropped") is on the banner, which wraps.
+        self.chip.setText(f"detected: {origin} → {target} (no usable {origin} data)")
+        self.select_probe(target)
+        return True
 
     def _on_field_unit_changed(self, text):
         self.preset_store.global_style = self.preset_store.global_style.model_copy(
