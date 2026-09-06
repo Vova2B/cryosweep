@@ -7,9 +7,10 @@ the SHIPPED bytes, so they hold on any clone, with or without the private source
 Header anonymisation alone was NOT enough, which is why the body checks exist. Measured on the
 real sources before the fix:
   * both Time Stamp columns are absolute seconds since 1900-01-01 and decoded to the real
-    acquisition instant (2025-01-11 12:43:14 and 2023-08-19 23:09:39);
+    acquisition instant (values redacted: repeating them here would republish exactly what
+    the scrub removes);
   * the heat-capacity Comment column carried
-    "CALFILE: C:\\QDDYNA~1\\...\\Puck1659.cal|Addenda #51 measured on 8/16/2023 ..." —
+    "CALFILE: C:\\QDDYNA~1\\...\\Puck<NNNN>.cal|Addenda #<NN> measured on <M/D/YYYY> ..." —
     a lab filesystem path, a calibration-puck serial, an addenda number and a date.
 Neither column is read by any analyzer, so scrubbing them changes no result (pinned below).
 """

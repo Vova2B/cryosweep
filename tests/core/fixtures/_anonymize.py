@@ -116,13 +116,14 @@ def write_subset(dst, head, body, step=1, encoding="latin-1"):
 # A QD "Time Stamp (sec)" column is either a small session counter or an ABSOLUTE count of
 # seconds since 1900-01-01. The TTO/ACMS subsets carry the former (~3-5e6, decodes to nothing);
 # the VSM and heat-capacity sources carry the latter (~3.9e9) and decode to the real
-# acquisition instant — 2025-01-11 12:43:14 and 2023-08-19 23:09:39. Anything past this
+# acquisition instant (redacted here: documenting the scrubbed values would republish
+# them). Anything past this
 # threshold is a date and gets rebased to zero; intervals are preserved either way.
 _ABSOLUTE_EPOCH_MIN = 1.0e9
 
 # Comment cells are operator/instrument free text. Publishing uses an ALLOWLIST, not a
 # blocklist: the real heat-capacity file carries
-#   "CALFILE: C:\QDDYNA~1\...\Puck1659.cal|Addenda #51 measured on 8/16/2023 ..."
+#   "CALFILE: C:\QDDYNA~1\...\Puck<NNNN>.cal|Addenda #<NN> measured on <M/D/YYYY> ..."
 # — a lab filesystem path, a calibration-puck serial, an addenda number and a date, in a column
 # no analyzer reads. Only benign instrument warnings (no path separators, no dates, no '#')
 # survive; everything else is replaced. Guessing which patterns are identifying is exactly the

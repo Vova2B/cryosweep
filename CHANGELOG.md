@@ -1,5 +1,63 @@
 # Changelog
 
+## 0.4.0 — 2026-09-06
+
+Every open item in [KNOWN-ISSUES.md](KNOWN-ISSUES.md) is closed — thirteen of them, plus one
+latent defect the work uncovered. The theme is legibility: a figure that cannot be read is not
+a result, and several of these had been quietly costing readers information the analysis had
+already computed correctly.
+
+No analysis behaviour changed. That is not an assumption — the `analyze` JSON is byte-identical
+to 0.3.1 on all six probes (VSM, heat capacity, thermal transport, resistivity, AC
+susceptibility and temperature-dependent Hall).
+
+### Added
+
+- **Fields at or above 10 kOe are labelled in kOe.** Legends read `90 kOe` instead of
+  `90000 Oe`. The unit system is unchanged and the Oe↔T toggle still applies; this is a
+  prefix, not a conversion, so one legend never mixes units. The 10 kOe threshold deliberately
+  leaves the low-field regime where Curie-Weiss fits live untouched.
+- **`probes` / `fits` / `plots` / `observables` accept a file.** With one, `plots` filters to
+  the detected probe and each kind carries `available` — whether this file, with the flags
+  supplied, can actually draw it. That answers the question a render refusal poses
+  (`no series selected`) without guessing. Without a file the dump is unchanged.
+
+### Fixed
+
+- **Two Hall estimators shared a panel with nothing distinguishing them.** The 0-field+1
+  fallback is now drawn hollow and dashed, and when both families appear a note says the step
+  between them is a change of method, not physics — a 20 % discontinuity that was never a
+  measurement.
+- **R_H axes concatenated a scale and an offset** into an unreadable `1e-11-2.5e-7` header, so
+  the headline value could not be recovered from the plot. Every kind drawing an R_H axis now
+  uses a single mathtext scale over absolute ticks.
+- **Peaks touched the frame.** The κ peak and the χ′ plateau had no headroom; the χ″ peak was
+  actually clipped.
+- **`tto_lorenz_t` could not show what it exists to show** — a linear axis ran to ~200 and
+  flattened the L/L₀ = 1 reference onto the bottom. It now defaults to a log y-axis that
+  brackets the reference.
+- **A zero-field curve omitted its field** in TTO legends, leaving an unlabelled orphan beside
+  named ones.
+- **The `vsm_mh` low-field panel did not rescale**, so the zoom showed the same flat line as
+  the full view.
+- **Heat-capacity setpoint labels printed raw floats** (`50000.5 Oe`, `100001 Oe`) — instrument
+  noise rendered as a legend — and four fields × four low-T models were mutually
+  indistinguishable. Fits are now coloured by field with the model carried in the linestyle.
+- **The "Colour…" button was clipped out of the left panel** at the default width. The cause
+  was a platform button minimum that exceeded an explicit maximum; the pane is now measured,
+  and its scrollbar policy no longer turns overflow into unreachable controls.
+- **"Save plot" saved the first plot, not the one on screen.** The figure was captured once at
+  render time while Focus navigation moved a separate index. It is now derived from what is
+  actually displayed.
+- **Heat-capacity fit-line checkboxes stopped matching their fits.** Found while fixing the
+  above: the checkbox keys were derived from the *display* label, so once setpoint labels were
+  rounded, unchecking one box dropped all sixteen fit lines. Keys now come from the raw field
+  value the renderer uses.
+
+### Changed
+
+- `tto_lorenz_t` defaults to a log y-axis (see above). An explicit `yscale` still wins.
+
 ## 0.3.1 — 2026-09-05
 
 Three fixes to the surfaces a *user* or an *agent* meets first. No analysis behaviour
