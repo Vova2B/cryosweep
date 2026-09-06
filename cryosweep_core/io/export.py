@@ -1,6 +1,7 @@
 from __future__ import annotations
 import csv, json, math, numbers, pathlib
 from cryosweep_core.fitting.transport import POWER_LAW_DECLINE_FLAGS, ARRHENIUS_DECLINE_FLAGS
+from cryosweep_core.fitting.heat_capacity import LOWT_LATTICE_KEYS
 
 
 def _export_hall(result, stem) -> dict:
@@ -299,7 +300,7 @@ def _export_heatcapacity(result, stem) -> dict:
                         continue
                     ident = f.get("identifiability", {})
                     for pname, val in f["params"].items():
-                        if pname == "theta_D" and f["key"] not in ("debye_t3", "debye_t3_t5"):
+                        if pname == "theta_D" and f["key"] not in LOWT_LATTICE_KEYS:
                             continue
                         if not isinstance(val, (int, float)) or not math.isfinite(val):
                             continue

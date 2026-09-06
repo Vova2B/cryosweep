@@ -205,22 +205,27 @@ class AxisStrip(QWidget):
             model_row.addWidget(self._model_cb)
             mw = QWidget(); mw.setLayout(model_row); lay.addWidget(mw)
         if kind.key == "hc_lowt_multifield":
-            models = ["debye_t3", "debye_t3_t5", "spin_fluct_noninteracting", "spin_fluct_weak"]
-            _mk_labels = {"debye_t3": "Debye T³", "debye_t3_t5": "Debye T³+T⁵",
-                          "spin_fluct_noninteracting": "spin-fl non-int", "spin_fluct_weak": "spin-fl weak"}
+            # Model keys/labels and the model@field key spelling are single-sourced —
+            # this strip once retyped all three and a rounding drift dropped every fit line.
+            from cryosweep_core.fitting.heat_capacity import (LOWT_MODEL_KEYS,
+                                                              LOWT_MODEL_LABELS)
+            from cryosweep_core.plotting.catalog import (lowt_fit_key,
+                                                         lowt_token_from_series_key)
+            models = LOWT_MODEL_KEYS
+            _mk_labels = LOWT_MODEL_LABELS
             # Key the checkboxes off the Series KEY's raw field ("mf:<field_oe:g>"), the
             # SAME value the renderer puts after '@' in its model@field fit keys. The old
             # `group.split()[0]` read the DISPLAY tag, which matched only while the tag
             # printed the raw median — the #14/#7 display rounding ("50 kOe") broke every
             # derived key and unchecking one box silently dropped ALL fit lines. The
             # display tag survives as the caption only.
-            fields = sorted({(s.key.split(":", 1)[1], s.group) for s in series})
+            fields = sorted({(lowt_token_from_series_key(s.key), s.group) for s in series})
             fl = spec.fit_lines
             self._mf_fit_cbs = {}
             mf_row = QHBoxLayout()
             for fnum, ftag in fields:
                 for mk in models:
-                    lkey = f"{mk}@{fnum}"
+                    lkey = lowt_fit_key(mk, fnum)
                     cb = QCheckBox(f"{_mk_labels[mk]} @ {ftag}"); cb.setChecked(fl is None or lkey in fl)
                     cb.toggled.connect(self._commit_mf_fit_lines)
                     self._mf_fit_cbs[lkey] = cb; mf_row.addWidget(cb)

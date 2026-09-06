@@ -4,6 +4,10 @@ from typing import Callable, Literal, TYPE_CHECKING
 
 import numpy as np
 
+from cryosweep_core.units import OE_PER_T, ZERO_FIELD_OE
+from cryosweep_core.fitting.heat_capacity import (LOWT_MODEL_KEYS, LOWT_MODEL_LABELS,
+                                                  LOWT_LATTICE_KEYS)
+
 if TYPE_CHECKING:
     from cryosweep_core.plotting.spec import PlotSpec
 
@@ -81,7 +85,7 @@ def fmt_field(value_oe, unit="Oe"):
         # round to integer Oe first (mirrors the Oe path's :.0f), so a near-zero
         # instrument field (e.g. 0.481 Oe on a nominal zero-field ramp) reads "0 T"
         # instead of scientific-notation clutter ("4.81e-05 T").
-        return f"{round(v) / 1e4:.3g} T"
+        return f"{round(v) / OE_PER_T:.3g} T"
     if abs(v) >= FIELD_KOE_THRESHOLD_OE:
         return f"{v / 1000.0:g} kOe"
     return f"{v:g} Oe"
@@ -103,13 +107,13 @@ def fmt_field_setpoint(value_oe, unit="Oe"):
         return ""
     if not np.isfinite(v):
         return ""
-    v = 0.0 if abs(v) < 50.0 else float(f"{v:.4g}")
+    v = 0.0 if abs(v) < ZERO_FIELD_OE else float(f"{v:.4g}")
     return fmt_field(v, unit)
 
 
 def _field_scale(unit):
-    """Display scale for a field magnitude stored in Oe. 'T' -> 1e-4 (Oe->Tesla); else 1.0."""
-    return 1e-4 if unit == "T" else 1.0
+    """Display scale for a field magnitude stored in Oe. 'T' -> 1/OE_PER_T (Oe->Tesla); else 1.0."""
+    return (1.0 / OE_PER_T) if unit == "T" else 1.0
 
 # ---- VSM (flat arrays; no per-loop identity -> single series) ----
 # PQ-3 Task 4: warming/cooling ramp split for M(T)-family kinds. When the analyzer
@@ -994,8 +998,7 @@ def series_hall_tdep_j_t(result, field_unit="Oe"):
 
 # ---- Heat capacity param(H) series factory (Task 7) ----
 
-_MODEL_LABELS = {"debye_t3": "Debye T³", "debye_t3_t5": "Debye T³+T⁵",
-                 "spin_fluct_noninteracting": "spin-fl non-int", "spin_fluct_weak": "spin-fl weak"}
+_MODEL_LABELS = LOWT_MODEL_LABELS      # single-sourced from fitting.heat_capacity._LOWT_MODELS
 
 def _make_param_vs_field(param, allowed, gate_on_selected):
     """Factory: series fn for one parameter vs field. allowed = set of model keys.
@@ -1016,7 +1019,7 @@ def _make_param_vs_field(param, allowed, gate_on_selected):
                 val = f["params"].get(param)
                 if val is None or not np.isfinite(val):
                     continue
-                if param == "theta_D" and key not in ("debye_t3", "debye_t3_t5"):
+                if param == "theta_D" and key not in LOWT_LATTICE_KEYS:
                     continue
                 if gate_on_selected and g.get("chosen_aicc_key") != key:
                     continue
@@ -1033,13 +1036,40 @@ def _make_param_vs_field(param, allowed, gate_on_selected):
         return out
     return _series
 
-_ALL = ("debye_t3", "debye_t3_t5", "spin_fluct_noninteracting", "spin_fluct_weak")
-_LATTICE = ("debye_t3", "debye_t3_t5")
-_SPIN = ("spin_fluct_noninteracting", "spin_fluct_weak")
+_ALL = LOWT_MODEL_KEYS                 # single-sourced from fitting.heat_capacity._LOWT_MODELS
+_LATTICE = LOWT_LATTICE_KEYS
+_SPIN = tuple(k for k in LOWT_MODEL_KEYS if k not in LOWT_LATTICE_KEYS)
 series_hc_gamma_vs_field  = _make_param_vs_field("gamma",   _ALL,     gate_on_selected=False)
 series_hc_thetaD_vs_field = _make_param_vs_field("theta_D", _LATTICE, gate_on_selected=False)
 series_hc_A_vs_field      = _make_param_vs_field("A",       _SPIN,    gate_on_selected=True)
 series_hc_T0_vs_field     = _make_param_vs_field("T0",      _SPIN,    gate_on_selected=True)
+
+
+# ---- hc_lowt_multifield identity keys: ONE spelling ----
+# The Series key ('mf:<token>') and the fit-line key ('<model>@<token>') embed the same
+# field token, and the GUI checkbox path recovers it from the series key while the renderer
+# formats it from the raw float. These four helpers ARE the source of truth for those
+# spellings: a rounding drift between two inline f-strings here once shipped a live bug
+# (unchecking one checkbox built keys that matched nothing and dropped ALL fit lines).
+
+def lowt_field_token(field_oe):
+    """The field part of every hc_lowt_multifield identity key."""
+    return f"{field_oe:g}"
+
+
+def lowt_series_key(field_oe):
+    """Series key for one field group ('mf:<token>')."""
+    return f"mf:{lowt_field_token(field_oe)}"
+
+
+def lowt_token_from_series_key(key):
+    """Field token back out of a series key ('mf:<token>' -> '<token>')."""
+    return key.split(":", 1)[1]
+
+
+def lowt_fit_key(model_key, field_token):
+    """Fit-line identity ('<model>@<token>') — spec.fit_lines entries and legend labels."""
+    return f"{model_key}@{field_token}"
 
 
 def series_hc_lowt_multifield(result, field_unit="Oe"):
@@ -1052,7 +1082,7 @@ def series_hc_lowt_multifield(result, field_unit="Oe"):
         if g["status"] != "ok" or not g.get("t2"):
             continue
         tag = fmt_field_setpoint(g['field_oe'], field_unit)   # #14: setpoints display rounded
-        out.append(Series(key=f"mf:{g['field_oe']:g}", label=tag,
+        out.append(Series(key=lowt_series_key(g['field_oe']), label=tag,
                           x=list(g["t2"]), y=list(g["cp_over_t"]),
                           group=tag))
     return out

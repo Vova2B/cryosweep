@@ -52,6 +52,7 @@ from cryosweep_core.io.columns import canonicalize_columns
 from cryosweep_core.detect.vsm_blocks import ramps_from_temps
 from cryosweep_core.result import Result, Gate, Provenance
 from cryosweep_core.registry import Need
+from cryosweep_core.units import ZERO_FIELD_OE as _ZERO_FIELD_OE
 
 _MIN_PTS = 5            # groups smaller than this are dropped+logged
 _RAMP_MIN_LEN = 15      # pinned: yields the real main group's up+down ramps (min_len<15 shatters,
@@ -145,7 +146,7 @@ def _detect_sc(t, chip, chipp, field_oe, t_span):
     preconditions + criteria (a)(b)(c) + first-crossing tc_onset/tc_mid + chi'' corroboration.
     Returns SCTransition or None (decline)."""
     t = np.asarray(t, float); chip = np.asarray(chip, float); chipp = np.asarray(chipp, float)
-    if t.size < 20 or (np.nanmax(t) - np.nanmin(t)) < 1.0 or abs(field_oe) >= 50.0:
+    if t.size < 20 or (np.nanmax(t) - np.nanmin(t)) < 1.0 or abs(field_oe) >= _ZERO_FIELD_OE:
         return None
     o = np.argsort(t, kind="stable")
     t, chip, chipp = t[o], chip[o], chipp[o]

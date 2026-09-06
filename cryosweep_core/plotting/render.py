@@ -7,13 +7,15 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.lines import Line2D
 from matplotlib.ticker import (FixedLocator, FuncFormatter, MaxNLocator, ScalarFormatter)
-from cryosweep_core.fitting.heat_capacity import _LOWT_FUNCS
+from cryosweep_core.fitting.heat_capacity import (_LOWT_FUNCS, LOWT_MODEL_KEYS,
+                                                   LOWT_MODEL_LABELS)
 from cryosweep_core.plotting.spec import PlotSpec, GlobalStyle
 from cryosweep_core.plotting.catalog import (BUILTIN_PLOTKINDS, select_series, series_label,
                                         _field_scale, _held, _acms_label,
                                         tto_field_ls_map, tto_field_ls_label)
 from cryosweep_core.robust import robust_range
 from cryosweep_core.fitting.heat_capacity import MU_B_OVER_KB
+from cryosweep_core.units import OE_PER_T
 from cryosweep_core.fitting.entropy import dulong_petit_limit
 
 _MM = 1.0 / 25.4
@@ -1342,7 +1344,7 @@ from cryosweep_core.fitting.transport import (POWER_LAW_DECLINE_FLAGS,
 
 _RHO_T2_FITS = ("linear", "power_law")
 
-_LOWT_FIT_KEYS = ("debye_t3", "debye_t3_t5", "spin_fluct_noninteracting", "spin_fluct_weak")
+_LOWT_FIT_KEYS = LOWT_MODEL_KEYS       # single-sourced from fitting.heat_capacity._LOWT_MODELS
 _LOWT_FIT_STYLE = {                                        # distinct colour + linestyle per model
     "debye_t3": ("#d62728", "-"),
     "debye_t3_t5": ("#2ca02c", "--"),
@@ -2278,11 +2280,9 @@ def render_hc_c_over_t_linear(results, spec=None, style=None, overlay=None):
 
 # #15: model -> linestyle on hc_lowt_multifield (colour is taken by the field group).
 # Display names match the GUI's fit-line checkbox labels (plot_controls.py).
-_LOWT_MODEL_LS = {"debye_t3": "-", "debye_t3_t5": "--",
-                  "spin_fluct_noninteracting": "-.", "spin_fluct_weak": ":"}
-_LOWT_MODEL_NAMES = {"debye_t3": "Debye T³", "debye_t3_t5": "Debye T³+T⁵",
-                     "spin_fluct_noninteracting": "spin-fl non-int",
-                     "spin_fluct_weak": "spin-fl weak"}
+# model->linestyle is ONE fact: derived from _LOWT_FIT_STYLE, never retyped.
+_LOWT_MODEL_LS = {k: ls for k, (_c, ls) in _LOWT_FIT_STYLE.items()}
+_LOWT_MODEL_NAMES = LOWT_MODEL_LABELS  # single-sourced from fitting.heat_capacity._LOWT_MODELS
 
 
 def render_hc_lowt_multifield(results, spec=None, style=None, overlay=None):
@@ -2297,7 +2297,8 @@ def render_hc_lowt_multifield(results, spec=None, style=None, overlay=None):
     else:
         plotted = _plot_data(ax, results, kind, spec, style, overlay); handles = None
     if overlay is None and spec.fit_line:                  # N3: master fit-line toggle gates all lines
-        from cryosweep_core.plotting.catalog import fmt_field_setpoint
+        from cryosweep_core.plotting.catalog import (fmt_field_setpoint, lowt_fit_key,
+                                                     lowt_field_token)
         # rebuild the SAME group->colour map _plot_data_grouped used (first-appearance order)
         groups = []
         for _, s in plotted:
@@ -2313,7 +2314,7 @@ def render_hc_lowt_multifield(results, spec=None, style=None, overlay=None):
                 for f in g["fits"]:
                     if not f.get("ok"):
                         continue
-                    lkey = f"{f['key']}@{g['field_oe']:g}"
+                    lkey = lowt_fit_key(f['key'], lowt_field_token(g['field_oe']))
                     if want is not None and lkey not in want:
                         continue
                     xg = np.asarray(f["t2_grid"], float)
@@ -2392,7 +2393,7 @@ def render_hc_delta_vs_field(results, spec=None, style=None, overlay=None):
             else:
                 y = np.sqrt(D0 ** 2 + (g_ * MU_B_OVER_KB * B) ** 2)
             disp = _field_scale(getattr(style, "field_unit", "Oe"))   # Oe*1 or Oe*1e-4
-            _fit_plot(ax, (B * 1e4 * disp).tolist(), y.tolist(), style,
+            _fit_plot(ax, (B * OE_PER_T * disp).tolist(), y.tolist(), style,
                       label=f"{ov['model']} g={g_:.2g}")
     _finish(ax, kind, spec, style, _field_axis_label("Field", style), "Δ (K)")
     return fig

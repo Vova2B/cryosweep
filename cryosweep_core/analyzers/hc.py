@@ -5,7 +5,9 @@ import pandas as pd
 from pydantic import BaseModel, ConfigDict
 from cryosweep_core.io.columns import canonicalize_columns
 from cryosweep_core.io.loader import load_dat
-from cryosweep_core.fitting.heat_capacity import fit_lowt_models, fit_full_range, fit_schottky, fit_delta_h_overlay
+from cryosweep_core.fitting.heat_capacity import (fit_lowt_models, fit_full_range,
+                                                  fit_schottky, fit_delta_h_overlay,
+                                                  LOWT_LATTICE_KEYS)
 from cryosweep_core.fitting.transitions import fit_transition, compare_transition_forms
 from cryosweep_core.result import Result, FitResult, Provenance, Gate
 from cryosweep_core.registry import Need
@@ -373,7 +375,7 @@ class HCAnalyzer:
                                   f"(r²={full['r2']:.3g} < {hccfg.full_min_r2})")
                 warnings.append(f"full-range fit rejected: r²={full['r2']:.3g} below {hccfg.full_min_r2}")
         lowt_theta = fit.params.get("theta_D")
-        lowt_is_lattice = chosen_key in ("debye_t3", "debye_t3_t5")
+        lowt_is_lattice = chosen_key in LOWT_LATTICE_KEYS
         full_ok = full if (full and full.get("ok")) else {}
         comparison = {
             "gamma": {"lowt": fit.params.get("gamma"),
@@ -456,7 +458,7 @@ class HCAnalyzer:
                 g["entropy"] = ent_g if ent_g["s_total"] else None
         conf = min(1.0, fit.r2) if fit.r2 else 0.5
         beta = fit.params.get("beta")
-        is_lattice = chosen_key in ("debye_t3", "debye_t3_t5")
+        is_lattice = chosen_key in LOWT_LATTICE_KEYS
         if beta is not None and beta <= 0 and is_lattice:
             # Debye lattice model with non-physical beta<=0 -> inadequate; theta_D is NaN.
             warnings.append("β≤0: Debye lattice model inadequate (low-T upturn); "

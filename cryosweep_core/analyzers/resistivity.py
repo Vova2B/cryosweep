@@ -22,7 +22,7 @@ from cryosweep_core.fitting.transport import (NO_FIT_LINE_FLAGS,
                                               fit_arrhenius_ladder,
                                               ARRHENIUS_DECLINE_FLAGS)
 
-_ZERO_FIELD_OE = 50.0      # |H| below this counts as held "zero field"
+from cryosweep_core.units import ZERO_FIELD_OE as _ZERO_FIELD_OE   # single-sourced
 _RRR_K = 5                 # nearest-extreme physical points to median for RRR endpoints
 _LOWT_MAX_K = 30.0         # low-T window for power-law / linear fit
 _MR_NOISE_FLOOR = 1e-9     # Ohm*cm; rho0 below this -> MR low_confidence

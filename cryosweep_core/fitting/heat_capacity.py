@@ -5,6 +5,7 @@ from scipy.integrate import quad
 from scipy.optimize import curve_fit, OptimizeWarning
 from scipy.stats import linregress
 from cryosweep_core.result import FitResult
+from cryosweep_core.units import OE_PER_T
 
 R = 8.314462618  # J/(mol*K)
 
@@ -366,18 +367,30 @@ def _lowt_spin_weak(x, gamma, beta, A, T0):
     return gamma + beta * x + A * x * (1.0 + (T / T0) ** 2)       # + A T^2 (1 + (T/T0)^2)
 
 # Complexity order (parsimony iterates this list). debye_t3 is special-cased to the analytic
-# DebyeLowTModel; the rest use curve_fit with the reference p0/bounds.
+# DebyeLowTModel; the rest use curve_fit with the reference p0/bounds. "lattice": True marks
+# the models whose beta is a pure lattice term (theta_D meaningful).
 _LOWT_MODELS = [
-    {"key": "debye_t3", "label": "Debye T³", "param_names": ["gamma", "beta"]},
+    {"key": "debye_t3", "label": "Debye T³", "param_names": ["gamma", "beta"],
+     "lattice": True},
     {"key": "debye_t3_t5", "label": "Debye T³+T⁵", "func": _lowt_debye_t3_t5,
-     "p0": [0.01, 1e-4, 1e-6], "bounds": None, "param_names": ["gamma", "beta", "delta"]},
+     "p0": [0.01, 1e-4, 1e-6], "bounds": None, "param_names": ["gamma", "beta", "delta"],
+     "lattice": True},
     {"key": "spin_fluct_noninteracting", "label": "spin-fl non-int", "func": _lowt_spin_noninteracting,
      "p0": [0.01, 1e-4, 1e-4, 10.0], "bounds": ([-np.inf, -np.inf, -np.inf, 1.0], [np.inf, np.inf, np.inf, 500.0]),
-     "param_names": ["gamma", "beta", "A", "T0"]},
+     "param_names": ["gamma", "beta", "A", "T0"], "lattice": False},
     {"key": "spin_fluct_weak", "label": "spin-fl weak", "func": _lowt_spin_weak,
      "p0": [0.01, 1e-4, 1e-4, 10.0], "bounds": ([-np.inf, -np.inf, -np.inf, 1.0], [np.inf, np.inf, np.inf, 500.0]),
-     "param_names": ["gamma", "beta", "A", "T0"]},
+     "param_names": ["gamma", "beta", "A", "T0"], "lattice": False},
 ]
+
+# Single source for the low-T model IDENTITY facts. Everything that enumerates, labels or
+# classifies these models (catalog series/param factories, render fit drawing, the GUI's
+# fit-line checkboxes, CSV export) derives from these three — the key list was once typed
+# in four files and the label dict in three, the repo's recurring one-fact-many-spellings
+# defect. Add a model to _LOWT_MODELS above and every consumer sees it.
+LOWT_MODEL_KEYS = tuple(m["key"] for m in _LOWT_MODELS)
+LOWT_MODEL_LABELS = {m["key"]: m["label"] for m in _LOWT_MODELS}
+LOWT_LATTICE_KEYS = tuple(m["key"] for m in _LOWT_MODELS if m["lattice"])
 
 
 # Direct evaluators (Cp/T in the x = T^2 basis) for tail extrapolation of the entropy integral.
@@ -453,12 +466,12 @@ def fit_delta_h_overlay(fields_oe, deltas_k, model="zeeman"):
       - "zfs":    Δ = √(Δ₀² + (g·MU_B_OVER_KB·B)²)  (zero-field splitting)
       - "none":   no fit (pass-through, ok=False)
 
-    Fields in Oe are converted to Tesla via /1e4.
+    Fields in Oe are converted to Tesla via /OE_PER_T.
     Requires ≥3 finite points; returns ok=False otherwise.
 
     Returns dict: {"model", "g_factor", "Delta0", "r2", "n_points", "ok"}.
     """
-    B = np.asarray(fields_oe, float) / 1e4                # Oe -> Tesla
+    B = np.asarray(fields_oe, float) / OE_PER_T           # Oe -> Tesla
     D = np.asarray(deltas_k, float)
     m = np.isfinite(B) & np.isfinite(D)
     B, D = B[m], D[m]
