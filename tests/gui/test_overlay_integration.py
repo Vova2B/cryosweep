@@ -5,12 +5,21 @@ def _win(qapp):
     from cryosweep_gui.main_window import MainWindow
     return MainWindow()
 
+def _join_batch(tab, qapp):
+    """add_overlay_path analyzes asynchronously (ROADMAP item 4: file-list changes ride
+    BatchAnalyzeWorker); join + deliver before asserting on the completed overlay."""
+    w = tab._batch_worker
+    if w is not None:
+        w.wait(15000)
+    qapp.processEvents()
+
 def test_resistivity_overlay_endtoend(qapp):
     win = _win(qapp); win.load_path(str(FIX / "act_synth.dat"))   # resistivity, 1 file
     tab = win.tabs.currentWidget()
     assert tab.probe == "resistivity" and not tab._is_overlay()
     tab.add_overlay_path(str(FIX / "act_synth.dat"))              # add a 2nd file -> overlay
     assert tab._is_overlay()
+    _join_batch(tab, qapp)
     card = tab.output._cards[0]
     lines = [ln for ln in card.figure.axes[0].lines if ln.get_marker() != "None"]
     assert len(lines) >= 2
@@ -20,5 +29,11 @@ def test_resistivity_overlay_endtoend(qapp):
 def test_focused_file_export_target(qapp):
     win = _win(qapp); win.load_path(str(FIX / "act_synth.dat"))
     tab = win.tabs.currentWidget(); tab.add_overlay_path(str(FIX / "act_synth.dat"))
+    # while the overlay analysis is in flight the focused entry has NO result yet, so the
+    # pending-analysis guard must disable Export CSV (else it silently exports the
+    # pre-add state); after completion the focused entry carries its own result again.
+    assert not tab.export_btn.isEnabled()
+    _join_batch(tab, qapp)
     tab._focus = 1
     assert tab._files[tab._focus].result is not None             # focused entry has a result for export
+    assert tab.export_btn.isEnabled()

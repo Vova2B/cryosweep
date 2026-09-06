@@ -7,11 +7,15 @@ def run_analysis(rt, cfg, registry):
     try:
         return analyze_file(rt, cfg, registry)
     except Exception as e:                       # belt-and-suspenders (analyze_file already guards)
-        from cryosweep_core.result import Result, Provenance
-        return Result(status="error",
-                      errors=[f"analyze failed: {type(e).__name__}: {e}"],
-                      data={"probe": getattr(cfg, "probe_override", None) or "?"},
-                      provenance=Provenance(file="", sha256="", app_version="", config={}))
+        return _error_result(f"analyze failed: {type(e).__name__}: {e}",
+                             probe=getattr(cfg, "probe_override", None) or "?")
+
+
+def _error_result(message, probe="?"):
+    """One error-Result shape for every "never raises" boundary in this module."""
+    from cryosweep_core.result import Result, Provenance
+    return Result(status="error", errors=[message], data={"probe": probe},
+                  provenance=Provenance(file="", sha256="", app_version="", config={}))
 
 class AnalyzeWorker(QThread):
     done = Signal(object)                    # emits the Result (delivered on the GUI thread, queued)
@@ -22,3 +26,29 @@ class AnalyzeWorker(QThread):
 
     def run(self):                               # executes on the worker thread
         self.done.emit(run_analysis(self._rt, self._cfg, self._registry))
+
+class BatchAnalyzeWorker(QThread):
+    """ROADMAP item 4: the analyze_and_render path (refits, file-list changes) analyzes
+    every included file; this worker runs those analyses off the GUI thread. Takes the
+    ALREADY-PREPARED (rt, cfg) list — widget reads stay on the GUI thread — and emits a
+    result list aligned with it (None where preparation failed)."""
+    done = Signal(object)                    # emits list[Result | None] (queued -> GUI thread)
+
+    def __init__(self, preps, registry, parent=None):
+        super().__init__(parent)
+        self._preps, self._registry = preps, registry
+
+    def run(self):                               # executes on the worker thread
+        # run_analysis never raises, but the indexing around it can (a malformed prep), and a
+        # worker that dies without emitting strands the GUI: _set_busy(False) never runs and
+        # every result consumer stays disabled until some later analysis happens to recover
+        # them. The "never raises -> always a Result" contract holds at the worker level too.
+        out = []
+        for p in self._preps:
+            if not p:
+                out.append(None); continue
+            try:
+                out.append(run_analysis(p[0], p[1], self._registry))
+            except Exception as e:
+                out.append(_error_result(f"batch job malformed: {type(e).__name__}: {e}"))
+        self.done.emit(out)

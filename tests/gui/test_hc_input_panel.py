@@ -52,6 +52,7 @@ def test_entropy_ref_path_absent_when_source_fitted_even_if_typed():
 
 def test_entropy_state_roundtrip():
     p = HCInputPanel()
+    p.entropy_enable.setChecked(True)     # item 3: ref-path enablement now also needs entropy on
     p.entropy_source.setCurrentIndex(1)
     p.entropy_ref_path.setText("/tmp/ref.dat")
     p.entropy_extrapolate.setChecked(False)
@@ -71,3 +72,41 @@ def test_show_comparison_none_renders_na():
     text = p.comparison_label.text()
     assert "None" not in text, f"Got 'None' in label: {text!r}"
     assert "n/a" in text, f"Expected 'n/a' in label: {text!r}"
+
+
+def test_entropy_enable_checkbox_defaults_off():
+    """ROADMAP item 3: the GUI checkbox defaults OFF and always sends the flag, so the GUI
+    analysis skips entropy while the headless default (config True) stays untouched."""
+    p = HCInputPanel()
+    assert p.entropy_enable.isChecked() is False
+    assert p.build_overrides()["heatcapacity"]["entropy_enabled"] is False
+
+
+def test_entropy_enable_checked_flows_to_config():
+    p = HCInputPanel()
+    p.entropy_enable.setChecked(True)
+    assert p.build_overrides()["heatcapacity"]["entropy_enabled"] is True
+
+
+def test_entropy_enable_state_roundtrip():
+    p = HCInputPanel()
+    p.entropy_enable.setChecked(True)
+    q = HCInputPanel(); q.set_state(p.get_state())
+    assert q.entropy_enable.isChecked() is True
+
+
+def test_entropy_subcontrols_disabled_until_enabled():
+    """The lattice-source/extrapolate/Rln controls are inert while entropy is off; enabling
+    re-activates them (and the ref-path row still follows the source combo)."""
+    p = HCInputPanel()
+    assert p.entropy_source.isEnabled() is False
+    assert p.entropy_extrapolate.isEnabled() is False
+    assert p.entropy_rln_j.isEnabled() is False
+    assert p.entropy_ref_path.isEnabled() is False
+    p.entropy_enable.setChecked(True)
+    assert p.entropy_source.isEnabled() is True
+    assert p.entropy_extrapolate.isEnabled() is True
+    assert p.entropy_rln_j.isEnabled() is True
+    assert p.entropy_ref_path.isEnabled() is False   # source combo still says "Fitted"
+    p.entropy_source.setCurrentIndex(1)
+    assert p.entropy_ref_path.isEnabled() is True
