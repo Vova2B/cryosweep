@@ -152,3 +152,22 @@ def test_signal_wiring_targets_async_wrapper(qapp):
     src = inspect.getsource(type(tab).__init__)
     assert "changed.connect(self.request_analyze_and_render)" in src
     assert "refit_requested.connect(self.request_analyze_and_render)" in src
+
+
+def test_busy_state_disables_result_consumers(qapp):
+    """The pending-analysis guard: while a batch analysis is in flight, every button that
+    consumes a result (Export CSV / Save report / Save plot / Export plots) is disabled —
+    otherwise a click in that window silently acts on the PREVIOUS result (e.g. Export CSV
+    straight after adding an overlay exports the pre-add state). The completion render's
+    _gate_buttons re-enables them from the fresh result."""
+    win, tab = _hc_tab(qapp)
+    tab.analyze_and_render()
+    assert tab.export_btn.isEnabled() and tab.report_btn.isEnabled()
+    tab.request_analyze_and_render()
+    pending = (tab.export_btn.isEnabled(), tab.report_btn.isEnabled(),
+               tab.saveplot_btn.isEnabled(), tab.exportplots_btn.isEnabled())
+    _join(tab, qapp)
+    assert pending == (False, False, False, False), (
+        f"result consumers stayed enabled during a pending analysis: {pending}")
+    assert tab.export_btn.isEnabled() and tab.report_btn.isEnabled()      # restored
+    assert tab.saveplot_btn.isEnabled() and tab.exportplots_btn.isEnabled()

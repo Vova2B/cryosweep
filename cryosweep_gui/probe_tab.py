@@ -201,8 +201,16 @@ class ProbeTab(QWidget):
 
     def _set_busy(self, busy):
         self.analyze_btn.setEnabled(not busy)
-        if busy and self.banner is not None:
-            self.banner.show_message("analyzing…")
+        if busy:
+            # Pending-analysis guard: every result consumer acts on the PREVIOUS result
+            # while an analysis is in flight (e.g. Export CSV straight after an overlay
+            # add would silently export the pre-add state). Disable them; the completion
+            # render's _gate_buttons re-enables them from the fresh result.
+            for b in (self.export_btn, self.report_btn, self.saveplot_btn,
+                      self.exportplots_btn):
+                b.setEnabled(False)
+            if self.banner is not None:
+                self.banner.show_message("analyzing…")
 
     def stop_worker(self):
         """Join running workers (called on window close so no QThread is destroyed mid-run)."""
