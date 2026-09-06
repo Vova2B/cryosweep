@@ -22,7 +22,7 @@ from cryosweep_core.io.loader import load_dat
 from cryosweep_core.io.columns import canonicalize_columns
 from cryosweep_core.grouping import cluster_field_setpoints
 
-_OE_PER_T = 10000.0
+from cryosweep_core.units import OE_PER_T as _OE_PER_T   # single-sourced
 
 
 # ---- typed result models ---------------------------------------------------

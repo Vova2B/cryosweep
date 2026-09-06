@@ -31,7 +31,7 @@ _FIELD_ABS_TOL_OE = 5.0      # field clustering: abs 5 Oe / rel 1% (spec §2 ste
 _FIELD_REL_TOL = 0.01
 _L0 = 2.443e-8               # Sommerfeld Lorenz number, W*Ohm*K^-2
 _RRR_K = 5                   # nearest-extreme physical points to median for RRR endpoints
-_ZERO_FIELD_OE = 50.0        # |H| below this counts as held "zero field"
+from cryosweep_core.units import ZERO_FIELD_OE as _ZERO_FIELD_OE   # single-sourced
 _KAPPA_PH_PRIMARY_K = 10.0   # primary kappa_ph fit window: highest r2 AND a low-T asymptotic
 _KAPPA_PH_MIN_PTS = 10       # same floor the fitting module enforces on the primary rung
 # _MEDIAN_SE now lives in cryosweep_core/fitting/uncertainty.py (U6 extraction) — imported above.

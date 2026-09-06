@@ -12,7 +12,7 @@ from cryosweep_core.io.loader import load_dat
 from cryosweep_core.grouping import cluster_field_setpoints
 
 E_CHG = 1.602176634e-19     # Coulomb
-_OE_PER_T = 10000.0
+from cryosweep_core.units import OE_PER_T as _OE_PER_T   # single-sourced
 
 
 # ---- typed result models ---------------------------------------------------

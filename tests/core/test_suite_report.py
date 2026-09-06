@@ -56,3 +56,75 @@ def test_the_count_is_always_printed(tmp_path):
     r = _run(_xml(tmp_path, 1908, 209))
     assert "1908 passed" in r.stdout
     assert "skip reasons:" in r.stdout and "requires real measurement data" in r.stdout
+
+
+# ---- the pasteable verification block (--verify-block) --------------------------------
+
+def _run_block(xml, *extra, max_skipped=215, min_total=2000):
+    return subprocess.run([sys.executable, str(TOOL), str(xml),
+                           "--max-skipped", str(max_skipped), "--min-total", str(min_total),
+                           "--verify-block", *extra],
+                          capture_output=True, text=True, cwd=TOOL.parent.parent)
+
+
+def test_verify_block_is_emitted_and_traceable(tmp_path):
+    """The block a contributor pastes into a PR: commit, counts, real-data line, and the
+    junit file's digest — every line re-derivable by re-running the same command, which is
+    what makes a pasted block falsifiable rather than testimony."""
+    import hashlib
+    xml = _xml(tmp_path, 1908, 209, reason="local-only measurement file for key 'hc'")
+    r = _run_block(xml)
+    assert r.returncode == 0, r.stderr
+    out = r.stdout
+    assert "### Verification" in out
+    assert "1908 passed" in out and "209 skipped" in out
+    assert "commit:" in out
+    digest = hashlib.sha256(xml.read_bytes()).hexdigest()
+    assert digest[:12] in out, "the block must carry the junit digest it was derived from"
+    assert "gates: PASS" in out
+
+
+def test_verify_block_says_real_data_did_not_run(tmp_path):
+    xml = _xml(tmp_path, 1908, 209, reason="local-only measurement file for key 'hc'")
+    out = _run_block(xml).stdout
+    assert "real-data tests: NOT RUN" in out and "209 local-only skips" in out
+
+
+def test_verify_block_says_real_data_ran(tmp_path):
+    xml = _xml(tmp_path, 2160, 1, reason="flaky benchmark")
+    out = _run_block(xml).stdout
+    assert "real-data tests: RAN" in out and "0 local-only skips" in out
+
+
+def test_require_real_data_is_a_gate_not_a_note(tmp_path):
+    """--require-real-data turns the real-data line into a failure: the pre-push run in
+    the data-bearing tree must not green-tick over ~200 silently skipped real-data tests
+    (the documented worktree blind spot)."""
+    xml = _xml(tmp_path, 1908, 209, reason="local-only measurement file for key 'hc'")
+    r = _run_block(xml, "--require-real-data")
+    assert r.returncode == 1
+    assert "real-data" in r.stderr
+    sub = tmp_path / "c"
+    sub.mkdir()
+    clean = _xml(sub, 2160, 1, reason="flaky benchmark")
+    assert _run_block(clean, "--require-real-data").returncode == 0
+
+
+def test_real_data_skip_markers_match_what_the_conftests_actually_emit():
+    """The tool classifies skips by matching the conftests' skip-message spellings. That is
+    one fact in three files — so pin the agreement, or the block would silently misreport
+    real-data coverage after a conftest reword (the one-fact-many-spellings defect class)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("suite_report", TOOL)
+    sr = importlib.util.module_from_spec(spec); spec.loader.exec_module(sr)
+    root = TOOL.parent.parent
+    core = (root / "tests/core/conftest.py").read_text()
+    gui = (root / "tests/gui/conftest.py").read_text()
+    for marker in sr.REAL_DATA_SKIP_MARKERS:
+        assert marker in core or marker in gui, (
+            f"marker {marker!r} matches nothing in either conftest")
+    # every local-only skip the conftests can emit is classified by some marker
+    assert any(m in "local-only measurement file for key 'x' is not available"
+               for m in sr.REAL_DATA_SKIP_MARKERS)
+    assert any(m in "gallery manifest is not available (it is not part of the published tree)"
+               for m in sr.REAL_DATA_SKIP_MARKERS)
