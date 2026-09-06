@@ -75,8 +75,11 @@ def test_lowt_model_consumers_bind_the_registry_objects():
     import cryosweep_gui.plot_controls as plot_controls
     import cryosweep_core.analyzers.hc as hc
     import cryosweep_core.io.export as export
-    assert "LOWT_MODEL_KEYS" in inspect.getsource(plot_controls)
-    assert "LOWT_MODEL_LABELS" in inspect.getsource(plot_controls)
+    psrc = inspect.getsource(plot_controls)
+    assert "LOWT_MODEL_KEYS" in psrc and "LOWT_MODEL_LABELS" in psrc
+    # no locally retyped label dict anywhere in the GUI module (a cp_over_t strip once
+    # kept its own `labels = {...}` copy even after the list itself was single-sourced)
+    assert '"debye_t3": "Debye' not in psrc, "plot_controls retypes the model labels"
     for mod in (hc, export, catalog):
         assert '("debye_t3", "debye_t3_t5")' not in inspect.getsource(mod), \
             f"{mod.__name__} respells the lattice subset"

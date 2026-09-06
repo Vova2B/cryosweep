@@ -187,13 +187,12 @@ class AxisStrip(QWidget):
             fit_row.addWidget(self._fit_linear_cb); fit_row.addWidget(self._fit_power_cb)
             fw = QWidget(); fw.setLayout(fit_row); lay.addWidget(fw)
         if kind.key == "cp_over_t":
-            from cryosweep_core.plotting.render import _LOWT_FIT_KEYS
-            labels = {"debye_t3": "Debye T³", "debye_t3_t5": "Debye T³+T⁵",
-                      "spin_fluct_noninteracting": "spin-fl non-int", "spin_fluct_weak": "spin-fl weak"}
+            from cryosweep_core.fitting.heat_capacity import (LOWT_MODEL_KEYS,
+                                                              LOWT_MODEL_LABELS)
             lowt_row = QHBoxLayout(); self._lowt_cbs = {}
             fl = spec.fit_lines
-            for key in _LOWT_FIT_KEYS:
-                cb = QCheckBox(labels[key]); cb.setChecked(fl is None or key in fl)
+            for key in LOWT_MODEL_KEYS:
+                cb = QCheckBox(LOWT_MODEL_LABELS[key]); cb.setChecked(fl is None or key in fl)
                 cb.toggled.connect(self._commit_lowt_fit_lines)
                 self._lowt_cbs[key] = cb; lowt_row.addWidget(cb)
             lw = QWidget(); lw.setLayout(lowt_row); lay.addWidget(lw)
