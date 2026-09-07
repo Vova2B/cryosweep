@@ -742,10 +742,16 @@ class HallTempDepAnalyzer:
             sample_width_m=width_m,
         )
 
-        # thickness omitted -> R_H is unscaled (all None); report the true cause, not "no fit"
+        # thickness omitted -> R_H is unscaled (all None); a missing thickness is a missing
+        # USER INPUT (same rule as hall_channel above): gate with a remedy, and keep the
+        # slope-only points in data so the reconstruction work is not discarded.
         if thickness_m is None:
-            return Result(status="low_confidence", confidence=0.4,
-                          warnings=["thickness required for R_H (slope-only reconstruction)"],
+            return Result(status="gated", confidence=0.4,
+                          gate=[Gate(need="thickness_mm",
+                                     reason="R_H = slope x thickness; without a thickness "
+                                            "only the slope is measured",
+                                     remedy={"flag": "--thickness",
+                                             "example": "--thickness 0.07 --thickness-unit mm"})],
                           data=data.model_dump(mode="json"), provenance=prov)
 
         fitted = [p for p in points if p.R_H is not None]

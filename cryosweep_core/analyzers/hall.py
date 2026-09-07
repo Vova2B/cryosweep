@@ -520,7 +520,17 @@ class HallAnalyzer:
                       points=points, capabilities=caps)
         r2s = [p.r2 for p in points if p.r2 is not None]
         if thickness_m is None:
-            conf, status = 0.4, "low_confidence"
+            # A missing thickness is a missing USER INPUT, not a broken file (same rule as
+            # hall_channel above and molar_mass on VSM): gate with a remedy, and KEEP the
+            # slope-only points in data so the work is not discarded.
+            return Result(status="gated", confidence=0.4,
+                          confidence_parts={"detector": 1.0, "segmentation": 1.0, "fit": None},
+                          gate=[Gate(need="thickness_mm",
+                                     reason="R_H = slope x thickness; without a thickness "
+                                            "only the slope is measured",
+                                     remedy={"flag": "--thickness",
+                                             "example": "--thickness 0.07 --thickness-unit mm"})],
+                          data=hd.model_dump(mode="json"), provenance=prov)
         elif r2s:
             conf = float(np.mean(r2s)); status = "ok" if conf >= cfg.confidence_min else "low_confidence"
         else:

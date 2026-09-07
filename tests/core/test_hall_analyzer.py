@@ -35,9 +35,15 @@ def test_synthetic_recovers_R_H_n_mobility(hall_synth_path):
     assert caps["carrier_concentration"]["applicable"] is True
     assert caps["mobility"]["applicable"] is True
 
-def test_no_thickness_is_low_confidence_slope_only(hall_synth_path):
+def test_no_thickness_gates_slope_only(hall_synth_path):
+    # Repinned (was status=="low_confidence" with an empty gate[]): a missing thickness is
+    # a missing USER INPUT (R_H = slope x thickness), so it follows the gate discipline,
+    # not a bare confidence downgrade. The slope-only points still ship in data.
     res = _analyze(hall_synth_path, hall_channel=1)       # no thickness
-    assert res.status == "low_confidence"
+    assert res.status == "gated"
+    g = next(g for g in res.gate if g.need == "thickness_mm")
+    assert g.remedy["flag"] == "--thickness"
+    assert "--thickness" in g.remedy["example"]
     p = res.data["points"][0]
     assert p["slope_ohm_per_T"] is not None               # slope still computed
     assert p["R_H"] is None                                # but not R_H without thickness

@@ -146,12 +146,17 @@ def test_analyze_synth_exact(hall_tdep_synth_path):
     assert caps["hall_coefficient"] and caps["carrier_concentration"] and caps["mobility"]
 
 
-def test_analyze_missing_thickness_low_conf(hall_tdep_synth_path):
+def test_analyze_missing_thickness_gates(hall_tdep_synth_path):
+    # Repinned (was status=="low_confidence" with a "thickness" warning and an empty
+    # gate[]): a missing thickness is a missing USER INPUT (R_H = slope x thickness), so
+    # it follows the gate discipline, not a bare confidence downgrade + warning string.
     rt = load_dat(hall_tdep_synth_path)
     res = HallTempDepAnalyzer().analyze(rt, RunConfig(hall={"hall_channel": 1}))
-    assert res.status == "low_confidence"
-    # the warning must name the real cause (thickness), not "no fittable T point"
-    assert any("thickness" in w.lower() for w in res.warnings)
+    assert res.status == "gated"
+    g = next(g for g in res.gate if g.need == "thickness_mm")
+    assert g.remedy["flag"] == "--thickness"
+    assert "--thickness" in g.remedy["example"]
+    assert res.data["points"]                             # slope-only work survives
 
 
 def test_analyze_real_file_sparsity_edge(hall_real_path):

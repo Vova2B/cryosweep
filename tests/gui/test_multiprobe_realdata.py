@@ -13,4 +13,7 @@ def test_real_hall_file_populates_all_hall_tabs(qapp, hall_real_path):
         tab = win.tabs.currentWidget()
         assert len(tab._files) == 1
         assert tab.panel.hall_channel_edit.text() == "1"
-        assert tab.analyze().status in ("ok", "low_confidence")    # not "error"
+        # No thickness is entered here, so a Hall tab now gates on it (repinned: a missing
+        # thickness is a missing USER INPUT, not a bare confidence downgrade) — this test
+        # only guards against "error", never "gated"/"low_confidence" themselves.
+        assert tab.analyze().status in ("ok", "low_confidence", "gated")    # not "error"
