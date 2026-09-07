@@ -7,10 +7,12 @@ denominator of mu = |R_H|/rho_xx. Measured on the real Hall file: the mean sat 6
 above the |H| < 50 Oe value at 2 K, so mu was 38% low, and the reported rho_xx was
 non-monotonic (2 K above 5 K).
 """
+import types
+
 import numpy as np
 from cryosweep_core.io.loader import load_dat
 from cryosweep_core.config import RunConfig
-from cryosweep_core.analyzers.hall import HallAnalyzer
+from cryosweep_core.analyzers.hall import HallAnalyzer, _mobility_gap_reason
 
 _HDR = ("[Header]\nBYAPP, Resistivity\nINFO, mr_synth, SAMPLE\n[Data]\n"
         "Temperature (K),Magnetic Field (Oe),Bridge 1 Resistance (Ohms),"
@@ -141,7 +143,7 @@ def test_missing_longitudinal_channel_is_not_diagnosed_as_no_zero_field(tmp_path
         assert "rho_xx_no_zero_field" not in p["derived_flags"]
 
 
-def test_longitudinal_source_misaligned_in_temperature_names_that_not_missing_data(tmp_path):
+def test_capability_reason_names_temperature_misalignment_not_missing_zero_field_data(tmp_path):
     """Review round 2, Important #1: a regression round 1's per-point decline created,
     not a pre-existing gap. A --long-file that genuinely HAS zero-field rows -- just at
     temperatures nowhere near any Hall setpoint -- must not be diagnosed as "carries no
@@ -173,3 +175,36 @@ def test_longitudinal_source_misaligned_in_temperature_names_that_not_missing_da
     reason = caps["mobility"]["reason"].lower()
     assert "no |h| <" not in reason        # must NOT claim missing zero-field data (false)
     assert "temp" in reason                # must name the real cause: temperature misalignment
+
+
+def _pt(mobility, flags):
+    """Minimal stand-in for a HallTempPoint: _mobility_gap_reason only ever reads
+    .mobility and .derived_flags off each point, so a real point is unnecessary here."""
+    return types.SimpleNamespace(mobility=mobility, derived_flags=flags)
+
+
+def test_mixed_decline_causes_are_not_generalised_to_one(tmp_path):
+    """Review round 3, Finding B: round 2's fix reported the temperature-misalignment
+    cause whenever ANY declining point carried the rho_xx flag -- an existential claim
+    presented as universal. A point whose own rho_xx succeeded (no rho_xx flag at all)
+    but whose mobility is still None because its R_H fit failed is a real, reachable
+    case (field_sweep_points sets mobility from R_H and rho_xx independently), and the
+    old wording asserted something false of it: that its zero-field row was missing too."""
+    points = [_pt(mobility=None, flags=["rho_xx_no_zero_field"]),   # genuinely misaligned
+              _pt(mobility=None, flags=[])]                          # failed for another reason
+    reason = _mobility_gap_reason("file:x.dat:ch2", None, points).lower()
+    assert "none fall within" not in reason         # not the universal misalignment claim
+    assert "no |h| <" not in reason                 # not the universal no-zero-field claim
+    assert "some" in reason                         # names the mix, not a single cause
+
+
+def test_reason_without_per_point_evidence_names_no_specific_cause():
+    """Review round 3, Finding A: hall_tempdep.py's _capabilities calls
+    _mobility_gap_reason(long_source, rho_reason) with only two arguments -- HallTDepPoint
+    has no derived_flags until Task 5, so `points` defaults to None there and can never
+    be supplied. With no per-point evidence at all, the reason must not assert either of
+    the per-point-specific claims (round 2's misalignment text, or the plain no-zero-field
+    text): both would be diagnoses this call site has no evidence for."""
+    reason = _mobility_gap_reason("file:x.dat:ch2", None, points=None).lower()
+    assert "no |h| <" not in reason
+    assert "none fall within" not in reason

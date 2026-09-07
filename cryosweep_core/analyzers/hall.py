@@ -245,15 +245,23 @@ def _long_rho_xx(df, cmap, long_channel, long_df, long_cmap, cfg):
 # Review round 2, Important #1 (a regression round 1's per-point decline introduced, not
 # a pre-existing gap): `rho_reason` is a FILE-LEVEL signal -- None means _long_rho_xx
 # found zero-field rows SOMEWHERE -- and says nothing about whether any of them fell
-# within temp_interval of an actual Hall setpoint. Once per-point declines existed
-# (Important #1, round 1), "_long_rho_xx succeeds at the file level, but every setpoint's
-# rho_fn(Tset) still declines" became possible for the first time -- a --long-file whose
-# temperatures simply never coincide with a Hall setpoint. Falling through to "carries no
-# |H| < 50 Oe row" there is FALSE: the source does carry such rows, just not at a useful
-# temperature. Fix: never trust rho_reason alone when it's None; look at what the
-# per-point loop in field_sweep_points actually recorded (the same _RHO_XX_* tokens,
-# reused rather than adding a third reason constant -- one source of truth for "which
-# reason applies", not two logics that can each go subtly wrong).
+# within temp_interval of an actual Hall setpoint.
+#
+# Review round 3: round 2's own fix over-generalised -- it reported the misalignment
+# cause whenever ANY declining point carried the flag, an existential claim asserted as a
+# universal one, false whenever some points declined for an unrelated reason (their rho_xx
+# was fine; their R_H fit failed). It was also unreachable from hall_tempdep.py's call
+# site, which passes only two arguments (HallTDepPoint has no derived_flags until Task 5),
+# so that probe fell straight through to the very "carries no |H| < ... row" text round 2
+# set out to remove -- just from the other probe. Restructured as a ladder, strongest
+# evidence first: a file-level fact is reported outright (the two checks right below); a
+# per-point cause is reported only when EVERY declining point carries it (universal claim,
+# universal evidence); a mix is described as a mix rather than generalised from a subset;
+# and with no per-point evidence at all -- today, hall_tempdep.py -- no per-point cause is
+# asserted. Weaker and true beats specific and false. hall_tempdep.py stays on the last
+# rung until Task 5 gives HallTDepPoint the same per-point flags HallTempPoint already
+# has; once it can pass `points`, it climbs the ladder like hall.py already does, with no
+# new logic.
 def _mobility_gap_reason(long_source, rho_reason, points=None):
     if not long_source:
         return "no longitudinal channel/file supplied for rho_xx"
@@ -261,14 +269,28 @@ def _mobility_gap_reason(long_source, rho_reason, points=None):
         return f"{long_source}: longitudinal resistivity/temperature/field column not found"
     if rho_reason == _RHO_XX_NO_ZERO_FIELD:
         return f"{long_source} carries no |H| < {_ZERO_FIELD_OE:.0f} Oe row for rho_xx"
-    # rho_reason is None: the file-level check succeeded. If mobility is STILL
-    # unavailable everywhere, find out why from the points themselves rather than assume.
-    if points is not None and any(_RHO_XX_NO_ZERO_FIELD in p.derived_flags
-                                    or _RHO_XX_CHANNEL_MISSING in p.derived_flags
-                                    for p in points):
-        return (f"{long_source} has zero-field rows, but none fall within "
-                f"temp_interval of any Hall setpoint's temperature")
-    return f"{long_source} carries no |H| < {_ZERO_FIELD_OE:.0f} Oe row for rho_xx"
+    # rho_reason is None: the file-level check succeeded -- rho_fn resolves somewhere in
+    # the file -- yet mobility is unavailable everywhere. Climb on per-point evidence, and
+    # only as far as that evidence actually reaches.
+    if points is not None:
+        declining = [p for p in points if p.mobility is None]
+        flagged = [p for p in declining
+                   if _RHO_XX_NO_ZERO_FIELD in p.derived_flags
+                   or _RHO_XX_CHANNEL_MISSING in p.derived_flags]
+        if declining and len(flagged) == len(declining):
+            # every mobility-less point's own rho_xx missed temp_interval: a universal
+            # claim, backed by universal evidence.
+            return (f"{long_source} has zero-field rows, but none fall within "
+                    f"temp_interval of any Hall setpoint's temperature")
+        if flagged:
+            # only SOME do -- naming that one cause for all of them would assert something
+            # untrue of the rest, which failed for a different, unestablished reason.
+            return (f"{long_source}: some setpoints have no temp_interval-aligned "
+                    f"zero-field rho_xx row, the rest failed for a different reason")
+    # No points supplied (hall_tempdep.py, pending Task 5) or none of the declining points
+    # carry an rho_xx-specific flag: there is no per-point evidence to name a cause from.
+    return (f"{long_source}: mobility did not resolve at any setpoint "
+            f"(cause not established per point)")
 
 
 def _capabilities(points, has_thickness, long_source, rho_reason=None) -> list[Capability]:
