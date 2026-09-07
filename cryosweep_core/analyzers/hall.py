@@ -60,9 +60,11 @@ class HallTempPoint(BaseModel):
     # = Stage B produced no R_H, so carrier_n/carrier_type/mobility are WITHHELD rather
     # than derived from the untrusted Stage A raw fit. Empty list = nothing withheld.
     derived_flags: list[str] = []
-    # 2026-09-07 (spec §4.3): the median |H| (Oe) of the longitudinal rows that produced
-    # rho_xx. mu = |R_H|/rho_xx is a zero-field statement; recording the field makes the
-    # claim auditable from the output alone. None when no rho_xx was available.
+    # 2026-09-07 (spec §4.3): the (interpolated) median |H| (Oe) of the zero-field-masked
+    # longitudinal rows AT THIS POINT's temperature -- a per-point figure, not a file-wide
+    # one. mu = |R_H|/rho_xx is a zero-field statement; recording the field makes the claim
+    # auditable from the output alone. None whenever rho_xx is also None (no zero-field
+    # coverage at this setpoint, review round 1 Important #1).
     rho_xx_field_oe: float | None = None
 
 class Capability(BaseModel):
@@ -147,16 +149,61 @@ def _mobility(R_H, rho_xx):
         return None
     return float(abs(R_H) / rho_xx)               # |R_H| * sigma = |R_H| / rho_xx
 
-def _long_rho_xx(df, cmap, long_channel, long_df, long_cmap):
-    """Return (T -> rho_xx callable, median |H| in Oe of the rows used), or (None, None).
+# Review round 1 (2026-09-07), Important #3: `derived_flags` tokens for the two distinct
+# ways a longitudinal source can fail to produce rho_xx. Never collapse them into one
+# message -- "channel missing" means the user pointed at data that isn't there; "no zero
+# field" means the data exists but never sat near H=0.
+_RHO_XX_CHANNEL_MISSING = "rho_xx_channel_missing"
+_RHO_XX_NO_ZERO_FIELD = "rho_xx_no_zero_field"
 
-    rho_xx is the ZERO-FIELD longitudinal resistivity: mu = |R_H|/rho_xx is a zero-field
-    statement, and on a magnetoresistive channel the field-averaged value is a different
-    quantity (measured on the real Hall file: the old loop-averaged rho_xx sat 49% above
-    the zero-field value at 2 K, so mu was 33% low there (21% low at 10 K), and the
-    reported rho_xx was non-monotonic in T -- 2 K above 5 K). The |H| < ZERO_FIELD_OE mask
-    is the same convention resistivity's RRR endpoints use (`resistivity.py:412`); keep
-    the two coupled.
+def _long_rho_xx(df, cmap, long_channel, long_df, long_cmap, cfg):
+    """Return (T -> (rho_xx, field_oe) | (None, None) callable, decline reason), or
+    (None, reason) if no callable could be built at all.
+
+    rho_xx is the ZERO-FIELD longitudinal resistivity, evaluated PER TEMPERATURE (spec
+    §4.3): mu = |R_H|/rho_xx is a zero-field statement, and on a magnetoresistive channel
+    the field-averaged value is a different quantity. Measured on the real Hall file at
+    2 K: the old loop-averaged rho_xx was 1.493x the zero-field value -- the SAME ratio
+    read as "49% above" from the zero-field side and "33% low" for mu from the
+    loop-averaged side (not two independent measurements); 21% low for mu at 10 K; and
+    the reported rho_xx was non-monotonic in T (2 K above 5 K).
+
+    A setpoint with no zero-field row of its own must decline rather than receive a
+    different setpoint's value. Review round 1 Important #1 measured the old
+    file-wide-only decline handing a 10 K point 50 K's zero-field rho_xx outright
+    (np.interp's CLAMP past the zero-field grid's actual range), 3x wrong, with
+    rho_xx_field_oe=0.0 stamped as if a real zero-field row existed at 10 K -- a
+    fabricated number wearing a provenance stamp, exactly what this project's rules exist
+    to prevent. The returned callable therefore refuses (returns (None, None)) whenever
+    the NEAREST zero-field temperature node sits farther than HallCfg.temp_interval
+    (config.py, default 1.0 K) from the query -- ruling, not my first pass: that first cut
+    used StabilityCfg.drift_max["temperature"] (0.25 K), which is the WRONG quantity here.
+    drift_max describes how much the INSTRUMENT is allowed to drift while HOLDING one
+    setpoint; it says nothing about how close a longitudinal row must sit to count as
+    measuring the SAME temperature as a Hall-channel setpoint, and at 0.25 K it would
+    decline legitimately-matched rows (a 2 K setpoint whose longitudinal rows sit at
+    2.3 K is a normal file, not a defect). temp_interval is this probe's own declared
+    temperature resolution -- the same spacing `_interp_fixed_field_curves` already grids
+    fixed-field curves at, and user-settable via --temp-interval, so a coarser real
+    sequence widens it without a new flag. The nearest-node check subsumes any separate
+    "within the grid span" test: a query outside the grid has an endpoint as its nearest
+    node, and if that endpoint is within tolerance the clamp is returning a genuinely
+    nearby measurement, which is the honest case (a query strictly BETWEEN two zero-field
+    points that both sit farther than temp_interval away -- e.g. two held setpoints with
+    a wide gap between them -- declines too, not just off-grid queries).
+
+    The |H| < ZERO_FIELD_OE mask is the same convention resistivity's RRR endpoints use,
+    with one difference worth stating exactly: resistivity masks a SEGMENT's setpoint
+    field, one value per ramp (`resistivity.py:413`, `s.setpoint.get("field")`), while
+    this masks raw per-row field readings directly. Coupled in spirit, not byte-for-byte.
+
+    `reason` is None on success (a callable was returned), else one of
+    _RHO_XX_CHANNEL_MISSING (the resistivity/temperature/field column isn't present at
+    all -- e.g. --long-channel points at a bridge with no data) or _RHO_XX_NO_ZERO_FIELD
+    (the columns exist but not one row anywhere satisfies the mask). Important #3: keep
+    these apart, so a wrong --long-channel doesn't get diagnosed as a physics finding. A
+    per-setpoint decline (file-wide success, but THIS temperature isn't covered) is
+    signalled by the callable's own (None, None) return, not by this reason.
     """
     if long_channel is None:
         return None, None
@@ -164,25 +211,45 @@ def _long_rho_xx(df, cmap, long_channel, long_df, long_cmap):
     rk = f"resistivity_ch{long_channel}"
     if (rk not in src_cmap.logical or "temperature" not in src_cmap.logical
             or "field" not in src_cmap.logical):
-        return None, None
+        return None, _RHO_XX_CHANNEL_MISSING
     T = pd.to_numeric(src_df[src_cmap.logical["temperature"]], errors="coerce").to_numpy(float)
     H = pd.to_numeric(src_df[src_cmap.logical["field"]], errors="coerce").to_numpy(float)
     rho = pd.to_numeric(src_df[src_cmap.logical[rk]], errors="coerce").to_numpy(float)
     m = (np.isfinite(T) & np.isfinite(rho) & (rho > 0)
          & np.isfinite(H) & (np.abs(H) < _ZERO_FIELD_OE))
     if m.sum() < 1:
-        return None, None              # DECLINE: no zero-field rho_xx exists in this file
+        return None, _RHO_XX_NO_ZERO_FIELD   # DECLINE: no zero-field rho_xx exists in this file
     Tg, Rg, Hg = T[m], rho[m], H[m]
     order = np.argsort(Tg)
-    Tg, Rg = Tg[order], Rg[order]
+    Tg, Rg, Hg = Tg[order], Rg[order], Hg[order]
     uT = np.unique(Tg)
     uR = np.array([Rg[Tg == t].mean() for t in uT])
-    def rho_at(temp):
-        return float(np.interp(temp, uT, uR))     # np.interp clamps outside the range
-    return rho_at, float(np.median(np.abs(Hg)))
+    uH = np.array([float(np.median(np.abs(Hg[Tg == t]))) for t in uT])
+    # HallCfg.temp_interval, NOT StabilityCfg.drift_max["temperature"] -- see the
+    # docstring above for why (drift_max is instrument-hold noise, not "same setpoint").
+    tol = cfg.hall.temp_interval
+    def rho_and_field_at(temp):
+        nearest = uT[int(np.argmin(np.abs(uT - temp)))]
+        if abs(nearest - temp) > tol:
+            return None, None     # DECLINE: no zero-field row within temp_interval of this setpoint
+        return float(np.interp(temp, uT, uR)), float(np.interp(temp, uT, uH))
+    return rho_and_field_at, None
 
 
-def _capabilities(points, has_thickness, long_source) -> list[Capability]:
+# Review round 1, Important #2: the mobility capability's decline reason must name the
+# ACTUAL cause. `longitudinal_source` is stamped from the requested channel/file before
+# `_long_rho_xx` ever runs, so "no longitudinal channel/file supplied" was self-
+# contradicting whenever a source WAS supplied but produced nothing. Shared with
+# hall_tempdep.py's own _capabilities (imported there) so the two probes never drift.
+def _mobility_gap_reason(long_source, rho_reason):
+    if not long_source:
+        return "no longitudinal channel/file supplied for rho_xx"
+    if rho_reason == _RHO_XX_CHANNEL_MISSING:
+        return f"{long_source}: longitudinal resistivity/temperature/field column not found"
+    return f"{long_source} carries no |H| < {_ZERO_FIELD_OE:.0f} Oe row for rho_xx"
+
+
+def _capabilities(points, has_thickness, long_source, rho_reason=None) -> list[Capability]:
     any_anti = any(p.antisymmetrized for p in points)
     any_RH = any(p.R_H is not None for p in points)
     any_mu = any(p.mobility is not None for p in points)
@@ -198,7 +265,7 @@ def _capabilities(points, has_thickness, long_source) -> list[Capability]:
                    reason="n = 1/(e|R_H|) from Stage B" if any_RH else "needs R_H"),
         Capability(name="mobility", applicable=any_mu,
                    reason=f"mu = |R_H|/rho_xx ({long_source})" if any_mu
-                   else "no longitudinal channel/file supplied for rho_xx"),
+                   else _mobility_gap_reason(long_source, rho_reason)),
         # Recognized-but-deferred (2026-09-05): decomposing rho_xy = R0*B + R_s*mu0*M
         # requires M(H) of the SAME sample, which no file in this corpus provides. See
         # docs/physics-reference.md, "Anomalous Hall effect".
@@ -209,7 +276,7 @@ def _capabilities(points, has_thickness, long_source) -> list[Capability]:
     ]
 
 
-def field_sweep_points(df, cmap, cfg, hc, thickness_m, rho_fn, rho_field_oe) -> list[HallTempPoint]:
+def field_sweep_points(df, cmap, cfg, hc, thickness_m, rho_fn, rho_reason) -> list[HallTempPoint]:
     """Per-held-T field-sweep Hall points (Stage A raw + Stage B antisym + carrier/mobility).
     Pure: no I/O, no cfg mutation. Reused by HallAnalyzer and the temp-dep dual-method block."""
     T = pd.to_numeric(df[cmap.logical["temperature"]], errors="coerce").to_numpy(float)
@@ -292,16 +359,27 @@ def field_sweep_points(df, cmap, cfg, hc, thickness_m, rho_fn, rho_field_oe) -> 
             if pt.carrier_n is not None:
                 pt.carrier_n_sigma = float(pt.carrier_n * rel)
         if rho_fn is not None:
-            pt.rho_xx = rho_fn(Tset)          # longitudinal measurement, independent of R_H
-            pt.rho_xx_field_oe = rho_field_oe
-            pt.mobility = _mobility(pt.R_H, pt.rho_xx)
-            if (pt.mobility is not None and pt.R_H and pt.r_h_sigma is not None):
-                pt.mobility_sigma = float(pt.mobility * pt.r_h_sigma / abs(pt.R_H))
+            # rho_fn(Tset) -> (rho_xx, field_oe) for a covered setpoint, else (None, None)
+            # for THIS point only (review round 1 Important #1) -- a covered file can
+            # still leave an individual setpoint outside the zero-field grid's range.
+            rho_val, field_val = rho_fn(Tset)     # longitudinal measurement, independent of R_H
+            if rho_val is not None:
+                pt.rho_xx = rho_val
+                pt.rho_xx_field_oe = field_val
+                pt.mobility = _mobility(pt.R_H, pt.rho_xx)
+                if (pt.mobility is not None and pt.R_H and pt.r_h_sigma is not None):
+                    pt.mobility_sigma = float(pt.mobility * pt.r_h_sigma / abs(pt.R_H))
+            elif hc.longitudinal_channel is not None:
+                # This setpoint isn't covered by any zero-field row: falling back to a
+                # different setpoint's value would reintroduce the defect silently, so
+                # decline and say why (spec §4.3).
+                pt.derived_flags = [*pt.derived_flags, _RHO_XX_NO_ZERO_FIELD]
         elif hc.longitudinal_channel is not None:
-            # A longitudinal channel WAS supplied but carries no |H| < ZERO_FIELD_OE row:
-            # falling back to the field-averaged value would reintroduce the defect
-            # silently, so decline and say why (spec §4.3).
-            pt.derived_flags = [*pt.derived_flags, "rho_xx_no_zero_field"]
+            # File-wide decline before any per-point call was even possible. rho_reason
+            # (from _long_rho_xx) says whether the channel/columns are simply missing vs.
+            # present with no zero-field row anywhere at all -- review round 1 Important
+            # #3: never collapse the two into one message.
+            pt.derived_flags = [*pt.derived_flags, rho_reason or _RHO_XX_NO_ZERO_FIELD]
         points.append(pt)
     return points
 
@@ -384,15 +462,15 @@ class HallAnalyzer:
             long_source = f"file:{pathlib.Path(hc.longitudinal_file).name}:ch{hc.longitudinal_channel}"
         elif hc.longitudinal_channel is not None:
             long_source = f"same_file:ch{hc.longitudinal_channel}"
-        rho_fn, rho_field_oe = _long_rho_xx(df, cmap, hc.longitudinal_channel, long_df, long_cmap)
+        rho_fn, rho_reason = _long_rho_xx(df, cmap, hc.longitudinal_channel, long_df, long_cmap, cfg)
 
-        points = field_sweep_points(df, cmap, cfg, hc, thickness_m, rho_fn, rho_field_oe)
+        points = field_sweep_points(df, cmap, cfg, hc, thickness_m, rho_fn, rho_reason)
 
         if not points:
             return Result(status="low_confidence", confidence=0.2,
                           warnings=["no field loops found to fit"],
                           data={"probe": "hall", "reason": "no field loops"}, provenance=prov)
-        caps = _capabilities(points, thickness_m is not None, long_source)
+        caps = _capabilities(points, thickness_m is not None, long_source, rho_reason)
         hd = HallData(probe="hall", hall_channel=hc.hall_channel, thickness_m=thickness_m,
                       geometry_sign=hc.geometry_sign, longitudinal_source=long_source,
                       points=points, capabilities=caps)

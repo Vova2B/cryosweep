@@ -51,7 +51,14 @@ def test_derived_quantities_withheld_without_trusted_R_H(tmp_path):
     assert bad["carrier_n"] is None
     assert bad["carrier_type"] is None
     assert bad["mobility"] is None
-    assert bad["derived_flags"] == ["antisym_r_h_missing"]
+    # Review round 1 Important #1 (rho_xx zero-field coverage, 2026-09-07): this fixture's
+    # only |H| < 50 Oe row anywhere is at T=10; before that fix, np.interp silently
+    # CLAMPED that single point's rho_xx (1e-6) onto the 200 K query too (rho_xx WAS
+    # wrong here, just invisible -- mobility stayed None regardless because R_H is None).
+    # Re-derived directly: bad["rho_xx"] is now None (not the borrowed 1e-6), so the
+    # additional flag is a second declined quantity, not noise.
+    assert bad["rho_xx"] is None and bad["rho_xx_field_oe"] is None
+    assert bad["derived_flags"] == ["antisym_r_h_missing", "rho_xx_no_zero_field"]
 
 
 def test_declined_csv_cells_are_blank_with_flag(tmp_path):
@@ -63,6 +70,10 @@ def test_declined_csv_cells_are_blank_with_flag(tmp_path):
     bad = rows[200.0]
     assert bad["R_H (m^3/C)"] == "" and bad["carrier_n (1/m^3)"] == ""
     assert bad["carrier_type"] == "" and bad["mobility (m^2/Vs)"] == ""
-    assert bad["derived_flags"] == "antisym_r_h_missing"
+    assert bad["rho_xx (Ohm*m)"] == ""
+    # Same re-derivation as test_derived_quantities_withheld_without_trusted_R_H: the
+    # 200 K point now also declines rho_xx (Important #1), so the CSV's semicolon-joined
+    # flags column carries both reasons, name-keyed safe.
+    assert bad["derived_flags"] == "antisym_r_h_missing;rho_xx_no_zero_field"
     ok = rows[10.0]
     assert ok["carrier_n (1/m^3)"] != "" and ok["derived_flags"] == ""

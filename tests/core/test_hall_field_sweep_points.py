@@ -12,6 +12,6 @@ def test_field_sweep_points_matches_analyze(hall_synth_path):
     pts_via_analyze = res.data["points"]
     df, cmap = canonicalize_columns(rt.df, rt.header)
     hc = cfg.hall
-    rho_fn, rho_field_oe = _long_rho_xx(df, cmap, hc.longitudinal_channel, None, None)
-    pts = field_sweep_points(df, cmap, cfg, hc, hc.thickness_mm * 1e-3, rho_fn, rho_field_oe)
+    rho_fn, rho_reason = _long_rho_xx(df, cmap, hc.longitudinal_channel, None, None, cfg)
+    pts = field_sweep_points(df, cmap, cfg, hc, hc.thickness_mm * 1e-3, rho_fn, rho_reason)
     assert [p.model_dump() for p in pts] == pts_via_analyze

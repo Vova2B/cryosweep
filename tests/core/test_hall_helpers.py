@@ -41,19 +41,29 @@ def test_mobility():
 def test_long_rho_xx_same_file_interpolates(hall_synth_path):
     from cryosweep_core.io.loader import load_dat
     from cryosweep_core.io.columns import canonicalize_columns
+    from cryosweep_core.config import RunConfig
     from cryosweep_core.analyzers.hall import _long_rho_xx
     rt = load_dat(hall_synth_path)
     df, cmap = canonicalize_columns(rt.df, rt.header)
-    fn, field_oe = _long_rho_xx(df, cmap, long_channel=2, long_df=None, long_cmap=None)
-    assert fn is not None
-    assert fn(10.0) == pytest.approx(1.0e-6, rel=1e-6)     # constant rho_xx in the fixture
-    assert fn(150.0) == pytest.approx(1.0e-6, rel=1e-6)
-    assert abs(field_oe) <= 50.0                           # zero-field rows only
+    # hall_synth.dat carries zero-field rows at T=10/100/300 (not 150); rho_xx is 1e-6
+    # everywhere in the fixture. RunConfig()'s default HallCfg.temp_interval is 1.0 K
+    # (review round 1 Important #1 follow-up ruling): a query within temp_interval of its
+    # NEAREST zero-field node resolves, one farther away (150 is 50 K from both 100 and
+    # 300) declines rather than blend two unrelated setpoints together.
+    fn, reason = _long_rho_xx(df, cmap, long_channel=2, long_df=None, long_cmap=None,
+                              cfg=RunConfig())
+    assert fn is not None and reason is None
+    rho10, field10 = fn(10.0)
+    assert rho10 == pytest.approx(1.0e-6, rel=1e-6)        # constant rho_xx in the fixture
+    assert field10 <= 50.0                                 # zero-field rows only, never negative
+    assert fn(150.0) == (None, None)                       # 50 K from its nearest node: declines
 
 def test_long_rho_xx_absent_returns_none(hall_synth_path):
     from cryosweep_core.io.loader import load_dat
     from cryosweep_core.io.columns import canonicalize_columns
+    from cryosweep_core.config import RunConfig
     from cryosweep_core.analyzers.hall import _long_rho_xx
     rt = load_dat(hall_synth_path)
     df, cmap = canonicalize_columns(rt.df, rt.header)
-    assert _long_rho_xx(df, cmap, long_channel=None, long_df=None, long_cmap=None) == (None, None)
+    assert _long_rho_xx(df, cmap, long_channel=None, long_df=None, long_cmap=None,
+                        cfg=RunConfig()) == (None, None)

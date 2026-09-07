@@ -14,7 +14,8 @@ import pandas as pd
 from pydantic import BaseModel, ConfigDict
 from cryosweep_core.detect.sweeps import segment_sweeps
 from cryosweep_core.analyzers.hall import (_carrier_n, _mobility,
-                                      _long_rho_xx, field_sweep_points)
+                                      _long_rho_xx, field_sweep_points,
+                                      _mobility_gap_reason)
 from cryosweep_core.fitting.transport import LinearFitModel
 from cryosweep_core.result import Result, Provenance, Gate
 from cryosweep_core.registry import Need
@@ -538,10 +539,17 @@ def _reconstruct_points(
 # ---- derived quantities helper --------------------------------------------
 
 def _sigma_mu_J(pt, rho_fn):
-    """Fill sigma / mobility in-place on a HallTDepPoint from a rho_fn(T) callable.
-    Returns pt for convenience (mutation is the primary effect)."""
+    """Fill sigma / mobility in-place on a HallTDepPoint from a rho_fn(T) -> (rho_xx,
+    field_oe) callable (review round 1: rho_fn now also declines PER TEMPERATURE, not
+    just file-wide -- see _long_rho_xx). Returns pt for convenience (mutation is the
+    primary effect).
+
+    HallTDepPoint has no rho_xx_field_oe / derived_flags yet (those arrive with Task 5),
+    so a per-setpoint decline surfaces here only as rho_xx/sigma/mobility staying None --
+    silent on this path by design until that task gives this point type the same
+    provenance fields HallTempPoint already has."""
     if rho_fn is not None:
-        pt.rho_xx = rho_fn(pt.temperature)
+        pt.rho_xx, _field_oe = rho_fn(pt.temperature)
         if pt.rho_xx and pt.rho_xx > 0:
             pt.sigma = 1.0 / pt.rho_xx
             pt.mobility = _mobility(pt.R_H, pt.rho_xx)
@@ -590,7 +598,8 @@ def _fill_excitation_and_J(points, df, cmap, hall_channel, temp_interval,
 
 # ---- capabilities assembler -----------------------------------------------
 
-def _capabilities(points, has_thickness, long_source, has_dual, min_antisym_pts=3):
+def _capabilities(points, has_thickness, long_source, has_dual, min_antisym_pts=3,
+                  rho_reason=None):
     """Assemble a list of Capability objects describing what this analysis can offer."""
     any_RH = any(p.R_H is not None for p in points)
     any_anti = any(p.antisym_points >= 1 for p in points)
@@ -606,7 +615,7 @@ def _capabilities(points, has_thickness, long_source, has_dual, min_antisym_pts=
                    reason="n=1/(e|R_H|)" if any_RH else "needs R_H"),
         Capability(name="mobility", applicable=any_mu,
                    reason=f"mu=|R_H|/rho_xx ({long_source})" if any_mu
-                   else "no longitudinal channel/file"),
+                   else _mobility_gap_reason(long_source, rho_reason)),
         Capability(name="dual_method", applicable=has_dual,
                    reason="field-sweep loops also present" if has_dual
                    else "no field sweeps in file"),
@@ -675,7 +684,7 @@ class HallTempDepAnalyzer:
             long_source = f"file:{pathlib.Path(hc.longitudinal_file).name}:ch{hc.longitudinal_channel}"
         elif hc.longitudinal_channel is not None:
             long_source = f"same_file:ch{hc.longitudinal_channel}"
-        rho_fn, rho_field_oe = _long_rho_xx(df, cmap, hc.longitudinal_channel, long_df, long_cmap)
+        rho_fn, rho_reason = _long_rho_xx(df, cmap, hc.longitudinal_channel, long_df, long_cmap, cfg)
 
         # --- build fixed-field curves → reconstruct temp-dep Hall points ---
         curves = _interp_fixed_field_curves(df, cmap, cfg, hc.hall_channel, hc.temp_interval)
@@ -697,7 +706,7 @@ class HallTempDepAnalyzer:
         fsegs = [s for s in segment_sweeps(df, cmap, cfg) if s.swept.name == "field"]
         dual = []
         if fsegs and thickness_m is not None:
-            fs_pts = field_sweep_points(df, cmap, cfg, hc, thickness_m, rho_fn, rho_field_oe)
+            fs_pts = field_sweep_points(df, cmap, cfg, hc, thickness_m, rho_fn, rho_reason)
             fs_by_T = {round(p.temperature, 1): p.R_H for p in fs_pts if p.R_H is not None}
             for p in points:
                 rf = fs_by_T.get(round(p.temperature, 1))
@@ -715,7 +724,7 @@ class HallTempDepAnalyzer:
 
         has_dual = len(dual) > 0
         caps = _capabilities(points, thickness_m is not None, long_source, has_dual,
-                             hc.tdep_min_antisym_points)
+                             hc.tdep_min_antisym_points, rho_reason)
         interp = [InterpCurve(field_oe=float(f), temperature=Tg.tolist(), R=Rg.tolist())
                   for f, (Tg, Rg) in sorted(curves.items())]
         data = HallTempDepData(
