@@ -116,23 +116,98 @@ def _right_decor_frac(ax_host):
             xmax = max(xmax, inv.transform((bb.x1, bb.y0))[0])
     return xmax
 
+def _is_overlaid_composite(ax):
+    """True when every axes in the figure shares this one's frame -- a twin/offset composite,
+    where the decorations beyond the axes' right edge belong to the SAME plot and the anchor
+    that clears them is a property of one frame. False for a panel grid: its siblings are
+    separate plots, each carrying its own legend, and the layout must keep reserving room for
+    every one of them."""
+    box = ax.get_position().bounds
+    return all(all(abs(u - v) < 1e-9 for u, v in zip(a.get_position().bounds, box))
+               for a in ax.get_figure().axes)
+
+def _freeze_offset_spines(fig):
+    """Re-express every right spine pushed out by an axes FRACTION -- a composite's third
+    y-axis -- as an outward offset in points, at the pixel position it currently holds.
+
+    Such a spine is placed by measuring the neighbouring axis' decorations, which are text:
+    fixed in points, not a proportion of the axes. Left as a fraction it scales with the
+    axes, so a canvas resize multiplies the offset and the axis detaches from the plot with
+    its ticks orphaned in whitespace. An outward offset is resize-invariant. Called only
+    from the resize path, so figures that are never resized keep their geometry exactly."""
+    fig.canvas.draw()
+    rend = fig.canvas.get_renderer()
+    for axes in fig.axes:
+        sp = axes.spines.get("right")
+        pos = sp.get_position() if sp is not None else None
+        if isinstance(pos, tuple) and pos[0] == "axes" and pos[1] > 1.0:
+            offset_px = sp.get_window_extent(rend).x0 - axes.get_window_extent(rend).x1
+            sp.set_position(("outward", offset_px / fig.dpi * 72.0))
+
+_LEGEND_CANVAS_PAD_IN = 0.1        # breathing room kept to the right of an outside legend
+
 def _grow_canvas_for_legend(ax, leg, gap_frac=0.0):
     """An outside-right legend at fixed canvas width squeezes the axes (constrained
     layout takes the legend's space from the axes). Grow the canvas by the legend's
     measured width instead so the axes keep their intended size. Once per figure.
-    `gap_frac` = extra anchor offset beyond the standard 1.02 (axes-fraction of the host),
-    reserved additionally so a decoration-cleared anchor doesn't re-squeeze the axes."""
+    `gap_frac` = extra anchor offset beyond the standard 1.02 (axes-fraction of the host);
+    when it is non-zero the anchor sits past the right-side decorations of a multi-axes
+    composite and a single predicted grow cannot place it -- see `_fit_canvas_to_outside_legend`."""
     fig = ax.get_figure()
     if getattr(fig, "_cryosweep_legend_grown", False):
         return
     fig._cryosweep_legend_grown = True
     fig.canvas.draw()                                    # realize layout to measure the legend
+    if gap_frac > 0 and _is_overlaid_composite(ax):
+        _fit_canvas_to_outside_legend(ax, leg)
+        return
     leg_in = leg.get_window_extent().width / fig.dpi
     if gap_frac > 0:
         leg_in += gap_frac * ax.get_window_extent().width / fig.dpi
-    fig._cryosweep_legend_extra_in = leg_in + 0.1             # honoured by GUI export resize too
+    fig._cryosweep_legend_extra_in = leg_in + _LEGEND_CANVAS_PAD_IN  # GUI export resize honours it
     w, h = fig.get_size_inches()
     fig.set_size_inches(w + fig._cryosweep_legend_extra_in, h)
+
+def _fit_canvas_to_outside_legend(ax, leg, passes=4):
+    """Place an outside legend that is anchored past a multi-axes composite's right-side
+    decorations, i.e. at a host-axes fraction well beyond 1.0.
+
+    Growing the canvas by a predicted amount cannot work there. `set_size_inches` re-flows
+    constrained layout, the host axes widen, and EVERY axes-fraction quantity is multiplied
+    by the growth -- the anchor included -- so the legend ends up further outside the canvas
+    than before the grow. The distances that actually matter here (a tick-label column, a
+    rotated axis label) are text: fixed in points, not a proportion of the axes.
+
+    So measure instead of predicting. The legend is taken out of the layout -- the axes then
+    keep their intended size by construction, which is the whole point of growing the canvas
+    -- and the canvas is grown by the legend's *realized* overflow with the anchor rule
+    re-applied in the layout each grow produces.
+
+    Growing alone is not enough: constrained layout hands the whole of the extra width to the
+    axes, which carries the decorations (and so the anchor) right along with the canvas edge --
+    measured, the overflow barely moved across four passes. So the growth is paired with a
+    layout `rect` scaled by the inverse of it, which pins the axes region at its current pixel
+    width and turns the new width into right margin. Same remedy class as the offset-spine
+    reservation above. That makes one pass exact; the rest are insurance."""
+    fig = ax.get_figure()
+    _freeze_offset_spines(fig)
+    leg.set_in_layout(False)              # the axes keep their intended size by construction
+    eng = fig.get_layout_engine()
+    for _ in range(passes):
+        leg.set_bbox_to_anchor((_right_decor_frac(ax) + 0.02, 0.5), transform=ax.transAxes)
+        fig.canvas.draw()
+        rend = fig.canvas.get_renderer()
+        need = (leg.get_window_extent(rend).x1 + _LEGEND_CANVAS_PAD_IN * fig.dpi
+                - fig.get_window_extent(rend).x1)
+        if need <= 1.0:
+            break
+        w, h = fig.get_size_inches()
+        extra = need / fig.dpi
+        fig._cryosweep_legend_extra_in = getattr(fig, "_cryosweep_legend_extra_in", 0.0) + extra
+        rect = getattr(eng, "get", lambda: {})().get("rect", (0, 0, 1, 1))
+        keep = w / (w + extra)                     # figure-fraction rescale that holds pixels
+        eng.set(rect=(rect[0] * keep, rect[1], rect[2] * keep, rect[3]))
+        fig.set_size_inches(w + extra, h)
 
 def _new_fig(style):
     fig = Figure(figsize=(style.width_mm * _MM, style.height_mm * _MM),

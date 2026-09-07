@@ -466,13 +466,14 @@ def test_hall_tdep_summary_j_present_gives_three_color_matched_axes(hall_tdep_sy
     assert oax.yaxis.label.get_color() == "C2"
     # KNOWN-ISSUES 21: the J spine position is MEASURED, not the old fixed 1.18 — it starts
     # there and moves outward until it clears the mu label's realized extent. The invariant
-    # is the clearance, not a magic number.
-    pos_type, pos_val = oax.spines["right"].get_position()
-    assert pos_type == "axes" and pos_val >= 1.18 - 1e-9
+    # is the clearance, not a magic number — and not a particular way of spelling the offset
+    # either, since an outside legend re-expresses it in points to survive the canvas resize.
     fig.canvas.draw()
     rend = fig.canvas.get_renderer()
-    assert (oax.spines["right"].get_window_extent(rend).x0
-            >= tax.yaxis.label.get_window_extent(rend).x1)
+    spine_x0 = oax.spines["right"].get_window_extent(rend).x0
+    axbb = host.get_window_extent(rend)
+    assert spine_x0 - axbb.x1 >= 0.18 * axbb.width - 1     # never inboard of the shipped 1.18
+    assert spine_x0 >= tax.yaxis.label.get_window_extent(rend).x1
 
 
 def test_hall_tdep_summary_merged_legend_three_entries(hall_tdep_synth_path):
