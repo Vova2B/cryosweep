@@ -13,6 +13,7 @@ from cryosweep_core.grouping import cluster_field_setpoints
 
 E_CHG = 1.602176634e-19     # Coulomb
 from cryosweep_core.units import OE_PER_T as _OE_PER_T   # single-sourced
+from cryosweep_core.units import ZERO_FIELD_OE as _ZERO_FIELD_OE   # single-sourced
 
 
 # ---- typed result models ---------------------------------------------------
@@ -59,6 +60,10 @@ class HallTempPoint(BaseModel):
     # = Stage B produced no R_H, so carrier_n/carrier_type/mobility are WITHHELD rather
     # than derived from the untrusted Stage A raw fit. Empty list = nothing withheld.
     derived_flags: list[str] = []
+    # 2026-09-07 (spec §4.3): the median |H| (Oe) of the longitudinal rows that produced
+    # rho_xx. mu = |R_H|/rho_xx is a zero-field statement; recording the field makes the
+    # claim auditable from the output alone. None when no rho_xx was available.
+    rho_xx_field_oe: float | None = None
 
 class Capability(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -143,29 +148,38 @@ def _mobility(R_H, rho_xx):
     return float(abs(R_H) / rho_xx)               # |R_H| * sigma = |R_H| / rho_xx
 
 def _long_rho_xx(df, cmap, long_channel, long_df, long_cmap):
-    """Return a callable T -> rho_xx (Ohm*m) by interpolating the longitudinal channel's
-    instrument resistivity column over temperature, or None if no longitudinal data.
-    long_df/long_cmap: a SEPARATE file's frame/columns; if None, use df/cmap (same file)."""
+    """Return (T -> rho_xx callable, median |H| in Oe of the rows used), or (None, None).
+
+    rho_xx is the ZERO-FIELD longitudinal resistivity: mu = |R_H|/rho_xx is a zero-field
+    statement, and on a magnetoresistive channel the field-averaged value is a different
+    quantity (measured on the real Hall file: the old loop-averaged rho_xx sat 49% above
+    the zero-field value at 2 K, so mu was 33% low there (21% low at 10 K), and the
+    reported rho_xx was non-monotonic in T -- 2 K above 5 K). The |H| < ZERO_FIELD_OE mask
+    is the same convention resistivity's RRR endpoints use (`resistivity.py:412`); keep
+    the two coupled.
+    """
     if long_channel is None:
-        return None
+        return None, None
     src_df, src_cmap = (long_df, long_cmap) if long_df is not None else (df, cmap)
     rk = f"resistivity_ch{long_channel}"
-    if rk not in src_cmap.logical or "temperature" not in src_cmap.logical:
-        return None
+    if (rk not in src_cmap.logical or "temperature" not in src_cmap.logical
+            or "field" not in src_cmap.logical):
+        return None, None
     T = pd.to_numeric(src_df[src_cmap.logical["temperature"]], errors="coerce").to_numpy(float)
+    H = pd.to_numeric(src_df[src_cmap.logical["field"]], errors="coerce").to_numpy(float)
     rho = pd.to_numeric(src_df[src_cmap.logical[rk]], errors="coerce").to_numpy(float)
-    m = np.isfinite(T) & np.isfinite(rho) & (rho > 0)
+    m = (np.isfinite(T) & np.isfinite(rho) & (rho > 0)
+         & np.isfinite(H) & (np.abs(H) < _ZERO_FIELD_OE))
     if m.sum() < 1:
-        return None
-    Tg, Rg = T[m], rho[m]
+        return None, None              # DECLINE: no zero-field rho_xx exists in this file
+    Tg, Rg, Hg = T[m], rho[m], H[m]
     order = np.argsort(Tg)
     Tg, Rg = Tg[order], Rg[order]
-    # collapse duplicate temperatures by mean so np.interp has a monotone grid
     uT = np.unique(Tg)
     uR = np.array([Rg[Tg == t].mean() for t in uT])
     def rho_at(temp):
         return float(np.interp(temp, uT, uR))     # np.interp clamps outside the range
-    return rho_at
+    return rho_at, float(np.median(np.abs(Hg)))
 
 
 def _capabilities(points, has_thickness, long_source) -> list[Capability]:
@@ -195,7 +209,7 @@ def _capabilities(points, has_thickness, long_source) -> list[Capability]:
     ]
 
 
-def field_sweep_points(df, cmap, cfg, hc, thickness_m, rho_fn) -> list[HallTempPoint]:
+def field_sweep_points(df, cmap, cfg, hc, thickness_m, rho_fn, rho_field_oe) -> list[HallTempPoint]:
     """Per-held-T field-sweep Hall points (Stage A raw + Stage B antisym + carrier/mobility).
     Pure: no I/O, no cfg mutation. Reused by HallAnalyzer and the temp-dep dual-method block."""
     T = pd.to_numeric(df[cmap.logical["temperature"]], errors="coerce").to_numpy(float)
@@ -267,7 +281,7 @@ def field_sweep_points(df, cmap, cfg, hc, thickness_m, rho_fn) -> list[HallTempP
         # (cf. the resistivity power-law decline): withhold the derived quantities and
         # carry a machine-readable reason; R_H_raw stays visible for transparency.
         if pt.R_H is None and pt.R_H_raw is not None:
-            pt.derived_flags = ["antisym_r_h_missing"]
+            pt.derived_flags = [*pt.derived_flags, "antisym_r_h_missing"]
         pt.carrier_n, pt.carrier_type = _carrier_n(pt.R_H)
         # 2026-08-10 spec §2.1: sigma propagated by relative sigma (n = 1/(e|R_H|) and
         # mu = |R_H|/rho_xx are pure reciprocal/scale). Stage B only, like the values.
@@ -279,9 +293,15 @@ def field_sweep_points(df, cmap, cfg, hc, thickness_m, rho_fn) -> list[HallTempP
                 pt.carrier_n_sigma = float(pt.carrier_n * rel)
         if rho_fn is not None:
             pt.rho_xx = rho_fn(Tset)          # longitudinal measurement, independent of R_H
+            pt.rho_xx_field_oe = rho_field_oe
             pt.mobility = _mobility(pt.R_H, pt.rho_xx)
             if (pt.mobility is not None and pt.R_H and pt.r_h_sigma is not None):
                 pt.mobility_sigma = float(pt.mobility * pt.r_h_sigma / abs(pt.R_H))
+        elif hc.longitudinal_channel is not None:
+            # A longitudinal channel WAS supplied but carries no |H| < ZERO_FIELD_OE row:
+            # falling back to the field-averaged value would reintroduce the defect
+            # silently, so decline and say why (spec §4.3).
+            pt.derived_flags = [*pt.derived_flags, "rho_xx_no_zero_field"]
         points.append(pt)
     return points
 
@@ -364,9 +384,9 @@ class HallAnalyzer:
             long_source = f"file:{pathlib.Path(hc.longitudinal_file).name}:ch{hc.longitudinal_channel}"
         elif hc.longitudinal_channel is not None:
             long_source = f"same_file:ch{hc.longitudinal_channel}"
-        rho_fn = _long_rho_xx(df, cmap, hc.longitudinal_channel, long_df, long_cmap)
+        rho_fn, rho_field_oe = _long_rho_xx(df, cmap, hc.longitudinal_channel, long_df, long_cmap)
 
-        points = field_sweep_points(df, cmap, cfg, hc, thickness_m, rho_fn)
+        points = field_sweep_points(df, cmap, cfg, hc, thickness_m, rho_fn, rho_field_oe)
 
         if not points:
             return Result(status="low_confidence", confidence=0.2,

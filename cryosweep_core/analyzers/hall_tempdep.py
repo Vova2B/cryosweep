@@ -675,7 +675,7 @@ class HallTempDepAnalyzer:
             long_source = f"file:{pathlib.Path(hc.longitudinal_file).name}:ch{hc.longitudinal_channel}"
         elif hc.longitudinal_channel is not None:
             long_source = f"same_file:ch{hc.longitudinal_channel}"
-        rho_fn = _long_rho_xx(df, cmap, hc.longitudinal_channel, long_df, long_cmap)
+        rho_fn, rho_field_oe = _long_rho_xx(df, cmap, hc.longitudinal_channel, long_df, long_cmap)
 
         # --- build fixed-field curves → reconstruct temp-dep Hall points ---
         curves = _interp_fixed_field_curves(df, cmap, cfg, hc.hall_channel, hc.temp_interval)
@@ -697,7 +697,7 @@ class HallTempDepAnalyzer:
         fsegs = [s for s in segment_sweeps(df, cmap, cfg) if s.swept.name == "field"]
         dual = []
         if fsegs and thickness_m is not None:
-            fs_pts = field_sweep_points(df, cmap, cfg, hc, thickness_m, rho_fn)
+            fs_pts = field_sweep_points(df, cmap, cfg, hc, thickness_m, rho_fn, rho_field_oe)
             fs_by_T = {round(p.temperature, 1): p.R_H for p in fs_pts if p.R_H is not None}
             for p in points:
                 rf = fs_by_T.get(round(p.temperature, 1))

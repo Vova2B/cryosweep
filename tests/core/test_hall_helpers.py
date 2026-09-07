@@ -44,10 +44,11 @@ def test_long_rho_xx_same_file_interpolates(hall_synth_path):
     from cryosweep_core.analyzers.hall import _long_rho_xx
     rt = load_dat(hall_synth_path)
     df, cmap = canonicalize_columns(rt.df, rt.header)
-    fn = _long_rho_xx(df, cmap, long_channel=2, long_df=None, long_cmap=None)
+    fn, field_oe = _long_rho_xx(df, cmap, long_channel=2, long_df=None, long_cmap=None)
     assert fn is not None
     assert fn(10.0) == pytest.approx(1.0e-6, rel=1e-6)     # constant rho_xx in the fixture
     assert fn(150.0) == pytest.approx(1.0e-6, rel=1e-6)
+    assert abs(field_oe) <= 50.0                           # zero-field rows only
 
 def test_long_rho_xx_absent_returns_none(hall_synth_path):
     from cryosweep_core.io.loader import load_dat
@@ -55,4 +56,4 @@ def test_long_rho_xx_absent_returns_none(hall_synth_path):
     from cryosweep_core.analyzers.hall import _long_rho_xx
     rt = load_dat(hall_synth_path)
     df, cmap = canonicalize_columns(rt.df, rt.header)
-    assert _long_rho_xx(df, cmap, long_channel=None, long_df=None, long_cmap=None) is None
+    assert _long_rho_xx(df, cmap, long_channel=None, long_df=None, long_cmap=None) == (None, None)
