@@ -334,3 +334,47 @@ realized extent.
 
 **Display only.** Every value on the axis is correct and reaches the JSON and the CSV; it is
 the axis *label* that is clipped, not the data.
+
+## Display (found while comparing a composite figure across two workflows, 2026-09-06)
+
+**25. An outside legend detaches a composite's third axis and can push the legend off the
+canvas.** *FIXED 2026-09-06: offset spines are re-expressed as an outward offset in points at
+the position they already hold, and on an overlaid twin/offset composite the legend anchor is
+re-derived in the layout each growth produces, paired with an inversely scaled layout rect that
+pins the axes region in pixels. Display only; no fitted value changes.*
+
+Reproduces on a shipped example, unlike items 18–21:
+
+```
+cryosweep --hall-channel 1 --long-channel 2 --thickness 0.5 --thickness-unit mm \
+  --width-mm 1 --probe hall_tdep --plot-kind hall_tdep_summary \
+  --style-file style.json --out out.png plot examples/hall_mixed_sweeps.dat
+```
+
+with `{"legend_loc": "outside"}` — or any `legend_size` large enough that the legend covers every
+in-axes candidate position, which is what dense data does on its own. Measured: the figure renders
+at **1697 × 827** against the normal 1063 × 827, the `J` axis sits roughly 40 % of the figure
+width out in whitespace with its ticks against the edge, and the legend is drawn at
+x ≈ [1963, 2125] on an 1819 px canvas — that is, not suppressed but placed entirely outside it.
+
+The cause is not the J axis and not its tick-label width: forcing six-digit J values on the same
+example renders correctly. When the legend takes the outside-right branch,
+`_grow_canvas_for_legend` calls `set_size_inches` *after* every axes-fraction position has been
+fixed. Constrained layout then re-flows and the host axes widen — measured 458 → 842 px — so every
+axes-fraction quantity is multiplied along with them: the offset spine, converged in the pre-growth
+layout and never revisited, travels 946 → 1596 px, and the legend's `bbox_to_anchor`, also in
+host-axes fraction, follows it off the canvas. Growing alone cannot converge, because constrained
+layout hands most of each added inch back to the axes: instrumented, the overflow went
+155.6 → 151.8 → 148.2 → 144.6 px over four passes.
+
+Both quantities are really *text* widths — fixed in points, not a proportion of the axes — which
+is why expressing them as a fraction of a resizable axes is what breaks.
+
+**Distinct from item 24**, which was the same figure's J label clipping at the default canvas size
+with the legend *inside*; that fix is intact and this defect survives it. Panel grids never had
+this defect — verified by probing them against the unfixed code — so they keep the previous path,
+which is what preserves layout space for each panel's own legend.
+
+Seventeen rendered figures changed as a result, all of them overlaid twin/offset composites that
+take the outside-legend branch, across the Hall, temperature-dependent Hall and magnetization
+kinds. Each became narrower by closing the dead band; content is unchanged.
