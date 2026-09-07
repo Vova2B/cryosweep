@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.6.0 — 2026-09-07
+
+Measurement files that state their own sample mass and molar mass are now read, and every
+result says where those numbers came from. A file carrying both in its header had been gating
+as though it carried neither, and nothing recorded whether a molar mass had been read from the
+file or typed by a person — which meant a derived effective moment could not be checked against
+the input that produced it.
+
+### Added
+
+- **`sample_inputs` records the provenance of every supplied quantity.** The `analyze` JSON
+  carries the molar mass, sample mass and atom count actually used, each with the source that
+  supplied it — file header, configuration, or a value entered in the GUI. An effective moment
+  scales with the molar mass behind it while the Weiss temperature does not, so a μ_eff quoted
+  without its molar mass cannot be verified; this makes the pairing explicit on every surface.
+
+### Fixed
+
+- **The QD VSM header dialect is parsed.** That option writes sample mass and molecular weight
+  as bare `INFO` rows without the `KEY:` prefix used by the heat-capacity, MPMS and example
+  files. Only the prefixed spelling was recognised, so both fields parsed as absent and a file
+  stating both numbers returned `status: "gated"` asking for what it had already provided.
+- **A composite's third axis and outside legend stay on the canvas.** When such a plot placed
+  its legend outside, the canvas grew after every axes-fraction position was already fixed;
+  the offset axis then travelled out into whitespace and the legend could be drawn beyond the
+  figure edge entirely. Both are text widths, fixed in points, and are now expressed that way.
+  See KNOWN-ISSUES item 25 for the reproducer, which needs only a shipped example.
+- **A DC-mode AC susceptibility file reaches the magnetization tab** instead of being turned
+  away by a probe check that only recognised its AC mode.
+- **A gated result explains itself.** The GUI had reported a missing input as though the plot
+  selection were at fault, sending you to a control that could not have fixed it.
+- **Install instructions for an Intel Mac.** The Python-upgrade route the README recommended
+  assumed a package manager that no longer supports that architecture, so it failed on exactly
+  the machines that needed it.
+
+### Changed
+
+- **Seventeen rendered figures are narrower.** Every overlaid twin or offset composite that
+  places its legend outside now closes the dead band the layout defect opened. Content is
+  unchanged, and analysis output is byte-identical; plot appearance is not covered by the
+  interface promise.
+- **KNOWN-ISSUES.md is described accurately.** The documentation index had called it defects
+  "found and deferred" when every entry in it is fixed, and the Hall section still stated that
+  items 19 and 20 reproduce on no shipped example, which stopped being true in 0.3.0.
+
 ## 0.5.0 — 2026-09-06
 
 The GUI stops blocking. Analysis, refit and file-list runs move onto a worker thread, so the
