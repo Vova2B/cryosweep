@@ -22,8 +22,7 @@ from cryosweep_core.registry import Need
 from cryosweep_core.io.loader import load_dat
 from cryosweep_core.io.columns import canonicalize_columns
 from cryosweep_core.grouping import cluster_field_setpoints
-from cryosweep_core.analyzers.hall_sigma import (row_sigma_R, slope_sigma_ols,
-                                                 RATIO_CONSTANCY_TOL as _RATIO_CONSTANCY_TOL)
+from cryosweep_core.analyzers.hall_sigma import row_sigma_R, slope_sigma_ols
 
 from cryosweep_core.units import OE_PER_T as _OE_PER_T   # single-sourced
 
