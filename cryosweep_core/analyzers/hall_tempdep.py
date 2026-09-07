@@ -22,6 +22,8 @@ from cryosweep_core.registry import Need
 from cryosweep_core.io.loader import load_dat
 from cryosweep_core.io.columns import canonicalize_columns
 from cryosweep_core.grouping import cluster_field_setpoints
+from cryosweep_core.analyzers.hall_sigma import (row_sigma_R, slope_sigma_ols,
+                                                 RATIO_CONSTANCY_TOL as _RATIO_CONSTANCY_TOL)
 
 from cryosweep_core.units import OE_PER_T as _OE_PER_T   # single-sourced
 
@@ -202,9 +204,6 @@ def _interp_fixed_field_curves(
     return curves
 
 
-_RATIO_CONSTANCY_TOL = 1e-6   # hardening 1 (2026-08-10): required rel spread of R/rho
-
-
 def _interp_fixed_field_sigma_curves(df, cmap, cfg, hall_channel: int, temp_interval: float):
     """Instrument sigma_R curves per held field, aligned with _interp_fixed_field_curves.
 
@@ -217,28 +216,9 @@ def _interp_fixed_field_sigma_curves(df, cmap, cfg, hall_channel: int, temp_inte
     DECLINES (returns None) and every *_sigma_instrument field stays None — the measured
     constancy is a runtime gate, not an assumption. Also None when any needed column is
     absent. Collapse of duplicate T rows uses the mean (conservative vs mean/sqrt(k))."""
-    std_key = (f"rho_std_bridge{hall_channel}"
-               if f"rho_std_bridge{hall_channel}" in cmap.logical
-               else f"rho_std_ch{hall_channel}")
-    res_key = f"resistance_ch{hall_channel}"
-    rty_key = f"resistivity_ch{hall_channel}"
-    if (std_key not in cmap.logical or res_key not in cmap.logical
-            or rty_key not in cmap.logical):
+    sigma_R = row_sigma_R(df, cmap, hall_channel)
+    if sigma_R is None:
         return None
-    Rr = pd.to_numeric(df[cmap.logical[res_key]], errors="coerce").to_numpy(float)
-    Rh = pd.to_numeric(df[cmap.logical[rty_key]], errors="coerce").to_numpy(float)
-    SD = pd.to_numeric(df[cmap.logical[std_key]], errors="coerce").to_numpy(float)
-    mr = np.isfinite(Rr) & np.isfinite(Rh) & (Rh != 0.0)
-    if not mr.any():
-        return None
-    ratios = Rr[mr] / Rh[mr]
-    med = float(np.median(ratios))
-    if med == 0.0 or not np.isfinite(med):
-        return None
-    spread = float((np.max(ratios) - np.min(ratios)) / abs(med))
-    if not (spread < _RATIO_CONSTANCY_TOL):
-        return None                                # DECLINE, never emit a shaky sigma
-    sigma_R = SD * med                             # per-row; med == per-row ratio (gated)
 
     T = pd.to_numeric(df[cmap.logical["temperature"]], errors="coerce").to_numpy(float)
     tsegs = [s for s in segment_sweeps(df, cmap, cfg) if s.swept.name == "temperature"]
@@ -428,16 +408,10 @@ def _reconstruct_points(
             else:
                 pt.sigma_zero_dof = True
             # Instrument sigma (closed O4): exact linear propagation through the same
-            # OLS-with-intercept estimator: w_i = (B_i - Bbar)/sum((B - Bbar)^2),
-            # var_slope = sum(w_i^2 sigma_asym_i^2).
+            # OLS-with-intercept estimator as the residual sigma above -- shared with the
+            # field-sweep analyzer via slope_sigma_ols (hall_sigma.py).
             if all(s is not None for s in Sasym):
-                Ba = np.array(B)
-                dev = Ba - float(Ba.mean())
-                denom = float(np.sum(dev ** 2))
-                if denom > 0:
-                    var = float(np.sum((dev / denom) ** 2 * np.array(Sasym, float) ** 2))
-                    if np.isfinite(var):
-                        pt.slope_sigma_instrument_ohm_per_T = math.sqrt(var)
+                pt.slope_sigma_instrument_ohm_per_T = slope_sigma_ols(B, Sasym)
 
         elif antisym_points == 1:
             # KNOWN-ISSUES #18 (2026-09-02): a single symmetric ± pair IS an
