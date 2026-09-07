@@ -115,3 +115,51 @@ def test_summary_j_label_inside_figure_at_default_size():
     mu = next(a for a in fig.axes if a.yaxis.label.get_text() == "μ (m²/V·s)")
     sp = jax.spines["right"].get_window_extent(rend)
     assert sp.x0 >= mu.yaxis.label.get_window_extent(rend).x1
+
+
+# ---------------- the outside-right legend must not detach the third axis ------------------
+
+def _summary_geometry(spec):
+    """Realized pixel geometry of the summary figure: host axes, J spine/decorations, the
+    mu axis label and the legend, all in display coords after a draw."""
+    res = _analyze("hall_mixed_sweeps.dat", "hall_tdep",
+                   hall_channel=1, thickness_mm=0.5, longitudinal_channel=2, width_mm=1.0)
+    fig = render_kind(res, "hall_tdep_summary", spec)
+    fig.canvas.draw()
+    rend = fig.canvas.get_renderer()
+    ax = fig.axes[0]
+    jax = next(a for a in fig.axes if a.yaxis.label.get_text().startswith("J "))
+    mu = next(a for a in fig.axes if a.yaxis.label.get_text().startswith("μ"))
+    return dict(
+        fig_w=fig.get_window_extent(rend).x1,
+        ax=ax.get_window_extent(rend),
+        spine_x0=jax.spines["right"].get_window_extent(rend).x0,
+        mu_label_x1=mu.yaxis.label.get_window_extent(rend).x1,
+        j_decor_x1=jax.yaxis.get_tightbbox(rend).x1,
+        legend=ax.get_legend().get_window_extent(rend),
+    )
+
+
+def test_summary_outside_legend_keeps_third_axis_attached_and_legend_on_canvas():
+    """An outside-right legend grows the canvas AFTER every axes-fraction position is fixed,
+    so anything expressed in host-axes fraction is multiplied by the growth. Each assertion
+    protects one thing that must survive that resize:
+
+      1. the legend is a readable key -> it must be inside the canvas at all;
+      2. the J spine is the third axis' frame -> it belongs against the plot, just clear of
+         the mu axis' decorations, not floating in whitespace with its ticks orphaned;
+      3. the legend is anchored just past those decorations -> a wide dead band between the
+         J numbers and the legend means the anchor was scaled, not placed;
+      4. the canvas must grow by about the legend, not by a multiple of the plot.
+    """
+    from cryosweep_core.plotting.spec import PlotSpec
+    g = _summary_geometry(PlotSpec(legend_loc="outside"))
+    inside = _summary_geometry(PlotSpec(legend_loc="upper right"))
+
+    assert g["legend"].x1 <= g["fig_w"], (g["legend"].x1, g["fig_w"])
+    assert g["spine_x0"] - g["mu_label_x1"] <= 0.15 * g["ax"].width, (
+        g["spine_x0"], g["mu_label_x1"], g["ax"].width)
+    assert g["legend"].x0 - g["j_decor_x1"] <= 0.15 * g["ax"].width, (
+        g["legend"].x0, g["j_decor_x1"], g["ax"].width)
+    assert g["fig_w"] <= inside["fig_w"] + g["legend"].width + 0.15 * inside["fig_w"], (
+        g["fig_w"], inside["fig_w"], g["legend"].width)
