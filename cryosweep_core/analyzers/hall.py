@@ -241,11 +241,33 @@ def _long_rho_xx(df, cmap, long_channel, long_df, long_cmap, cfg):
 # `_long_rho_xx` ever runs, so "no longitudinal channel/file supplied" was self-
 # contradicting whenever a source WAS supplied but produced nothing. Shared with
 # hall_tempdep.py's own _capabilities (imported there) so the two probes never drift.
-def _mobility_gap_reason(long_source, rho_reason):
+#
+# Review round 2, Important #1 (a regression round 1's per-point decline introduced, not
+# a pre-existing gap): `rho_reason` is a FILE-LEVEL signal -- None means _long_rho_xx
+# found zero-field rows SOMEWHERE -- and says nothing about whether any of them fell
+# within temp_interval of an actual Hall setpoint. Once per-point declines existed
+# (Important #1, round 1), "_long_rho_xx succeeds at the file level, but every setpoint's
+# rho_fn(Tset) still declines" became possible for the first time -- a --long-file whose
+# temperatures simply never coincide with a Hall setpoint. Falling through to "carries no
+# |H| < 50 Oe row" there is FALSE: the source does carry such rows, just not at a useful
+# temperature. Fix: never trust rho_reason alone when it's None; look at what the
+# per-point loop in field_sweep_points actually recorded (the same _RHO_XX_* tokens,
+# reused rather than adding a third reason constant -- one source of truth for "which
+# reason applies", not two logics that can each go subtly wrong).
+def _mobility_gap_reason(long_source, rho_reason, points=None):
     if not long_source:
         return "no longitudinal channel/file supplied for rho_xx"
     if rho_reason == _RHO_XX_CHANNEL_MISSING:
         return f"{long_source}: longitudinal resistivity/temperature/field column not found"
+    if rho_reason == _RHO_XX_NO_ZERO_FIELD:
+        return f"{long_source} carries no |H| < {_ZERO_FIELD_OE:.0f} Oe row for rho_xx"
+    # rho_reason is None: the file-level check succeeded. If mobility is STILL
+    # unavailable everywhere, find out why from the points themselves rather than assume.
+    if points is not None and any(_RHO_XX_NO_ZERO_FIELD in p.derived_flags
+                                    or _RHO_XX_CHANNEL_MISSING in p.derived_flags
+                                    for p in points):
+        return (f"{long_source} has zero-field rows, but none fall within "
+                f"temp_interval of any Hall setpoint's temperature")
     return f"{long_source} carries no |H| < {_ZERO_FIELD_OE:.0f} Oe row for rho_xx"
 
 
@@ -265,7 +287,7 @@ def _capabilities(points, has_thickness, long_source, rho_reason=None) -> list[C
                    reason="n = 1/(e|R_H|) from Stage B" if any_RH else "needs R_H"),
         Capability(name="mobility", applicable=any_mu,
                    reason=f"mu = |R_H|/rho_xx ({long_source})" if any_mu
-                   else _mobility_gap_reason(long_source, rho_reason)),
+                   else _mobility_gap_reason(long_source, rho_reason, points)),
         # Recognized-but-deferred (2026-09-05): decomposing rho_xy = R0*B + R_s*mu0*M
         # requires M(H) of the SAME sample, which no file in this corpus provides. See
         # docs/physics-reference.md, "Anomalous Hall effect".

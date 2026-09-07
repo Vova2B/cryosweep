@@ -139,3 +139,37 @@ def test_missing_longitudinal_channel_is_not_diagnosed_as_no_zero_field(tmp_path
     for p in res.data["points"]:
         assert "rho_xx_channel_missing" in p["derived_flags"]
         assert "rho_xx_no_zero_field" not in p["derived_flags"]
+
+
+def test_longitudinal_source_misaligned_in_temperature_names_that_not_missing_data(tmp_path):
+    """Review round 2, Important #1: a regression round 1's per-point decline created,
+    not a pre-existing gap. A --long-file that genuinely HAS zero-field rows -- just at
+    temperatures nowhere near any Hall setpoint -- must not be diagnosed as "carries no
+    |H| < 50 Oe row", which is false: the source does carry such rows, they simply don't
+    align (within temp_interval) with any Hall setpoint. The old file-wide-only decline
+    could never produce this combination: its unconditional np.interp clamp always
+    resolved once ANY zero-field row existed anywhere. Round 1's per-point coverage check
+    made "_long_rho_xx succeeds at the file level, but every setpoint still declines"
+    possible, and _mobility_gap_reason only ever looked at the file-level signal."""
+    hall_path = _write(tmp_path)          # Hall setpoints at 10 K and 50 K
+    # A separate longitudinal file whose zero-field rows sit at 200/250 K -- far outside
+    # the default HallCfg.temp_interval (1.0 K) of either Hall setpoint.
+    long_hdr = ("[Header]\nBYAPP, Resistivity\nINFO, long_only, SAMPLE\n[Data]\n"
+                "Temperature (K),Magnetic Field (Oe),Bridge 2 Resistivity (Ohm-m)\n")
+    long_rows = [f"{T:.4f},{b:.1f},{1e-6:.10e}"
+                 for T in (200.0, 250.0) for b in (-100.0, 0.0, 100.0)]
+    long_path = tmp_path / "long_only.dat"
+    long_path.write_text(long_hdr + "\n".join(long_rows) + "\n")
+
+    cfg = RunConfig(hall={"hall_channel": 1, "thickness_mm": 0.1,
+                          "longitudinal_channel": 2, "longitudinal_file": str(long_path)})
+    res = HallAnalyzer().analyze(load_dat(hall_path), cfg)
+    assert res.data["longitudinal_source"].startswith("file:")
+    assert res.data["points"]                          # Hall fits still resolve fine
+    for p in res.data["points"]:
+        assert p["mobility"] is None and p["rho_xx"] is None
+    caps = {c["name"]: c for c in res.data["capabilities"]}
+    assert caps["mobility"]["applicable"] is False
+    reason = caps["mobility"]["reason"].lower()
+    assert "no |h| <" not in reason        # must NOT claim missing zero-field data (false)
+    assert "temp" in reason                # must name the real cause: temperature misalignment
