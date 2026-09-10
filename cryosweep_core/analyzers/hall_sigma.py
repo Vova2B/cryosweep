@@ -1,9 +1,19 @@
-"""Instrument-sigma primitives shared by the two Hall analyzers.
+"""Row-level instrument helpers shared by the two Hall analyzers.
 
-Extracted 2026-09-07 from hall_tempdep._interp_fixed_field_sigma_curves so the field-sweep
-analyzer can compute the SAME quantity by the SAME estimator. Instrument sigma is a
-WEAKER, DIFFERENT claim than the residual (fit-scatter) sigma: it measures the
-instrument's repeat noise, not how well the line fits. The two must never share a label.
+Two related things live here, both concerned with what the instrument reported per row
+rather than with how well a model fits:
+
+1. The instrument-sigma primitives (`row_sigma_R`, `slope_sigma_ols`), extracted
+   2026-09-07 from hall_tempdep._interp_fixed_field_sigma_curves so the field-sweep
+   analyzer computes the SAME quantity by the SAME estimator. Instrument sigma is a
+   WEAKER, DIFFERENT claim than the residual (fit-scatter) sigma: it measures the
+   instrument's repeat noise, not how well the line fits. The two must never share a
+   label.
+2. `skip_row_warning` (2026-09-10), which judges whether a row the operator skipped
+   looked physical. It is not a sigma primitive; it lives here because it makes the same
+   per-row comparison against the file's own reported std-dev, and both Hall analyzers
+   need one copy. The module scope is deliberately "per-row instrument facts" rather than
+   "sigma" alone -- if something lands here that is neither, it belongs elsewhere.
 """
 from __future__ import annotations
 import numpy as np
@@ -67,6 +77,12 @@ def skip_row_warning(df, cmap, channel: int, skip_rows: int) -> str | None:
     reported instrument sigma sits more than SKIP_PHYSICAL_RATIO times the KEPT rows'
     median -- the judgement is about the skipped row alone, never about whether the
     analysis as a whole should proceed.
+
+    With skip_rows > 1 this reports the FIRST physical-looking row in index order and
+    names one remedy, even when several of the skipped rows are independently physical.
+    That is deliberate rather than an oversight: the remedy (`--skip-rows 0`, then choose
+    a smaller N) is the same whichever of them is named, and one warning beats N. A test
+    pins this so a future maintainer who wants per-row reporting changes it on purpose.
 
     Returns None when: skip_rows <= 0 (nothing was skipped); skip_rows >= the row count
     (nothing left to compare against); the resistance column for `channel` is absent; or

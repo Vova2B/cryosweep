@@ -167,3 +167,25 @@ def test_real_resistivity_file_recovers_the_sound_300k_point(res_path):
     # the row is plainly unphysical (10-11 orders of magnitude off), so the default did
     # its job silently -- no reversal warning, just the always-present count.
     assert not any("looks physical" in w for w in r_default.warnings)
+
+
+# ------------------------------------- (g) skip_rows > 1 names one row, on purpose --
+def test_multi_row_skip_reports_one_row_not_every_physical_one():
+    """`skip_rows` > 1 is a smaller use case than the default of 1, and the warning
+    deliberately names only the FIRST physical-looking row it finds rather than
+    enumerating all of them. Pinned because the alternative (one warning per skipped
+    physical row) is a defensible design someone might later prefer -- and if they do,
+    they should change this test on purpose rather than discover the behaviour by
+    accident. The remedy is identical whichever row is named: --skip-rows 0, then pick a
+    smaller N.
+
+    The file here has three perfectly ordinary leading rows, so all three are physical."""
+    with tempfile.TemporaryDirectory() as d:
+        p = _write(d, "f.dat", _build(_GOOD_R, _GOOD_SD))
+        r = _analyze(p, skip_rows=3)
+
+    assert r.data["skipped_rows"] == 3
+    warns = [w for w in r.warnings if "looks physical" in w]
+    assert len(warns) == 1, "one warning, however many skipped rows were physical"
+    assert "skipped 3 leading data row" in warns[0]
+    assert "--skip-rows 0" in warns[0]
