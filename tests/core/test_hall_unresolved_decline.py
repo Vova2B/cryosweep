@@ -185,3 +185,85 @@ def test_real_file_field_sweep_declines_nothing(hall_real_path):
     assert all("r_h_unresolved" not in p["derived_flags"] for p in pts)
     assert all(p["withheld"] is None for p in pts)
     assert all(p["carrier_n"] is not None for p in pts)
+
+
+# ---- Fix round 1: carrier_concentration's `applicable` went stale under decline_unresolved ---
+#
+# Before this task, R_H is not None implied carrier_n is not None, so any_RH was an accurate
+# proxy for "a carrier density is available somewhere". decline_unresolved() broke that
+# equivalence on purpose (R_H stays; carrier_n does not), which leaves any_RH stale as the
+# carrier_concentration capability's `applicable` test: a fully noise-dominated file can now
+# report `carrier_concentration: applicable=True` while publishing carrier_n on ZERO points --
+# exactly the "never infer that an analysis ran" failure the capabilities list exists to
+# prevent. mobility already keys on `any_mu` (a live field, not a proxy) and is unaffected.
+
+def _make_declined_temp_point(t):
+    from cryosweep_core.analyzers.hall import HallTempPoint, decline_unresolved
+    p = HallTempPoint(temperature=t, R_H=-5e-8, carrier_n=1.0e26, carrier_type="holes",
+                      r_h_sigma_instrument=6e-8)          # sigma > |R_H| -> unresolved
+    decline_unresolved(p)
+    return p
+
+
+def _make_declined_tdep_point(t):
+    from cryosweep_core.analyzers.hall_tempdep import HallTDepPoint
+    from cryosweep_core.analyzers.hall import decline_unresolved
+    p = HallTDepPoint(temperature=t, R_H=-5e-8, carrier_n=1.0e26, carrier_type="holes",
+                      r_h_sigma_instrument=6e-8)          # sigma > |R_H| -> unresolved
+    decline_unresolved(p)
+    return p
+
+
+def test_hall_carrier_concentration_declines_when_every_point_is_unresolved():
+    from cryosweep_core.analyzers.hall import _capabilities
+    pts = [_make_declined_temp_point(t) for t in (5.0, 6.0, 7.0)]
+    assert all(p.carrier_n is None for p in pts)          # sanity: the fixture really declined
+    caps = {c.name: c for c in _capabilities(pts, True, None)}
+    # R_H is still published on every point -- hall_coefficient must NOT over-correct
+    assert caps["hall_coefficient"].applicable is True
+    assert caps["carrier_concentration"].applicable is False
+    reason = caps["carrier_concentration"].reason.lower()
+    assert "needs r_h" not in reason              # false: R_H IS present, just withheld above it
+    assert "r_h_unresolved" in reason or "withheld" in reason
+
+
+def test_hall_tempdep_carrier_concentration_declines_when_every_point_is_unresolved():
+    from cryosweep_core.analyzers.hall_tempdep import _capabilities
+    pts = [_make_declined_tdep_point(t) for t in (5.0, 6.0, 7.0)]
+    assert all(p.carrier_n is None for p in pts)
+    caps = {c.name: c for c in _capabilities(pts, True, None, False)}
+    assert caps["hall_coefficient"].applicable is True
+    assert caps["carrier_concentration"].applicable is False
+    reason = caps["carrier_concentration"].reason.lower()
+    assert "needs r_h" not in reason
+    assert "r_h_unresolved" in reason or "withheld" in reason
+
+
+def test_hall_carrier_concentration_stays_applicable_with_no_r_h_at_all():
+    """The pre-existing "no R_H at all" case must still say "needs R_H" -- this task only
+    adds a second false-branch reason, it must not blur the two apart."""
+    from cryosweep_core.analyzers.hall import _capabilities, HallTempPoint
+    pts = [HallTempPoint(temperature=5.0)]                # R_H is None: never even fitted
+    caps = {c.name: c for c in _capabilities(pts, True, None)}
+    assert caps["hall_coefficient"].applicable is False
+    assert caps["carrier_concentration"].applicable is False
+    assert caps["carrier_concentration"].reason == "needs R_H"
+
+
+def test_hall_tempdep_carrier_concentration_stays_applicable_when_some_points_resolve(
+        hall_real_path):
+    """The real Hall file's temp-dep partial case: 66 of 138 points still resolve. A capability
+    that is true whenever ANY point publishes a carrier density must stay True here -- the bug
+    this round fixes is the opposite direction (True with ZERO points publishing one), and this
+    test is the guard against fixing it by overcorrecting to "any point declined -> False"."""
+    if not hall_real_path.exists():
+        import pytest
+        pytest.skip("real Hall measurement file gitignored/absent")
+    from cryosweep_core.analyzers.hall_tempdep import HallTempDepAnalyzer
+    res = HallTempDepAnalyzer().analyze(load_dat(hall_real_path), RunConfig(
+        hall={"hall_channel": 1, "thickness_mm": 0.07, "longitudinal_channel": 2}))
+    pts = res.data["points"]
+    assert sum(1 for p in pts if p["carrier_n"] is not None) == 66
+    caps = {c["name"]: c for c in res.data["capabilities"]}
+    assert caps["carrier_concentration"]["applicable"] is True
+    assert caps["hall_coefficient"]["applicable"] is True

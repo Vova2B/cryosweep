@@ -403,6 +403,12 @@ def _mobility_gap_reason(long_source, rho_reason, points=None):
 def _capabilities(points, has_thickness, long_source, rho_reason=None) -> list[Capability]:
     any_anti = any(p.antisymmetrized for p in points)
     any_RH = any(p.R_H is not None for p in points)
+    # 2026-09-10 (fix round 1): any_RH used to be an accurate proxy for "carrier_n is
+    # published somewhere" -- decline_unresolved() broke that equivalence on purpose (R_H
+    # stays; carrier_n does not), which left carrier_concentration's `applicable` stale: a
+    # fully noise-dominated file could report applicable=True while publishing carrier_n
+    # on ZERO points. Key it on the live field instead, same as `mobility` already does.
+    any_n = any(p.carrier_n is not None for p in points)
     any_mu = any(p.mobility is not None for p in points)
     return [
         Capability(name="hall_coefficient", applicable=any_RH,
@@ -412,8 +418,11 @@ def _capabilities(points, has_thickness, long_source, rho_reason=None) -> list[C
         Capability(name="antisymmetrization", applicable=any_anti,
                    reason="field loops contain both +H and -H" if any_anti
                    else "no loop spans both field signs; Stage B skipped"),
-        Capability(name="carrier_concentration", applicable=any_RH,
-                   reason="n = 1/(e|R_H|) from Stage B" if any_RH else "needs R_H"),
+        Capability(name="carrier_concentration", applicable=any_n,
+                   reason="n = 1/(e|R_H|) from Stage B" if any_n
+                   else ("needs R_H" if not any_RH
+                         else "R_H resolved, but every point's sigma >= |R_H| "
+                              "(r_h_unresolved) -- see point.withheld")),
         Capability(name="mobility", applicable=any_mu,
                    reason=f"mu = |R_H|/rho_xx ({long_source})" if any_mu
                    else _mobility_gap_reason(long_source, rho_reason, points)),
