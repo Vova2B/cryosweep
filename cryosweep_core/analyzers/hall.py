@@ -105,21 +105,26 @@ def _antisymmetrize(H, R, sigma_R=None):
     after argsort silently averages the two branches (correct for negligible-hysteresis
     samples; a future maintainer with a hysteretic sample should branch-separate first).
 
-    sigma_R (optional, per-row, Ohm) is interpolated onto the SAME grid and combined as
-    sigma_asym = sqrt(sigma(+H)^2 + sigma(-H)^2)/2 -- the exact propagation for
-    R_asym = [R(+H) - R(-H)]/2 with independent per-branch noise. sigma_asym is None
-    whenever sigma_R is None."""
+    sigma_R (optional, per-row, Ohm) is interpolated onto the SAME Hp query grid and
+    combined as sigma_asym = sqrt(sigma(+H)^2 + sigma(-H)^2)/2 -- the exact propagation
+    for R_asym = [R(+H) - R(-H)]/2 with independent per-branch noise. sigma_asym is None
+    whenever sigma_R is None.
+
+    Fix round 1 (2026-09): sigma_R's own finite-mask is kept STRICTLY SEPARATE from H,R's.
+    A row can carry a perfectly good resistance reading beside a missing/NaN std-dev (the
+    two columns' validity does not track each other on real files), and dropping that row
+    from R,H because its sigma is bad would silently move R_asym/R_H/r2/field_asym_T for a
+    point Task 4 was only supposed to add a sigma family to, not re-fit. Hp and R_asym are
+    therefore computed from the H,R mask alone, bit-identical to before sigma_R existed;
+    sigma is interpolated from ITS OWN valid rows (mirroring hall_tempdep's fully
+    independent _interp_fixed_field_curves / _interp_fixed_field_sigma_curves). If sigma
+    cannot be formed at all (fewer than 2 sigma-valid rows), sigma_asym stays None -- a
+    sigma problem never reaches back to move R."""
     H = np.asarray(H, float); R = np.asarray(R, float)
     m = np.isfinite(H) & np.isfinite(R)
-    S = None
-    if sigma_R is not None:
-        S = np.asarray(sigma_R, float)
-        m = m & np.isfinite(S)
-    H, R = H[m], R[m]
-    if S is not None:
-        S = S[m]
-    order = np.argsort(H)
-    Hs, Rs = H[order], R[order]
+    Hm, Rm = H[m], R[m]
+    order = np.argsort(Hm)
+    Hs, Rs = Hm[order], Rm[order]
     hi = min(Hs.max(), -Hs.min()) if Hs.size else 0.0   # symmetric overlap
     if hi <= 0:
         return np.empty(0), np.empty(0), None
@@ -129,11 +134,16 @@ def _antisymmetrize(H, R, sigma_R=None):
     r_pos = np.interp(Hp, Hs, Rs)
     r_neg = np.interp(-Hp, Hs, Rs)
     s_asym = None
-    if S is not None:
-        Ss = S[order]
-        s_pos = np.interp(Hp, Hs, Ss)
-        s_neg = np.interp(-Hp, Hs, Ss)
-        s_asym = np.sqrt(s_pos ** 2 + s_neg ** 2) / 2.0
+    if sigma_R is not None:
+        S = np.asarray(sigma_R, float)
+        ms = np.isfinite(H) & np.isfinite(S)          # sigma's OWN mask, never mixed with R's
+        Hms, Sms = H[ms], S[ms]
+        if Hms.size >= 2:
+            orders = np.argsort(Hms)
+            Hss, Ss = Hms[orders], Sms[orders]
+            s_pos = np.interp(Hp, Hss, Ss)
+            s_neg = np.interp(-Hp, Hss, Ss)
+            s_asym = np.sqrt(s_pos ** 2 + s_neg ** 2) / 2.0
     return Hp, (r_pos - r_neg) / 2.0, s_asym
 
 def _stage_fit(H, R, thickness_m, geometry_sign):

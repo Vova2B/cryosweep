@@ -15,6 +15,36 @@ def test_antisymmetrize_removes_even_component():
     # antisymmetric part recovers the pure odd term slope*B (even + offset removed)
     assert np.allclose(R_asym, slope * (Hp / 10000.0), atol=1e-9)
 
+def test_antisymmetrize_sigma_never_moves_R_or_H():
+    """Fix round 1 (2026-09): a row's own sigma validity must never change which R,H rows
+    feed the fit -- R/Hp are independent of sigma_R entirely. Before this fix, a NaN in
+    sigma_R at a row with perfectly finite H,R dropped that row from R,H too (the mask
+    was AND-ed together), silently shifting R_asym/R_H/r2 for that setpoint even though
+    Task 4's brief was to ADD a sigma family, not change the existing fit. Reproduction
+    matches the one the reviewer ran: H = -100 has finite R but a NaN sigma; dropping it
+    moves R_asym(100) from 0.9 to 1.1 by changing what np.interp(-100, ...) returns."""
+    H = np.array([-300.0, -200.0, -100.0, 100.0, 200.0, 300.0])
+    R = np.array([-3.5, -2.2, -0.7, 1.1, 2.3, 3.6])
+    sig_all_finite = np.array([1e-9] * 6)
+    sig_with_nan = np.array([1e-9, 1e-9, np.nan, 1e-9, 1e-9, 1e-9])
+
+    Hp0, R0, S0 = _antisymmetrize(H, R, None)
+    Hp1, R1, S1 = _antisymmetrize(H, R, sig_all_finite)
+    Hp2, R2, S2 = _antisymmetrize(H, R, sig_with_nan)
+
+    # the invariant under test: identical H, R -> identical Hp, R_asym, no matter what
+    # sigma_R looks like (None, all-finite, or holding a NaN at a perfectly finite row)
+    assert np.array_equal(Hp0, Hp1) and np.array_equal(Hp0, Hp2)
+    assert np.array_equal(R0, R1) and np.array_equal(R0, R2)
+    # pinned to the reviewer's own reproduction: R_asym(H=100) stays 0.9, never 1.1
+    i100 = list(Hp0).index(100.0)
+    assert R0[i100] == pytest.approx(0.9) and R2[i100] == pytest.approx(0.9)
+
+    assert S0 is None
+    assert S1 is not None                 # sigma still resolves when it is fully finite
+    assert S2 is not None                 # and when only one row's sigma is NaN (>=2 remain)
+
+
 def test_stage_fit_recovers_R_H_from_clean_odd_signal():
     H = np.linspace(-90000, 90000, 181)
     B = H / 10000.0
