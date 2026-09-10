@@ -119,7 +119,16 @@ def _antisymmetrize(H, R, sigma_R=None):
     sigma is interpolated from ITS OWN valid rows (mirroring hall_tempdep's fully
     independent _interp_fixed_field_curves / _interp_fixed_field_sigma_curves). If sigma
     cannot be formed at all (fewer than 2 sigma-valid rows), sigma_asym stays None -- a
-    sigma problem never reaches back to move R."""
+    sigma problem never reaches back to move R.
+
+    Note what that interpolation means pointwise: a SINGLE missing/NaN std-dev sitting
+    between two valid ones is BACKFILLED from its neighbours, not declined at that grid
+    point. So a resolved sigma_asym may contain values standing in for a reading the file
+    never supplied. This is deliberate and matches hall_tempdep: instrument noise is a
+    smooth, slowly varying property (on a real file the p10-p90 band is 1.5e-6 to 2.3e-6
+    Ohm about a 1.9e-6 median), so a neighbour's value is a far better estimate than
+    nothing -- but it IS an estimate, and a caller reasoning about which points carry a
+    genuinely measured sigma should not assume every entry does."""
     H = np.asarray(H, float); R = np.asarray(R, float)
     m = np.isfinite(H) & np.isfinite(R)
     Hm, Rm = H[m], R[m]

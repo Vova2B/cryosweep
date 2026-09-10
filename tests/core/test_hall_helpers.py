@@ -44,6 +44,21 @@ def test_antisymmetrize_sigma_never_moves_R_or_H():
     assert S1 is not None                 # sigma still resolves when it is fully finite
     assert S2 is not None                 # and when only one row's sigma is NaN (>=2 remain)
 
+    # ...and pin WHAT it resolves to. A single NaN between two valid readings is BACKFILLED
+    # by interpolation from its neighbours, not declined at that grid point, so S2 equals
+    # the all-finite S1 exactly here. That is a deliberate approximation (instrument noise
+    # is smooth; a neighbour beats nothing) and it is documented in _antisymmetrize -- but
+    # it means a resolved sigma_asym can carry a value the file never supplied. Asserting
+    # it keeps the behaviour a decision rather than an accident: if someone later switches
+    # to declining pointwise, this test is where they must say so.
+    assert np.array_equal(S1, S2)
+    # both branches carry sigma 1e-9, so sigma_asym = sqrt(1e-9^2 + 1e-9^2)/2
+    assert S1 == pytest.approx(np.full(Hp0.size, np.sqrt(2) * 1e-9 / 2.0))
+
+    # and the decline path: no sigma survives at all -> sigma_asym is None, never zeros
+    _, _, S3 = _antisymmetrize(H, R, np.full(6, np.nan))
+    assert S3 is None
+
 
 def test_stage_fit_recovers_R_H_from_clean_odd_signal():
     H = np.linspace(-90000, 90000, 181)
