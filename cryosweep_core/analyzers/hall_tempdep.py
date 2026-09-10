@@ -15,7 +15,8 @@ from pydantic import BaseModel, ConfigDict
 from cryosweep_core.detect.sweeps import segment_sweeps
 from cryosweep_core.analyzers.hall import (_carrier_n, _mobility,
                                       _long_rho_xx, field_sweep_points,
-                                      _mobility_gap_reason)
+                                      _mobility_gap_reason, _RHO_XX_NO_ZERO_FIELD,
+                                      WithheldDerived, decline_unresolved)
 from cryosweep_core.fitting.transport import LinearFitModel
 from cryosweep_core.result import Result, Provenance, Gate
 from cryosweep_core.registry import Need
@@ -80,6 +81,14 @@ class HallTDepPoint(BaseModel):
     # requested drive. current_density_J above becomes I/(w*t) when sample width AND
     # thickness are both supplied; otherwise it stays None (gated, never guessed).
     excitation_uA: float | None = None
+    # 2026-09-10 (spec Sec 4.1, append-only): decline reasons for the derived quantities, and
+    # what was withheld. Mirrors HallTempPoint; ["r_h_unresolved"] means sigma >= |R_H|.
+    derived_flags: list[str] = []
+    withheld: WithheldDerived | None = None
+    # Carried over from Task 1: the field rho_xx came from, the temp-dep counterpart of
+    # HallTempPoint.rho_xx_field_oe. Task 1 could not add it here because this model had no
+    # per-point decline vocabulary; it does now.
+    rho_xx_field_oe: float | None = None
 
 
 class HallTDepStage(BaseModel):
@@ -515,19 +524,23 @@ def _reconstruct_points(
 
 # ---- derived quantities helper --------------------------------------------
 
-def _sigma_mu_J(pt, rho_fn):
+def _sigma_mu_J(pt, rho_fn, rho_reason=None, long_channel=None):
     """Fill sigma / mobility in-place on a HallTDepPoint from a rho_fn(T) -> (rho_xx,
     field_oe) callable (review round 1: rho_fn now also declines PER TEMPERATURE, not
     just file-wide -- see _long_rho_xx). Returns pt for convenience (mutation is the
     primary effect).
 
-    HallTDepPoint has no rho_xx_field_oe / derived_flags yet (those arrive with Task 5),
-    so a per-setpoint decline surfaces here only as rho_xx/sigma/mobility staying None --
-    silent on this path by design until that task gives this point type the same
-    provenance fields HallTempPoint already has."""
+    2026-09-10 (Task 5 follow-on): HallTDepPoint now carries the same rho_xx_field_oe /
+    derived_flags provenance HallTempPoint already has, so a per-setpoint decline is
+    stamped here exactly as field_sweep_points stamps it -- rho_xx_field_oe on success,
+    _RHO_XX_NO_ZERO_FIELD when this setpoint's own zero-field row is missing (a per-point
+    decline within an otherwise-covered file), or the file-level rho_reason (channel
+    missing vs. no zero-field row anywhere) when no rho_fn could be built at all."""
     if rho_fn is not None:
-        pt.rho_xx, _field_oe = rho_fn(pt.temperature)
+        rho_val, field_oe = rho_fn(pt.temperature)
+        pt.rho_xx = rho_val
         if pt.rho_xx and pt.rho_xx > 0:
+            pt.rho_xx_field_oe = field_oe
             pt.sigma = 1.0 / pt.rho_xx
             pt.mobility = _mobility(pt.R_H, pt.rho_xx)
             # sigma companions (each family; rho_xx sigma NOT folded — deferred §10)
@@ -537,6 +550,10 @@ def _sigma_mu_J(pt, rho_fn):
                 if pt.r_h_sigma_instrument is not None:
                     pt.mobility_sigma_instrument = float(
                         pt.mobility * pt.r_h_sigma_instrument / abs(pt.R_H))
+        elif long_channel is not None:
+            pt.derived_flags = [*pt.derived_flags, _RHO_XX_NO_ZERO_FIELD]
+    elif long_channel is not None:
+        pt.derived_flags = [*pt.derived_flags, rho_reason or _RHO_XX_NO_ZERO_FIELD]
     return pt
 
 
@@ -592,7 +609,10 @@ def _capabilities(points, has_thickness, long_source, has_dual, min_antisym_pts=
                    reason="n=1/(e|R_H|)" if any_RH else "needs R_H"),
         Capability(name="mobility", applicable=any_mu,
                    reason=f"mu=|R_H|/rho_xx ({long_source})" if any_mu
-                   else _mobility_gap_reason(long_source, rho_reason)),
+                   # 2026-09-10 (Task 5 follow-on): HallTDepPoint now carries derived_flags,
+                   # so this call site can climb the same evidence ladder field_sweep_points
+                   # already does instead of staying on its "no per-point evidence" rung.
+                   else _mobility_gap_reason(long_source, rho_reason, points)),
         Capability(name="dual_method", applicable=has_dual,
                    reason="field-sweep loops also present" if has_dual
                    else "no field sweeps in file"),
@@ -684,7 +704,13 @@ class HallTempDepAnalyzer:
                                              two_point_fallback=hc.tdep_two_point_fallback,
                                              sd_curves=sd_curves)
         for p in points:
-            _sigma_mu_J(p, rho_fn)
+            _sigma_mu_J(p, rho_fn, rho_reason, hc.longitudinal_channel)
+        # Spec Sec 4.1: sigma >= |R_H| means the +-1 sigma interval contains zero, so n is
+        # unbounded above and the carrier sign is undetermined. Applied AFTER _sigma_mu_J
+        # so nothing above repopulates a withheld field afterwards -- same rule and shared
+        # helper as the field-sweep analyzer's field_sweep_points.
+        for p in points:
+            decline_unresolved(p)
         width_m = (cfg.geometry.width_mm * 1e-3) if cfg.geometry.width_mm else None
         _fill_excitation_and_J(points, df, cmap, hc.hall_channel, hc.temp_interval,
                                width_m, thickness_m)

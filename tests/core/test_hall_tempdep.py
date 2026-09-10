@@ -179,7 +179,17 @@ def test_analyze_real_file_sparsity_edge(hall_real_path):
     assert max(p["temperature"] for p in anti) > 100.0   # coverage no longer stops at ~21 K
     # exactly one T has NO ± pair at all: stays 2point + low_confidence (the knob's floor)
     assert len(two) == 1 and two[0]["antisym_points"] == 0 and two[0]["low_confidence"]
-    assert all(p["carrier_type"] in ("electrons", "holes") for p in fitted)  # sign depends on wiring
+    # 2026-09-10 (spec Sec 4.1): sigma >= |R_H| withholds carrier_type -- on this real file
+    # 72/138 points cross that line (see test_hall_unresolved_decline.py's real-file oracle),
+    # so "every fitted point publishes a carrier_type" is no longer true. Resolved points
+    # still publish one (sign depends on wiring); declined points keep it under `withheld`
+    # instead, never as a fabricated `null` classification.
+    resolved = [p for p in fitted if "r_h_unresolved" not in p["derived_flags"]]
+    declined = [p for p in fitted if "r_h_unresolved" in p["derived_flags"]]
+    assert resolved and declined
+    assert all(p["carrier_type"] in ("electrons", "holes") for p in resolved)
+    assert all(p["carrier_type"] is None for p in declined)
+    assert all(p["withheld"]["carrier_type"] in ("electrons", "holes") for p in declined)
 
 
 def test_analyze_resistivity_example_clean(res_path):
@@ -366,8 +376,14 @@ def test_tdep_rh_series_split_by_method(hall_tdep_synth_path):
     res = _full_tdep(hall_tdep_synth_path)
     keys = {s.key for s in series_hall_tdep_rh_t(res)}
     assert {"R_H_antisym", "R_H_2point"} <= keys
+    # 2026-09-10 (spec Sec 4.1): this fixture carries no Std. Dev. column, so its 2-point
+    # tail has neither a residual sigma (zero DOF by construction) nor an instrument one --
+    # an unquantified uncertainty is not evidence of a small one, so every 2-point point is
+    # withheld (r_h_unresolved) and "n_2point" no longer has any point to plot. R_H itself
+    # is untouched by the decline, so "R_H_2point" survives above.
     nkeys = {s.key for s in series_hall_tdep_n_t(res)}
-    assert {"n_antisym", "n_2point"} <= nkeys
+    assert "n_antisym" in nkeys
+    assert "n_2point" not in nkeys
 
 
 # ---- KNOWN-ISSUES #18 (2026-09-02): a single ± pair IS an antisymmetrization ----
@@ -436,4 +452,10 @@ def test_single_pair_file_is_ok_with_rebased_confidence(tmp_path):
     assert all(not p["low_confidence"] for p in pts)
     # slope d/B = 1.2e-3/2 = 6e-4 Ohm/T; R_H = slope * 1e-4 m = 6e-8 m^3/C (holes)
     assert pts[0]["R_H"] == pytest.approx(6.0e-8, rel=1e-6)
-    assert pts[0]["carrier_type"] == "holes"
+    # 2026-09-10 (spec Sec 4.1): this fixture carries no Std. Dev. column and every point
+    # is a single antisym pair (zero residual DOF), so neither sigma family exists --
+    # carrier_type is withheld, not published, and kept for inspection under `withheld`.
+    # This is orthogonal to #18 (confidence/status above are untouched by the decline).
+    assert pts[0]["carrier_type"] is None
+    assert pts[0]["derived_flags"] == ["r_h_unresolved"]
+    assert pts[0]["withheld"]["carrier_type"] == "holes"

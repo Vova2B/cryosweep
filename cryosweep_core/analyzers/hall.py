@@ -18,6 +18,20 @@ from cryosweep_core.units import ZERO_FIELD_OE as _ZERO_FIELD_OE   # single-sour
 
 
 # ---- typed result models ---------------------------------------------------
+class WithheldDerived(BaseModel):
+    """What the decline rule withheld, kept so it can be INSPECTED, never published.
+
+    The canonical carrier_n / carrier_type / mobility fields are None whenever this is
+    populated. These are not measurements: at sigma >= |R_H| the +-1 sigma interval on
+    R_H contains zero, so n is unbounded above and the carrier sign is undetermined
+    (spec Sec 4.1).
+    """
+    model_config = ConfigDict(extra="ignore")
+    carrier_n: float | None = None
+    carrier_type: str | None = None
+    mobility: float | None = None
+
+
 class HallTempPoint(BaseModel):
     model_config = ConfigDict(extra="ignore")
     temperature: float
@@ -75,6 +89,9 @@ class HallTempPoint(BaseModel):
     r_h_sigma_instrument: float | None = None
     carrier_n_sigma_instrument: float | None = None
     mobility_sigma_instrument: float | None = None
+    # 2026-09-10 (spec Sec 4.1, append-only): what the r_h_unresolved decline withheld, kept
+    # for inspection. None whenever nothing was withheld -- see decline_unresolved() below.
+    withheld: WithheldDerived | None = None
 
 class Capability(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -197,6 +214,47 @@ def _mobility(R_H, rho_xx):
     if not R_H or not rho_xx:
         return None
     return float(abs(R_H) / rho_xx)               # |R_H| * sigma = |R_H| / rho_xx
+
+
+def resolved_sigma(pt):
+    """The sigma the decline rule judges by, or None when there is nothing to judge.
+
+    Spec Sec 4.1: instrument sigma where the file supports it (it is the stronger
+    constraint and the one the noise warning uses), residual sigma otherwise. None when
+    R_H is absent, or when NEITHER family exists -- an unquantified uncertainty is not
+    evidence of a small one, so such a point is treated as unresolved (spec Sec 4.5, which
+    reuses this same definition for the confidence fraction)."""
+    if getattr(pt, "R_H", None) is None:
+        return None
+    inst = getattr(pt, "r_h_sigma_instrument", None)
+    if inst is not None:
+        return inst
+    return getattr(pt, "r_h_sigma", None)
+
+
+def is_resolved(pt) -> bool:
+    """True iff R_H's own uncertainty is strictly smaller than R_H itself (spec Sec 4.1:
+    sigma >= |R_H| means the +-1 sigma interval on R_H contains zero)."""
+    s = resolved_sigma(pt)
+    return s is not None and pt.R_H is not None and abs(s) < abs(pt.R_H)
+
+
+def decline_unresolved(pt) -> None:
+    """Withhold carrier_n / carrier_type / mobility (and their sigma companions) in place
+    when R_H's own sigma is not resolved (spec Sec 4.1). R_H and its sigma stay visible --
+    the fit happened, and hiding it would hide the evidence for the decline. A point with
+    no R_H at all is skipped here: it already carries its own decline reason
+    (antisym_r_h_missing), and spec Sec 4.1 says it keeps that reason rather than gaining
+    a second one. Shared by both Hall analyzers -- HallTempPoint and HallTDepPoint carry
+    the identical field set this function touches."""
+    if pt.R_H is None or is_resolved(pt):
+        return
+    pt.withheld = WithheldDerived(carrier_n=pt.carrier_n, carrier_type=pt.carrier_type,
+                                  mobility=pt.mobility)
+    pt.carrier_n = pt.carrier_type = pt.mobility = None
+    pt.carrier_n_sigma = pt.mobility_sigma = None
+    pt.carrier_n_sigma_instrument = pt.mobility_sigma_instrument = None
+    pt.derived_flags = [*pt.derived_flags, "r_h_unresolved"]
 
 # Review round 1 (2026-09-07), Important #3: `derived_flags` tokens for the two distinct
 # ways a longitudinal source can fail to produce rho_xx. Never collapse them into one
@@ -494,6 +552,11 @@ def field_sweep_points(df, cmap, cfg, hc, thickness_m, rho_fn, rho_reason) -> li
             # present with no zero-field row anywhere at all -- review round 1 Important
             # #3: never collapse the two into one message.
             pt.derived_flags = [*pt.derived_flags, rho_reason or _RHO_XX_NO_ZERO_FIELD]
+        # Spec Sec 4.1: sigma >= |R_H| means the +-1 sigma interval contains zero, so n is
+        # unbounded above and the carrier sign is undetermined. Withhold the derived
+        # quantities, keep R_H and its sigma visible, and say why. Applied last, once every
+        # derived quantity above has been computed, so the withheld copy is complete.
+        decline_unresolved(pt)
         points.append(pt)
     return points
 

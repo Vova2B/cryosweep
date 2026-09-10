@@ -48,7 +48,7 @@ def test_fallback_estimator_is_drawn_open_and_dashed():
     assert twop.get_linestyle() != anti.get_linestyle()
 
 
-@pytest.mark.parametrize("kind", ["hall_tdep_RH_T", "hall_tdep_n_T"])
+@pytest.mark.parametrize("kind", ["hall_tdep_RH_T"])
 def test_method_boundary_warning_appears_when_both_estimators_present(kind):
     # n_T matters separately: its wide log tick labels shift the axes (and the centred
     # title) right, so a raw-width fit can pass while the right edge still clips
@@ -61,6 +61,23 @@ def test_method_boundary_warning_appears_when_both_estimators_present(kind):
     bb = ax.title.get_window_extent(rend)
     fw = fig.get_window_extent(rend)
     assert bb.x0 >= fw.x0 - 0.5 and bb.x1 <= fw.x1 + 0.5, (bb.x0, bb.x1, fw.x1)
+
+
+def test_no_method_boundary_note_on_n_t_when_the_fallback_carries_no_n():
+    """2026-09-10 (spec Sec 4.1): `_tdep_result`'s fixture carries no Std. Dev. column, so
+    its 0-field+1 fallback points have neither a residual sigma (zero DOF by construction)
+    nor an instrument one and are withheld (r_h_unresolved) -- carrier_n is null on every
+    one of them. R_H(T) still shows a real boundary between the two fit methods (R_H is
+    untouched by the decline), so hall_tdep_RH_T keeps the note (parametrized case above).
+    n(T) does not: with no plotted "two_point" role there is no boundary left to warn
+    about on THIS panel, and the note correctly stays silent. This test used to be the
+    "hall_tdep_n_T" arm of the parametrized case above; it moved here once that stopped
+    being true for this fixture."""
+    from cryosweep_core.plotting.catalog import series_hall_tdep_n_t
+    res = _tdep_result()
+    assert "two_point" not in {s.role for s in series_hall_tdep_n_t(res)}
+    fig = render_kind(res, "hall_tdep_n_T")
+    assert fig.axes[0].get_title() == ""
 
 
 def test_no_warning_when_only_one_estimator_family():
