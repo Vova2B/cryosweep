@@ -10,6 +10,7 @@ from cryosweep_core.result import Result, Provenance, Gate
 from cryosweep_core.registry import Need
 from cryosweep_core.io.loader import load_dat
 from cryosweep_core.grouping import cluster_field_setpoints
+from cryosweep_core.analyzers.hall_sigma import row_sigma_R, slope_sigma_ols
 
 E_CHG = 1.602176634e-19     # Coulomb
 from cryosweep_core.units import OE_PER_T as _OE_PER_T   # single-sourced
@@ -66,6 +67,14 @@ class HallTempPoint(BaseModel):
     # auditable from the output alone. None whenever rho_xx is also None (no zero-field
     # coverage at this setpoint, review round 1 Important #1).
     rho_xx_field_oe: float | None = None
+    # 2026-09-07 (spec §4.2): instrument repeat-noise sigma, the same four names
+    # HallTDepPoint uses so one parser reads both envelopes. A WEAKER, DIFFERENT claim
+    # than the residual sigma above -- instrument noise, not fit quality. The
+    # _instrument suffix is load-bearing.
+    slope_sigma_instrument_ohm_per_T: float | None = None
+    r_h_sigma_instrument: float | None = None
+    carrier_n_sigma_instrument: float | None = None
+    mobility_sigma_instrument: float | None = None
 
 class Capability(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -89,26 +98,43 @@ def _sha256(path):
 
 
 # ---- pure helpers ----------------------------------------------------------
-def _antisymmetrize(H, R):
+def _antisymmetrize(H, R, sigma_R=None):
     """R_asym(H) = [R(+H) - R(-H)]/2 over the positive-H overlap, via interpolation
-    (tolerant of non-symmetric / unevenly-spaced sweeps). Returns (H_pos, R_asym).
+    (tolerant of non-symmetric / unevenly-spaced sweeps). Returns (H_pos, R_asym, sigma_asym).
     NOTE: on a concatenated up+down loop the same |H| appears on both branches; np.interp
     after argsort silently averages the two branches (correct for negligible-hysteresis
-    samples; a future maintainer with a hysteretic sample should branch-separate first)."""
+    samples; a future maintainer with a hysteretic sample should branch-separate first).
+
+    sigma_R (optional, per-row, Ohm) is interpolated onto the SAME grid and combined as
+    sigma_asym = sqrt(sigma(+H)^2 + sigma(-H)^2)/2 -- the exact propagation for
+    R_asym = [R(+H) - R(-H)]/2 with independent per-branch noise. sigma_asym is None
+    whenever sigma_R is None."""
     H = np.asarray(H, float); R = np.asarray(R, float)
     m = np.isfinite(H) & np.isfinite(R)
+    S = None
+    if sigma_R is not None:
+        S = np.asarray(sigma_R, float)
+        m = m & np.isfinite(S)
     H, R = H[m], R[m]
+    if S is not None:
+        S = S[m]
     order = np.argsort(H)
     Hs, Rs = H[order], R[order]
-    hi = min(Hs.max(), -Hs.min())                 # symmetric overlap
+    hi = min(Hs.max(), -Hs.min()) if Hs.size else 0.0   # symmetric overlap
     if hi <= 0:
-        return np.empty(0), np.empty(0)
+        return np.empty(0), np.empty(0), None
     Hp = np.unique(np.abs(Hs[(Hs > 0) & (Hs <= hi)]))
     if Hp.size < 2:
-        return np.empty(0), np.empty(0)
+        return np.empty(0), np.empty(0), None
     r_pos = np.interp(Hp, Hs, Rs)
     r_neg = np.interp(-Hp, Hs, Rs)
-    return Hp, (r_pos - r_neg) / 2.0
+    s_asym = None
+    if S is not None:
+        Ss = S[order]
+        s_pos = np.interp(Hp, Hs, Ss)
+        s_neg = np.interp(-Hp, Hs, Ss)
+        s_asym = np.sqrt(s_pos ** 2 + s_neg ** 2) / 2.0
+    return Hp, (r_pos - r_neg) / 2.0, s_asym
 
 def _stage_fit(H, R, thickness_m, geometry_sign):
     """Linear fit R vs B (B=H/10000); returns slope (Ohm/T), r2, R_H = slope*thickness*sign."""
@@ -331,6 +357,10 @@ def field_sweep_points(df, cmap, cfg, hc, thickness_m, rho_fn, rho_reason) -> li
     lkey = f"resistance_ch{long_ch}" if long_ch is not None else None
     Rxx_all = (pd.to_numeric(df[cmap.logical[lkey]], errors="coerce").to_numpy(float)
                if lkey is not None and lkey in cmap.logical else None)
+    # 2026-09-07 (spec §4.2): per-row instrument sigma of the Hall channel's resistance,
+    # same estimator hall_tempdep uses. None (never a shaky number) when the std column,
+    # resistance or resistivity column is absent, or the R/rho ratio isn't constant.
+    sigma_row = row_sigma_R(df, cmap, hc.hall_channel)
     fsegs = [s for s in segment_sweeps(df, cmap, cfg) if s.swept.name == "field"]
     # KNOWN-ISSUES #19 (2026-09-02): a held temperature is decided ACROSS segments, not
     # per segment. round(T, 1) bins to a grid, and every grid has edges: on the real Hall
@@ -374,7 +404,7 @@ def field_sweep_points(df, cmap, cfg, hc, thickness_m, rho_fn, rho_reason) -> li
             mlong = np.isfinite(Hh) & np.isfinite(Rxx_seg)
             pt.field_rxx_T = (Hh[mlong] / _OE_PER_T).tolist()
             pt.R_xx_raw = Rxx_seg[mlong].tolist()
-        Hp, R_asym = _antisymmetrize(Hh, Rr)
+        Hp, R_asym, S_asym = _antisymmetrize(Hh, Rr, sigma_row[idx] if sigma_row is not None else None)
         anti = _stage_fit(Hp, R_asym, thickness_m, hc.geometry_sign) if Hp.size >= 2 else None
         if anti is not None:
             pt.antisymmetrized = True
@@ -385,6 +415,15 @@ def field_sweep_points(df, cmap, cfg, hc, thickness_m, rho_fn, rho_reason) -> li
             pt.field_asym_T = (Hp / _OE_PER_T).tolist()
             pt.R_asym = R_asym.tolist()
             pt.asym_intercept_ohm = anti["intercept"]
+            # 2026-09-07 (spec §4.2): instrument sigma, same OLS-with-intercept estimator
+            # as the residual sigma above, but driven by the file's own repeat-noise
+            # columns rather than fit scatter. None (never a shaky number) when the
+            # per-row sigma is unavailable (see row_sigma_R).
+            if S_asym is not None:
+                ssig_i = slope_sigma_ols(Hp / _OE_PER_T, S_asym)
+                pt.slope_sigma_instrument_ohm_per_T = ssig_i
+                if ssig_i is not None and thickness_m:
+                    pt.r_h_sigma_instrument = float(ssig_i * thickness_m)
         # #20 (2026-09-02): Stage C derives ONLY from the trusted Stage B R_H. The old
         # fallback to R_H_raw published a carrier density and mobility beside an empty
         # R_H cell (Stage A still carries the even-in-B admixture that antisymmetrization
@@ -402,6 +441,10 @@ def field_sweep_points(df, cmap, cfg, hc, thickness_m, rho_fn, rho_reason) -> li
             rel = pt.r_h_sigma / abs(pt.R_H)
             if pt.carrier_n is not None:
                 pt.carrier_n_sigma = float(pt.carrier_n * rel)
+        if pt.R_H and pt.r_h_sigma_instrument is not None:
+            rel_i = pt.r_h_sigma_instrument / abs(pt.R_H)
+            if pt.carrier_n is not None:
+                pt.carrier_n_sigma_instrument = float(pt.carrier_n * rel_i)
         if rho_fn is not None:
             # rho_fn(Tset) -> (rho_xx, field_oe) for a covered setpoint, else (None, None)
             # for THIS point only (review round 1 Important #1) -- a covered file can
@@ -413,6 +456,10 @@ def field_sweep_points(df, cmap, cfg, hc, thickness_m, rho_fn, rho_reason) -> li
                 pt.mobility = _mobility(pt.R_H, pt.rho_xx)
                 if (pt.mobility is not None and pt.R_H and pt.r_h_sigma is not None):
                     pt.mobility_sigma = float(pt.mobility * pt.r_h_sigma / abs(pt.R_H))
+                if (pt.mobility is not None and pt.R_H
+                        and pt.r_h_sigma_instrument is not None):
+                    pt.mobility_sigma_instrument = float(
+                        pt.mobility * pt.r_h_sigma_instrument / abs(pt.R_H))
             elif hc.longitudinal_channel is not None:
                 # This setpoint isn't covered by any zero-field row: falling back to a
                 # different setpoint's value would reintroduce the defect silently, so
@@ -441,23 +488,41 @@ def sigma_noise_warnings(points) -> list[str]:
     warning §2.1 calls "always-on". Stage A is the noisier stage (it still carries the
     even-in-H R_xx admixture, which §2.2 notes can be ~100x the Hall signal), i.e. exactly
     the branch that most needs the warning. It now tests the TRUSTED stage's sigma, the same
-    one `carrier_n_sigma`/`mobility_sigma` were already computed from, and names the stage."""
+    one `carrier_n_sigma`/`mobility_sigma` were already computed from, and names the stage.
+
+    2026-09-07 (spec §4.2): the field-sweep analyzer now also carries an instrument
+    (repeat-noise) sigma alongside the residual (fit-scatter) one, only on the antisym
+    (Stage B) stage — Stage A has no instrument family here. Where present, the instrument
+    sigma is the one tested (it is a weaker, different claim than fit scatter and the one
+    hall_tempdep already prefers for this same warning); the message always names which
+    family it tested so the two are never confused."""
     out = []
     for p in points:
-        trusted_sig = p.r_h_sigma if p.antisymmetrized else p.r_h_sigma_raw
+        inst = p.r_h_sigma_instrument
+        trusted_sig = inst if inst is not None else (
+            p.r_h_sigma if p.antisymmetrized else p.r_h_sigma_raw)
         R_H_trusted = p.R_H if p.R_H is not None else p.R_H_raw
         stage = "Stage B antisym" if p.antisymmetrized else "Stage A raw"
         if R_H_trusted and trusted_sig is not None and R_H_trusted != 0:
             rel = trusted_sig / abs(R_H_trusted)
             r2 = p.r2 if p.antisymmetrized else p.r2_raw
             if rel > _REL_SIGMA_WARN:
-                # F16 (final-review): name the sigma FAMILY. In a slice whose thesis is that
-                # residual and instrument sigma must never share a name, a bare "relative
-                # sigma" was the loose one; the hall_tdep sibling already says "relative
-                # instrument sigma". This one is the residual (fit-scatter) sigma.
-                r2txt = "n/a" if r2 is None else f"{r2:.3f}"
+                # F16 (final-review) + 2026-09-07 (spec §4.2): name the sigma FAMILY. In a
+                # slice whose thesis is that residual and instrument sigma must never share
+                # a name, a bare "relative sigma" was the loose one; the hall_tdep sibling
+                # already says "relative instrument sigma". The message must always name
+                # which one it tested — "residual sigma" (fit scatter, r² shown) or
+                # "instrument sigma" (repeat noise; r² speaks to fit quality, a different
+                # claim, so it is not quoted alongside a noise-family verdict).
+                if inst is not None:
+                    label, explain = "instrument sigma", "instrument noise, not fit quality"
+                    detail = f"({stage}, {explain})"
+                else:
+                    r2txt = "n/a" if r2 is None else f"{r2:.3f}"
+                    label = "residual sigma"
+                    detail = f"({stage} fit scatter, r² = {r2txt})"
                 out.append(f"R_H at T = {p.temperature:.1f} K carries {rel * 100:.0f}% "
-                           f"relative residual sigma ({stage} fit scatter, r² = {r2txt}) — "
+                           f"relative {label} {detail} — "
                            f"treat as noise, not a carrier density")
     return out
 

@@ -88,8 +88,26 @@ def test_stage_a_only_point_uses_raw_sigma_and_is_warned():
 def test_real_qd_300k_warning_fires_2k_silent(res_path):
     r = _analyze_hall(res_path, hall_channel=2, thickness_mm=0.1)
     noisy = [w for w in r.warnings if "treat as noise, not a carrier density" in w]
-    assert any("T = 300.0 K" in w and "154%" in w for w in noisy)
-    assert not any("T = 2.0 K" in w for w in noisy)       # 2 K point: rel sigma 0.21 %
+    # 2026-09-07 (Task 4, spec §4.2): the field-sweep analyzer now also computes an
+    # instrument sigma, and sigma_noise_warnings prefers it when present -- so this
+    # point's warning now names the INSTRUMENT family, not residual. The 300 K point in
+    # this fixture carries one UNPHYSICAL row -- Bridge 2 Resistance = -3999999.75 Ohm
+    # against a file median of order 1e-4 Ohm, with a correspondingly absurd reported
+    # Std. Dev. of 19595.9 Ohm-m -- not a real high-noise reading; the cause is a
+    # corrupted/sentinel data row, not instrument noise (owner-confirmed 2026-09-10, a
+    # separate task addresses row-level filtering; not fixed here). The sigma-weighted
+    # OLS estimator has no robustness against that single row, so it swamps the weighted
+    # sum and propagates that row's own (bogus) reported Std. Dev. straight through to an
+    # enormous instrument sigma. The residual sigma already flagged the same point as
+    # unreliable (154 %, r2 0.0021, the pre-existing oracle below) with a far less
+    # extreme number, because an OLS fit's standard error is bounded by leverage, not a
+    # raw sum of per-row sigma. This assertion is about today's data and estimator, not a
+    # claim about the row's true cause; it may need revisiting once the row is filtered.
+    assert any("T = 300.0 K" in w and "instrument sigma" in w for w in noisy)
+    assert not any("T = 2.0 K" in w for w in noisy)       # 2 K point: rel res 0.21%, inst 0.99%
+    p300 = next(p for p in r.data["points"] if p["temperature"] == 300.0)
+    assert p300["r_h_sigma"] / abs(p300["R_H"]) == pytest.approx(1.5386, rel=1e-3)  # residual oracle, unchanged
+    assert p300["r_h_sigma_instrument"] / abs(p300["R_H"]) > 100      # instrument: swamped by the glitch row
     json.dumps(r.data, allow_nan=False)
 
 

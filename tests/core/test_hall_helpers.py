@@ -9,7 +9,8 @@ def test_antisymmetrize_removes_even_component():
     B = H / 10000.0
     slope = -5.0e-4
     R = slope * B + 3.0e-5 * B**2 + 1.0e-6      # odd + even + offset
-    Hp, R_asym = _antisymmetrize(H, R)
+    Hp, R_asym, sigma_asym = _antisymmetrize(H, R)
+    assert sigma_asym is None
     assert np.all(Hp >= 0)
     # antisymmetric part recovers the pure odd term slope*B (even + offset removed)
     assert np.allclose(R_asym, slope * (Hp / 10000.0), atol=1e-9)
