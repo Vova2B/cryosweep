@@ -29,6 +29,12 @@ class HallCfg(BaseModel):
     # zero-subtracted fallback) are always low_confidence regardless of this knob.
     tdep_min_antisym_points: int = 1
     tdep_two_point_fallback: bool = True     # zero-field-subtracted 2-point R_H(T) fallback (Sub-feature B)
+    # Some PPMS runs write a first data row taken before the bridge has settled -- not a
+    # noisy reading, not a reading at all (measured: R off by 10-11 orders of magnitude
+    # from the file median). Operator-controlled, not a detector: drops the first N rows
+    # of the file before either Hall analyzer runs. Default 1 because the defect is common
+    # enough to warrant it; --skip-rows 0 restores the pre-existing (unfiltered) behaviour.
+    skip_rows: int = 1
 
 
 class ResistivityCfg(BaseModel):

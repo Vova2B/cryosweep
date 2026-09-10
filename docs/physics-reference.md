@@ -127,6 +127,28 @@ source; the physics is reproducible from the formulas here.
   scale-arbitrary, the exact failure the resistivity geometry-unset warning names. A
   constant-drive file (the shipped real Hall example: 7999.997 µA throughout) draws flat
   I and J lines; that is the correct result.
+- **Leading-row skip** (2026-09-10): some PPMS runs write a first data row taken before the
+  measurement bridge has settled — not a noisy reading, not a reading at all. Measured on a
+  real resistivity-option file: row 0 carries Bridge 2 Resistance = -4.0e6 Ohm against a file
+  median of order 1e-4 Ohm (Bridge 1 is corrupted the same way: -1.24e8 Ohm against ~1e-4 Ohm),
+  10-11 orders of magnitude off. The field-sweep `hall` analyzer's fit masks on `np.isfinite`
+  alone, so the row enters the antisymmetrized fit; on that file it moves the published
+  R_H(300 K) from a sound -2.7424e-10 (r² = 0.669, on the trend set by the 200 K neighbour's
+  -2.8812e-10, r² = 0.999) to -1.4346e-04 (r² = 0.002) — one row in 5786 moving R_H by a
+  factor of 5e5. `HallCfg.skip_rows` (CLI `--skip-rows N`, GUI field; default **1**) drops the
+  first N rows of the file before EITHER Hall analyzer runs (both take the flag so it means
+  one thing across the probe, though the temp-dep reconstruction was measured byte-identical
+  with and without the bad row — it interpolates onto fixed-field curves and the row never
+  reaches a reported point there). **This is an operator-controlled count, not a detector**:
+  no threshold decides whether to skip, and the analyzer never infers which rows are bad.
+  The count is always reported (`data.skipped_rows`), and a reversal warning fires when the
+  row the default actually dropped looks PHYSICAL — comparing its own |R| and reported
+  instrument sigma (`hall_sigma.row_sigma_R`) against the KEPT rows' median, unphysical past
+  a 1e6x ratio (measured: corrupted rows sit at ~1e11-1e13, physical ones at ~1) — naming
+  `--skip-rows 0` as the way to get it back. Defaulting to 1 moves results on every file
+  including good ones: on the real Hall file (channel 1, whose own first row is ordinary)
+  eight of nine field-sweep points are bit-identical and the ninth (300 K) moves 3.28%,
+  inside its own residual sigma band.
 
 ### Anomalous Hall effect (recognized, deferred)
 

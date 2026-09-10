@@ -242,12 +242,22 @@ def test_hall_rxy_manifest_ch1_pinned():
     # robust hi ~1.34e-3 — a plausible-sanctioned widening over the base pooled ~8.9e-4
     # (the union keeps every legit series' bulk visible by design). Pin the value so any
     # future rule change that moves this view is a deliberate decision.
+    #
+    # Re-derived (task 4b, 2026-09-10): this file's row 0 is corrupted on EVERY channel,
+    # not only the one Task 4b's brief measured -- Bridge 1 Resistance = -1.24189e+08 Ohm
+    # against a file median of order 1e-4 Ohm here (channel 1, this test's own channel),
+    # the same 10-11-order-of-magnitude defect as channel 2's. `skip_rows` now defaults to
+    # 1, so this view no longer includes that row: hi_v 1.4016761e-03 -> 1.3989679e-03
+    # (-0.19%), lo_v -3.0786611e-05 -> -3.0657648e-05 (-0.42%) -- both small because the
+    # 300 K series' robust range was already dominated by its legitimate bulk, but the new
+    # numbers are the more correct ones: the old view still had one destroyed row folded
+    # into a "legit family" robust range.
     st = GlobalStyle(width_mm=160, height_mm=120, dpi=110)
     res = _hall_result(RES_DAT, _MANIFEST_HALL)
     fig = render_kind(res, "hall_rxy_vs_B", PlotSpec(), st)
     lo_v, hi_v = fig.axes[0].get_ylim()
-    assert hi_v == pytest.approx(1.4016761434074904e-03, rel=1e-6)
-    assert lo_v == pytest.approx(-3.078661138251217e-05, rel=1e-6)
+    assert hi_v == pytest.approx(1.3989679111203353e-03, rel=1e-6)
+    assert lo_v == pytest.approx(-3.065764794026669e-05, rel=1e-6)
     plt.close(fig)
 
 

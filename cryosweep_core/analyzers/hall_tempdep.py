@@ -22,7 +22,7 @@ from cryosweep_core.registry import Need
 from cryosweep_core.io.loader import load_dat
 from cryosweep_core.io.columns import canonicalize_columns
 from cryosweep_core.grouping import cluster_field_setpoints
-from cryosweep_core.analyzers.hall_sigma import row_sigma_R, slope_sigma_ols
+from cryosweep_core.analyzers.hall_sigma import row_sigma_R, slope_sigma_ols, skip_row_warning
 
 from cryosweep_core.units import OE_PER_T as _OE_PER_T   # single-sourced
 
@@ -127,6 +127,10 @@ class HallTempDepData(BaseModel):
     dual_method: list[DualMethodPoint] = []
     capabilities: list[Capability] = []
     sample_width_m: float | None = None     # provenance of J = I/(w*t); None -> J gated off
+    # 2026-09-10 (task 4b, append-only): how many leading rows HallCfg.skip_rows dropped
+    # before this analysis ran. Same field as HallData.skipped_rows -- one flag, one
+    # meaning, across both Hall analyzers.
+    skipped_rows: int = 0
 
 
 # ---- pure helpers ----------------------------------------------------------
@@ -646,6 +650,16 @@ class HallTempDepAnalyzer:
                           errors=[f"hall channel {hc.hall_channel} resistance / T / H not found"],
                           data={"probe": "hall_tdep"}, provenance=prov)
 
+        # Task 4b: a user-controlled leading-row skip -- see hall.py's HallAnalyzer.analyze
+        # for the full rationale. Same estimator, same flag, applied here too so one
+        # config field means one thing across both Hall analyzers (the real file's bad
+        # row was measured to leave this analyzer byte-identical either way, but it still
+        # honours the flag for consistency rather than because it needs it).
+        n_skip = max(0, int(hc.skip_rows))
+        skip_warn = skip_row_warning(df, cmap, hc.hall_channel, n_skip) if n_skip else None
+        if n_skip:
+            df = df.iloc[n_skip:].reset_index(drop=True)
+
         thickness_m = (hc.thickness_mm * 1e-3) if hc.thickness_mm else None
 
         # --- longitudinal source for sigma / mobility ---
@@ -713,6 +727,7 @@ class HallTempDepAnalyzer:
             dual_method=dual,
             capabilities=caps,
             sample_width_m=width_m,
+            skipped_rows=n_skip,
         )
 
         # thickness omitted -> R_H is unscaled (all None); a missing thickness is a missing
@@ -725,12 +740,14 @@ class HallTempDepAnalyzer:
                                             "only the slope is measured",
                                      remedy={"flag": "--thickness",
                                              "example": "--thickness 0.07 --thickness-unit mm"})],
+                          warnings=[skip_warn] if skip_warn else [],
                           data=data.model_dump(mode="json"), provenance=prov)
 
         fitted = [p for p in points if p.R_H is not None]
         if not fitted:
             return Result(status="low_confidence", confidence=0.2,
-                          warnings=["no fittable T point (need >=2 antisym points)"],
+                          warnings=([skip_warn] if skip_warn else []) +
+                                   ["no fittable T point (need >=2 antisym points)"],
                           data=data.model_dump(mode="json"), provenance=prov)
 
         # D8: confidence = fraction of non-low_confidence fitted points; NEVER mean r².
@@ -749,7 +766,7 @@ class HallTempDepAnalyzer:
         # Closed O4 + hardening 2: honest aggregate warning when the instrument sigma says
         # the R_H(T) points are noise-dominated (> 50 % relative). EXPECTED to fire on the
         # real Hall file's channel (nV-level signal, median std/rho 61 %) — flag, never drop.
-        warns: list[str] = []
+        warns: list[str] = [skip_warn] if skip_warn else []
         rels = [p.r_h_sigma_instrument / abs(p.R_H) for p in fitted
                 if p.r_h_sigma_instrument is not None and p.R_H]
         noisy = [x for x in rels if x > 0.5]

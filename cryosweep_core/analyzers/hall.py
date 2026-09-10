@@ -10,7 +10,7 @@ from cryosweep_core.result import Result, Provenance, Gate
 from cryosweep_core.registry import Need
 from cryosweep_core.io.loader import load_dat
 from cryosweep_core.grouping import cluster_field_setpoints
-from cryosweep_core.analyzers.hall_sigma import row_sigma_R, slope_sigma_ols
+from cryosweep_core.analyzers.hall_sigma import row_sigma_R, slope_sigma_ols, skip_row_warning
 
 E_CHG = 1.602176634e-19     # Coulomb
 from cryosweep_core.units import OE_PER_T as _OE_PER_T   # single-sourced
@@ -91,6 +91,10 @@ class HallData(BaseModel):
     longitudinal_source: str | None = None     # "same_file:chN" | "file:<path>:chN" | None
     points: list[HallTempPoint] = []
     capabilities: list[Capability] = []
+    # 2026-09-10 (task 4b, append-only): how many leading rows HallCfg.skip_rows dropped
+    # before this analysis ran. Always present -- a silent skip is the one thing the
+    # design must not do, so a reader never has to be told separately what was excluded.
+    skipped_rows: int = 0
 
 
 def _sha256(path):
@@ -573,11 +577,24 @@ class HallAnalyzer:
             return Result(status="error",
                           errors=[f"hall channel {hc.hall_channel} resistance column / T / H not found"],
                           data={"probe": "hall"}, provenance=prov)
+        # Task 4b: a user-controlled leading-row skip, not a detector. Some PPMS runs
+        # write a first data row taken before the bridge has settled -- not a noisy
+        # reading, not a reading at all (measured: R off by 10-11 orders of magnitude
+        # from the file median). skip_rows drops the first N rows of the WHOLE file
+        # (every column, not just this channel) before anything else runs; the operator
+        # decides N, never a threshold. The count and, when the dropped row looked
+        # physical, a reversal warning both go out no matter what the rest of the file
+        # yields, so both are computed before df is sliced.
+        n_skip = max(0, int(hc.skip_rows))
+        skip_warn = skip_row_warning(df, cmap, hc.hall_channel, n_skip) if n_skip else None
+        if n_skip:
+            df = df.iloc[n_skip:].reset_index(drop=True)
         T = pd.to_numeric(df[cmap.logical["temperature"]], errors="coerce").to_numpy(float)
         H = pd.to_numeric(df[cmap.logical["field"]], errors="coerce").to_numpy(float)
         Rxy = pd.to_numeric(df[cmap.logical[rkey]], errors="coerce").to_numpy(float)
         if np.isfinite(Rxy).sum() == 0:
             return Result(status="error", errors=[f"hall channel {hc.hall_channel} is empty"],
+                          warnings=[skip_warn] if skip_warn else [],
                           data={"probe": "hall"}, provenance=prov)
         thickness_m = (hc.thickness_mm * 1e-3) if hc.thickness_mm else None
 
@@ -596,12 +613,12 @@ class HallAnalyzer:
 
         if not points:
             return Result(status="low_confidence", confidence=0.2,
-                          warnings=["no field loops found to fit"],
+                          warnings=([skip_warn] if skip_warn else []) + ["no field loops found to fit"],
                           data={"probe": "hall", "reason": "no field loops"}, provenance=prov)
         caps = _capabilities(points, thickness_m is not None, long_source, rho_reason)
         hd = HallData(probe="hall", hall_channel=hc.hall_channel, thickness_m=thickness_m,
                       geometry_sign=hc.geometry_sign, longitudinal_source=long_source,
-                      points=points, capabilities=caps)
+                      points=points, capabilities=caps, skipped_rows=n_skip)
         r2s = [p.r2 for p in points if p.r2 is not None]
         if thickness_m is None:
             # A missing thickness is a missing USER INPUT, not a broken file (same rule as
@@ -614,6 +631,7 @@ class HallAnalyzer:
                                             "only the slope is measured",
                                      remedy={"flag": "--thickness",
                                              "example": "--thickness 0.07 --thickness-unit mm"})],
+                          warnings=[skip_warn] if skip_warn else [],
                           data=hd.model_dump(mode="json"), provenance=prov)
         elif r2s:
             conf = float(np.mean(r2s)); status = "ok" if conf >= cfg.confidence_min else "low_confidence"
@@ -622,5 +640,5 @@ class HallAnalyzer:
         return Result(status=status, confidence=conf,
                       confidence_parts={"detector": 1.0, "segmentation": 1.0,
                                         "fit": (float(np.mean(r2s)) if r2s else None)},
-                      warnings=sigma_noise_warnings(points),
+                      warnings=([skip_warn] if skip_warn else []) + sigma_noise_warnings(points),
                       data=hd.model_dump(mode="json"), provenance=prov)

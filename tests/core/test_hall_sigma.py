@@ -63,8 +63,15 @@ def test_stage_a_only_point_uses_raw_sigma_and_is_warned():
     SURVIVED the full suite because nothing reached this branch; this test kills it.
 
     `hall_onesided_synth.dat` is positive-field-only, so `_antisymmetrize` returns empty.
-    Oracles measured through the shipped path (seed 7, thickness 0.1 mm)."""
-    r = _analyze_hall(FIX / "hall_onesided_synth.dat", hall_channel=1, thickness_mm=0.1)
+    Oracles measured through the shipped path (seed 7, thickness 0.1 mm).
+
+    skip_rows=0: this fixture's own first row is an ordinary measurement (not the
+    leading-row defect task 4b addresses), and this test is about Stage A's raw-sigma
+    computation, not about row-skipping -- pinning skip_rows=0 here keeps that oracle
+    decoupled from a default introduced for an unrelated reason (task 4b's own tests
+    exercise the default itself)."""
+    r = _analyze_hall(FIX / "hall_onesided_synth.dat", hall_channel=1, thickness_mm=0.1,
+                       skip_rows=0)
     pts = r.data["points"]
     assert len(pts) == 1
     p = pts[0]
@@ -86,29 +93,51 @@ def test_stage_a_only_point_uses_raw_sigma_and_is_warned():
 
 
 def test_real_qd_300k_warning_fires_2k_silent(res_path):
-    r = _analyze_hall(res_path, hall_channel=2, thickness_mm=0.1)
+    """Re-derived (task 4b, 2026-09-10). This test used to pin the exact damage described
+    above -- the 300 K point's OWN Bridge 2 Resistance row 0 (-3999999.75 Ohm against a
+    file median of order 1e-4 Ohm, reported Std. Dev. 19595.9 Ohm-m) was not a noisy
+    reading, it was not a reading at all, and the sigma-weighted OLS estimator had no
+    robustness against it. Task 4b's `skip_rows` (default 1) now drops that row before
+    either Hall analyzer runs, so the field-sweep `hall` command no longer reproduces the
+    damage by default. The two things this test asserted are now the two things
+    `--skip-rows` controls, so both halves are asserted: the default gives a SOUND 300 K
+    point, and `--skip-rows 0` reproduces the exact old pathological numbers -- proving
+    the flag actually controls the behaviour rather than the data having quietly changed
+    underneath.
+    """
+    r = _analyze_hall(res_path, hall_channel=2, thickness_mm=0.1)     # skip_rows defaults to 1
+    assert r.data["skipped_rows"] == 1
     noisy = [w for w in r.warnings if "treat as noise, not a carrier density" in w]
-    # 2026-09-07 (Task 4, spec §4.2): the field-sweep analyzer now also computes an
-    # instrument sigma, and sigma_noise_warnings prefers it when present -- so this
-    # point's warning now names the INSTRUMENT family, not residual. The 300 K point in
-    # this fixture carries one UNPHYSICAL row -- Bridge 2 Resistance = -3999999.75 Ohm
-    # against a file median of order 1e-4 Ohm, with a correspondingly absurd reported
-    # Std. Dev. of 19595.9 Ohm-m -- not a real high-noise reading; the cause is a
-    # corrupted/sentinel data row, not instrument noise (owner-confirmed 2026-09-10, a
-    # separate task addresses row-level filtering; not fixed here). The sigma-weighted
-    # OLS estimator has no robustness against that single row, so it swamps the weighted
-    # sum and propagates that row's own (bogus) reported Std. Dev. straight through to an
-    # enormous instrument sigma. The residual sigma already flagged the same point as
-    # unreliable (154 %, r2 0.0021, the pre-existing oracle below) with a far less
-    # extreme number, because an OLS fit's standard error is bounded by leverage, not a
-    # raw sum of per-row sigma. This assertion is about today's data and estimator, not a
-    # claim about the row's true cause; it may need revisiting once the row is filtered.
-    assert any("T = 300.0 K" in w and "instrument sigma" in w for w in noisy)
-    assert not any("T = 2.0 K" in w for w in noisy)       # 2 K point: rel res 0.21%, inst 0.99%
+    # With the unphysical row gone the 300 K point is no longer noise-dominated (its own
+    # relative sigmas, ~5.0% residual / ~3.2% instrument, sit in the same single-digit-
+    # percent band as the other eight temperatures, 0.2-1.2%) -- the >50% warning threshold
+    # never fires for it, and the row was plainly unphysical so no reversal warning fires
+    # either (the default did its job silently).
+    assert not any("T = 300.0 K" in w for w in noisy)
+    assert not any("T = 2.0 K" in w for w in noisy)       # 2 K point: unaffected either way
+    assert not any("looks physical" in w for w in r.warnings)
     p300 = next(p for p in r.data["points"] if p["temperature"] == 300.0)
-    assert p300["r_h_sigma"] / abs(p300["R_H"]) == pytest.approx(1.5386, rel=1e-3)  # residual oracle, unchanged
-    assert p300["r_h_sigma_instrument"] / abs(p300["R_H"]) > 100      # instrument: swamped by the glitch row
+    assert p300["n_points"] == 301
+    # on the trend set by the 200 K neighbour (R_H=-2.8812e-10, r2=0.99888) -- a sound
+    # measurement, not the destroyed one this test used to pin.
+    assert p300["R_H"] == pytest.approx(-2.7424e-10, rel=1e-3)
+    assert p300["r2"] == pytest.approx(0.66948, abs=2e-4)
+    assert p300["r_h_sigma"] / abs(p300["R_H"]) == pytest.approx(0.0501, rel=1e-2)
+    assert p300["r_h_sigma_instrument"] / abs(p300["R_H"]) == pytest.approx(0.0317, rel=1e-2)
     json.dumps(r.data, allow_nan=False)
+
+    # --skip-rows 0 must reproduce the OLD numbers this test used to pin, EXACTLY -- the
+    # flag controls this behaviour; the underlying data and estimator are unchanged.
+    r_unfiltered = _analyze_hall(res_path, hall_channel=2, thickness_mm=0.1, skip_rows=0)
+    assert r_unfiltered.data["skipped_rows"] == 0
+    noisy_old = [w for w in r_unfiltered.warnings if "treat as noise, not a carrier density" in w]
+    assert any("T = 300.0 K" in w and "instrument sigma" in w for w in noisy_old)
+    assert not any("T = 2.0 K" in w for w in noisy_old)
+    p300_old = next(p for p in r_unfiltered.data["points"] if p["temperature"] == 300.0)
+    assert p300_old["n_points"] == 302
+    assert p300_old["r_h_sigma"] / abs(p300_old["R_H"]) == pytest.approx(1.5386, rel=1e-3)
+    assert p300_old["r_h_sigma_instrument"] / abs(p300_old["R_H"]) > 100
+    json.dumps(r_unfiltered.data, allow_nan=False)
 
 
 # ================= Task 9: hall_tempdep residual + instrument sigma (closed O4) ==========
