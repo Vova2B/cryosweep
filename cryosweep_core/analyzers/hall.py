@@ -351,8 +351,13 @@ def _r_h_ladder(Hp, R_asym, S_asym, thickness_m, geometry_sign):
                                   r_h_sigma_instrument=sig_inst)
         sig = resolved_sigma(rung_pt)
         unresolved = not is_resolved(rung_pt)
-        rungs.append({"f": f, "R_H": fit["R_H"], "sigma": sig, "r2": fit["r2"],
-                      "n_points": fit["n_points"], "unresolved": unresolved})
+        # Task 8: which family backed this rung's sigma -- exported verbatim in the
+        # sibling .hall_ladder.csv so a reader is never left to guess from magnitude.
+        # Same precedence resolved_sigma() applies (instrument preferred): sig_inst is
+        # None whenever this window's rung had no usable instrument sigma at all.
+        sigma_kind = "instrument" if sig_inst is not None else "residual"
+        rungs.append({"f": f, "R_H": fit["R_H"], "sigma": sig, "sigma_kind": sigma_kind,
+                      "r2": fit["r2"], "n_points": fit["n_points"], "unresolved": unresolved})
     good = [r for r in rungs if not r["unresolved"]]
     if len(good) < 2:
         # A rung whose own sigma is unresolved is not a measurement, and several such rungs

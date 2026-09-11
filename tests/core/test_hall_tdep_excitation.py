@@ -102,7 +102,7 @@ def test_hall_tdep_export_carries_excitation_and_j(tmp_path):
     r = _run(width_mm=2.0)
     paths = export_result(r, tmp_path / "td")
     with open(paths["points"]) as f:
-        rows = list(csv.DictReader(f))
+        rows = list(csv.DictReader(ln for ln in f if not ln.startswith("#")))
     assert rows, "the hall_tdep points CSV must not be an empty shell"
     assert "excitation (uA)" in rows[0]
     assert "current_density_J (A/m^2)" in rows[0]

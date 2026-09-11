@@ -66,7 +66,8 @@ def test_declined_csv_cells_are_blank_with_flag(tmp_path):
     res = _analyze(tmp_path)
     outs = export_result(res, tmp_path / "out")
     with open(outs["points"]) as f:
-        rows = {float(r["temperature (K)"]): r for r in csv.DictReader(f)}
+        rows = {float(r["temperature (K)"]): r
+                for r in csv.DictReader(ln for ln in f if not ln.startswith("#"))}
     bad = rows[200.0]
     assert bad["R_H (m^3/C)"] == "" and bad["carrier_n (1/m^3)"] == ""
     assert bad["carrier_type"] == "" and bad["mobility (m^2/Vs)"] == ""

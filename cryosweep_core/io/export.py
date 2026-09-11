@@ -4,6 +4,25 @@ from cryosweep_core.fitting.transport import POWER_LAW_DECLINE_FLAGS, ARRHENIUS_
 from cryosweep_core.fitting.heat_capacity import LOWT_LATTICE_KEYS
 
 
+def _write_warning_block(stem, csv_path, warnings):
+    """Run-level warnings survive export BOTH ways (owner, 2026-09-07): a leading '#'
+    block that cannot be separated from the data, and a sibling .warnings.txt that a
+    spreadsheet cannot mangle.
+
+    NB Python's csv module has NO comment support -- csv.DictReader would take the first
+    '#' line as the header row -- so every reader in this repo strips '#' lines first.
+    pandas needs comment="#". This is a documented parse-contract change.
+    """
+    if not warnings:
+        return None
+    body = "".join(f"# {w}\n" for w in warnings)
+    p = pathlib.Path(csv_path)
+    p.write_text(body + p.read_text())
+    wp = stem.with_suffix(".warnings.txt")
+    wp.write_text("\n".join(warnings) + "\n")
+    return str(wp)
+
+
 def _export_hall(result, stem) -> dict:
     d = result.data
     out = {}
@@ -11,19 +30,65 @@ def _export_hall(result, stem) -> dict:
     pp = stem.with_suffix(".points.csv")
     # #20: `derived_flags` appended after the existing columns (name-keyed safe) — the
     # ";".join encoding matches power_law_flags/kappa_ph_flags.
+    # 2026-09-07 (spec §4.7) appended after the existing eleven, so name-keyed readers
+    # are unaffected. POSITIONAL readers (Origin templates) break -- the same trade-off
+    # documented for the TTO 9 -> 20 column change. Controller audit after Task 7: the
+    # ladder spread is named `r_h_window_spread_not_an_error_bar`, NOT `r_h_spread` --
+    # a column called r_h_spread sitting beside two columns called r_h_sigma* is the
+    # exact accident the VSM ladder export's own comment records happening for real
+    # (a reader publishing theta = -50.27 +- 0.99 K because a spread sat in a
+    # sigma-shaped column). The rungs themselves go to a sibling .hall_ladder.csv below.
     fields = ["temperature (K)", "R_H (m^3/C)", "R_H_raw (m^3/C)", "slope (Ohm/T)", "r2",
               "antisymmetrized", "carrier_n (1/m^3)", "carrier_type", "rho_xx (Ohm*m)",
-              "mobility (m^2/Vs)", "derived_flags"]
+              "mobility (m^2/Vs)", "derived_flags",
+              "n_points", "r_h_sigma (m^3/C)", "r_h_sigma_instrument (m^3/C)",
+              "carrier_n_sigma (1/m^3)", "carrier_n_sigma_instrument (1/m^3)",
+              "mobility_sigma (m^2/Vs)", "mobility_sigma_instrument (m^2/Vs)",
+              "sigma_zero_dof", "rho_xx_field_oe (Oe)",
+              "r_h_window_spread_not_an_error_bar (m^3/C)", "thickness_m", "geometry_sign",
+              "carrier_n_withheld (1/m^3)", "carrier_type_withheld",
+              "mobility_withheld (m^2/Vs)"]
     with pp.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields); w.writeheader()
         for p in pts:
+            withheld = p.get("withheld") or {}
             w.writerow({"temperature (K)": p.get("temperature"), "R_H (m^3/C)": p.get("R_H"),
                         "R_H_raw (m^3/C)": p.get("R_H_raw"), "slope (Ohm/T)": p.get("slope_ohm_per_T"),
                         "r2": p.get("r2"), "antisymmetrized": p.get("antisymmetrized"),
                         "carrier_n (1/m^3)": p.get("carrier_n"), "carrier_type": p.get("carrier_type"),
                         "rho_xx (Ohm*m)": p.get("rho_xx"), "mobility (m^2/Vs)": p.get("mobility"),
-                        "derived_flags": ";".join(p.get("derived_flags") or [])})
+                        "derived_flags": ";".join(p.get("derived_flags") or []),
+                        "n_points": p.get("n_points"),
+                        "r_h_sigma (m^3/C)": p.get("r_h_sigma"),
+                        "r_h_sigma_instrument (m^3/C)": p.get("r_h_sigma_instrument"),
+                        "carrier_n_sigma (1/m^3)": p.get("carrier_n_sigma"),
+                        "carrier_n_sigma_instrument (1/m^3)": p.get("carrier_n_sigma_instrument"),
+                        "mobility_sigma (m^2/Vs)": p.get("mobility_sigma"),
+                        "mobility_sigma_instrument (m^2/Vs)": p.get("mobility_sigma_instrument"),
+                        "sigma_zero_dof": p.get("sigma_zero_dof"),
+                        "rho_xx_field_oe (Oe)": p.get("rho_xx_field_oe"),
+                        "r_h_window_spread_not_an_error_bar (m^3/C)": p.get("r_h_spread"),
+                        "thickness_m": d.get("thickness_m"), "geometry_sign": d.get("geometry_sign"),
+                        "carrier_n_withheld (1/m^3)": withheld.get("carrier_n"),
+                        "carrier_type_withheld": withheld.get("carrier_type"),
+                        "mobility_withheld (m^2/Vs)": withheld.get("mobility")})
     out["points"] = str(pp)
+    # Controller audit (d): the ladder RUNGS, not only their spread, one row per
+    # (temperature, rung) -- a lone spread number says the window moved R_H by some
+    # amount but not which window did it or how many rungs were excluded as unresolved.
+    # A file/point with no ladder produces no sibling at all (`_export_mag`'s `if ladder:`
+    # idiom), so nothing changes for a gated run or for hall_tdep (no ladder concept).
+    ladder_rows = [(p.get("temperature"), r) for p in pts for r in (p.get("r_h_ladder") or [])]
+    if ladder_rows:
+        lp = stem.with_suffix(".hall_ladder.csv")
+        with lp.open("w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["temperature (K)", "f", "R_H (m^3/C)", "sigma (m^3/C)",
+                        "sigma_kind", "r2", "n_points", "unresolved"])
+            for T, r in ladder_rows:
+                w.writerow([T, r.get("f"), r.get("R_H"), r.get("sigma"), r.get("sigma_kind"),
+                            r.get("r2"), r.get("n_points"), r.get("unresolved")])
+        out["hall_ladder"] = str(lp)
     cap = stem.with_suffix(".capabilities.csv")
     with cap.open("w", newline="") as f:
         w = csv.writer(f); w.writerow(["name", "applicable", "reason"])
@@ -35,6 +100,9 @@ def _export_hall(result, stem) -> dict:
             "longitudinal_source": d.get("longitudinal_source"), "config": result.provenance.config}
     mp = stem.with_suffix(".meta.json"); mp.write_text(json.dumps(meta, indent=2, sort_keys=True))
     out["meta"] = str(mp)
+    wp = _write_warning_block(stem, pp, result.warnings)
+    if wp:
+        out["warnings"] = wp
     return out
 
 
@@ -47,12 +115,26 @@ def _export_hall_tdep(result, stem) -> dict:
     out = {}
     pts = d.get("points", [])
     pp = stem.with_suffix(".points.csv")
+    # 2026-09-07 (spec §4.7): the original twelve keep their names and order; the
+    # appended set mirrors _export_hall's (sigma families named apart, withheld values,
+    # fit provenance) minus the ladder columns -- hall_tdep has no ladder concept at all
+    # (controller audit, scope guard). `derived_flags` previously reached NO column here
+    # (global note #2), so the withheld-value reason had nowhere to land.
     fields = ["temperature (K)", "R_H (m^3/C)", "r_h_method", "r2", "antisym_points",
               "carrier_n (1/m^3)", "carrier_type", "rho_xx (Ohm*m)", "mobility (m^2/Vs)",
-              "low_confidence", "excitation (uA)", "current_density_J (A/m^2)"]
+              "low_confidence", "excitation (uA)", "current_density_J (A/m^2)",
+              "derived_flags",
+              "r_h_sigma (m^3/C)", "r_h_sigma_instrument (m^3/C)",
+              "carrier_n_sigma (1/m^3)", "carrier_n_sigma_instrument (1/m^3)",
+              "mobility_sigma (m^2/Vs)", "mobility_sigma_instrument (m^2/Vs)",
+              "sigma_zero_dof", "rho_xx_field_oe (Oe)",
+              "thickness_m", "geometry_sign",
+              "carrier_n_withheld (1/m^3)", "carrier_type_withheld",
+              "mobility_withheld (m^2/Vs)"]
     with pp.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields); w.writeheader()
         for p_ in pts:
+            withheld = p_.get("withheld") or {}
             w.writerow({"temperature (K)": p_.get("temperature"),
                         "R_H (m^3/C)": p_.get("R_H"),
                         "r_h_method": p_.get("r_h_method"),
@@ -64,7 +146,20 @@ def _export_hall_tdep(result, stem) -> dict:
                         "mobility (m^2/Vs)": p_.get("mobility"),
                         "low_confidence": p_.get("low_confidence"),
                         "excitation (uA)": p_.get("excitation_uA"),
-                        "current_density_J (A/m^2)": p_.get("current_density_J")})
+                        "current_density_J (A/m^2)": p_.get("current_density_J"),
+                        "derived_flags": ";".join(p_.get("derived_flags") or []),
+                        "r_h_sigma (m^3/C)": p_.get("r_h_sigma"),
+                        "r_h_sigma_instrument (m^3/C)": p_.get("r_h_sigma_instrument"),
+                        "carrier_n_sigma (1/m^3)": p_.get("carrier_n_sigma"),
+                        "carrier_n_sigma_instrument (1/m^3)": p_.get("carrier_n_sigma_instrument"),
+                        "mobility_sigma (m^2/Vs)": p_.get("mobility_sigma"),
+                        "mobility_sigma_instrument (m^2/Vs)": p_.get("mobility_sigma_instrument"),
+                        "sigma_zero_dof": p_.get("sigma_zero_dof"),
+                        "rho_xx_field_oe (Oe)": p_.get("rho_xx_field_oe"),
+                        "thickness_m": d.get("thickness_m"), "geometry_sign": d.get("geometry_sign"),
+                        "carrier_n_withheld (1/m^3)": withheld.get("carrier_n"),
+                        "carrier_type_withheld": withheld.get("carrier_type"),
+                        "mobility_withheld (m^2/Vs)": withheld.get("mobility")})
     out["points"] = str(pp)
     cap = stem.with_suffix(".capabilities.csv")
     with cap.open("w", newline="") as f:
@@ -79,6 +174,9 @@ def _export_hall_tdep(result, stem) -> dict:
             "config": result.provenance.config}
     mp = stem.with_suffix(".meta.json"); mp.write_text(json.dumps(meta, indent=2, sort_keys=True))
     out["meta"] = str(mp)
+    wp = _write_warning_block(stem, pp, result.warnings)
+    if wp:
+        out["warnings"] = wp
     return out
 
 
