@@ -15,7 +15,6 @@ excluded as unresolved -- go to a sibling .hall_ladder.csv, never silently.
 import csv
 import pathlib
 import numpy as np
-import pytest
 from cryosweep_core.io.loader import load_dat
 from cryosweep_core.config import RunConfig
 from cryosweep_core.analyzers.hall import HallAnalyzer
@@ -80,19 +79,46 @@ def test_run_warnings_reach_both_the_comment_block_and_a_sibling_file(
     assert "noise" in pathlib.Path(out["warnings"]).read_text()
 
 
-def test_withheld_values_are_blank_cells_never_zero(tmp_path, hall_synth_path):
+_UNRES_HDR = ("[Header]\nBYAPP, Resistivity\nINFO, unres_synth, SAMPLE\n[Data]\n"
+              "Temperature (K),Magnetic Field (Oe),Bridge 1 Resistance (Ohms),"
+              "Bridge 1 Resistivity (Ohm-m),Bridge 1 Std. Dev. (Ohm-m),"
+              "Bridge 2 Resistance (Ohms),Bridge 2 Resistivity (Ohm-m)\n")
+
+
+def _write_unresolved_field_sweep(tmp_path, name):
+    """Same idiom as tests/core/test_hall_unresolved_decline.py's own fixture: a tiny
+    Hall slope beside huge declared instrument noise forces sigma_inst >= |R_H|, so
+    decline_unresolved() fires deterministically at this file's one temperature (10 K).
+    _export_hall is the exporter under test here -- the tdep sibling below covers
+    _export_hall_tdep, and the two are separate functions with separate withheld-column
+    code, so neither stands in for the other."""
+    rows = []
+    for b in np.arange(-20000.0, 20000.1, 250.0):
+        rxy = 1e-3 + 1e-9 * (b / 1e4)
+        rows.append(f"10.0000,{b:.1f},{rxy:.10e},{rxy / 1000.0:.10e},{1e-4:.10e},"
+                    f"{1e-3:.10e},{1e-6:.10e}")
+    rows += [f"{t:.4f},20000.0,1.5e-3,1.5e-6,{1e-4:.10e},1e-3,1e-6"
+             for t in np.arange(11.0, 51.0, 2.0)]
+    p = tmp_path / name
+    p.write_text(_UNRES_HDR + "\n".join(rows) + "\n")
+    return p
+
+
+def test_field_sweep_withheld_values_are_blank_cells_never_zero(tmp_path):
     """decline_unresolved() withholds carrier_n/carrier_type/mobility on a point whose
     sigma >= |R_H|; the withheld copy must reach its own *_withheld column, and the live
     columns for that point must be blank, not 0 / "0" / "" that a spreadsheet would coerce
-    to zero."""
-    res, out = _export(tmp_path, hall_synth_path)
+    to zero. Exercises _export_hall directly (the field-sweep exporter): hall_synth.dat
+    resolves every point, so a test that only used it would never run this path -- hence
+    a dedicated, deterministically-declining fixture instead of a skip."""
+    res, out = _export(tmp_path, _write_unresolved_field_sweep(tmp_path, "hall_export_unresolved.dat"))
     withheld_pts = [p for p in res.data["points"] if p["withheld"] is not None]
-    if not withheld_pts:
-        pytest.skip("this fixture resolves every point; covered by the tdep case instead")
+    assert withheld_pts, "this fixture is measured to withhold its one point (T=10 K)"
     rows = _rows(out["points"])
     row = next(r for r in rows if float(r["temperature (K)"]) == withheld_pts[0]["temperature"])
     assert row["carrier_n (1/m^3)"] == "" and row["mobility (m^2/Vs)"] == ""
     assert row["carrier_n_withheld (1/m^3)"] != ""
+    assert "r_h_unresolved" in row["derived_flags"]
 
 
 # ---- hall_tdep: same sigma/provenance discipline, no ladder ----------------------------
@@ -195,6 +221,34 @@ def test_ladder_sibling_names_instrument_sigma_kind_and_marks_unresolved_rungs(t
     assert ladder_rows
     assert all(r["sigma_kind"] == "instrument" for r in ladder_rows)
     assert all(r["unresolved"] == "True" for r in ladder_rows)
+
+
+def test_ladder_sigma_kind_is_neither_family_when_nothing_resolves():
+    """Fix round 1 (Minor): `sigma_kind = "instrument" if sig_inst is not None else
+    "residual"` labels a rung "residual" even when the residual sigma is ALSO None --
+    i.e. when the exported `sigma` cell is blank and NEITHER family supplied a number. A
+    reader would then see sigma_kind=residual beside a blank sigma and wrongly conclude
+    the residual family was tried and came back empty.
+
+    Constructed directly against `_r_h_ladder` (same precedent as
+    test_hall_unresolved_decline.py testing resolved_sigma() directly): a window whose
+    positions pass the >= _LADDER_MIN_POINTS gate but whose R_asym/S_asym entries are
+    mostly NaN drops to only 2 FINITE points once _stage_fit applies its own isfinite
+    mask -- below its own n<3 floor, so residual r_h_sigma is None (zero residual DOF);
+    and slope_sigma_ols declines outright on any NaN in its inputs, so the instrument
+    sigma is None too. Neither family produced a number for this rung.
+    """
+    from cryosweep_core.analyzers.hall import _r_h_ladder
+
+    Hp = np.array([1000., 2000., 3000., 4000., 5000., 6000.])
+    R_asym = np.array([1e-3, np.nan, np.nan, np.nan, 1.5e-3, np.nan])
+    S_asym = np.array([1e-6, np.nan, np.nan, np.nan, 1e-6, np.nan])
+    rungs, _spread, _flags = _r_h_ladder(Hp, R_asym, S_asym, thickness_m=0.1, geometry_sign=1)
+    assert rungs, "the f=1.0 window alone has 6 >= _LADDER_MIN_POINTS positions"
+    full = rungs[0]
+    assert full["sigma"] is None
+    assert full["sigma_kind"] is None
+    assert full["unresolved"] is True
 
 
 def test_ladder_thin_flag_round_trips_through_the_existing_flags_column(tmp_path):

@@ -355,7 +355,16 @@ def _r_h_ladder(Hp, R_asym, S_asym, thickness_m, geometry_sign):
         # sibling .hall_ladder.csv so a reader is never left to guess from magnitude.
         # Same precedence resolved_sigma() applies (instrument preferred): sig_inst is
         # None whenever this window's rung had no usable instrument sigma at all.
-        sigma_kind = "instrument" if sig_inst is not None else "residual"
+        # Fix round 1 (Minor): keyed off `sig` itself, not off sig_inst alone -- a window
+        # can drop below _stage_fit's own n<3 floor internally (its isfinite mask can
+        # discard positions this loop's cruder window-count already accepted), leaving
+        # BOTH families None. Calling that "residual" would claim a family was tried and
+        # came back empty, which is not what happened; sigma_kind is None whenever
+        # neither family produced a number.
+        if sig is None:
+            sigma_kind = None
+        else:
+            sigma_kind = "instrument" if sig_inst is not None else "residual"
         rungs.append({"f": f, "R_H": fit["R_H"], "sigma": sig, "sigma_kind": sigma_kind,
                       "r2": fit["r2"], "n_points": fit["n_points"], "unresolved": unresolved})
     good = [r for r in rungs if not r["unresolved"]]
