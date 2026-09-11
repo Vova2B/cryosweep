@@ -166,10 +166,20 @@ def test_analyze_real_file_sparsity_edge(hall_real_path):
     cfg = RunConfig(hall={"hall_channel": 1, "thickness_mm": 0.07})
     res = HallTempDepAnalyzer().analyze(rt, cfg)
     # #18 (2026-09-02): this test previously pinned the DEFECT — status low_confidence /
-    # confidence 0.0 with 121 single-pair points disowned as "2point". A single ± pair is
-    # an antisymmetrization; the result was always sound and now says so.
-    assert res.status == "ok"
-    assert res.confidence == 1.0
+    # confidence 0.0 with 121 single-pair points disowned as "2point". A single ± pair IS
+    # an antisymmetrization, and the per-point structure asserted below (antisym counts,
+    # low_confidence flags, carrier_type withholding) is still sound and unaffected.
+    # Repinned (spec §4.5, 2026-09): the AGGREGATE status/confidence moved again, for an
+    # unrelated reason -- confidence used to be antisym_fraction alone (1.0 whenever every
+    # fitted point simply cleared tdep_min_antisym_points), which said nothing about how
+    # many R_H are actually resolved from zero. It is now min(fit_quality, resolved_fraction)
+    # and neither ceiling is 1.0 here: (a) every r2 this file ever reported came from a
+    # 2-point antisym fit and is now correctly None (zero residual DOF, not a measurement),
+    # so fit_quality defaults to 1.0; (b) only 66/138 points have sigma < |R_H| (the other
+    # 72 are the same real-file decline test_hall_unresolved_decline.py measures), so
+    # resolved_fraction = 66/138 = 0.4783, below the 0.5 threshold.
+    assert res.status == "low_confidence"
+    assert res.confidence == pytest.approx(66 / 138)
     fitted = [p for p in res.data["points"] if p["R_H"] is not None]
     anti = [p for p in fitted if p["r_h_method"] == "antisym"]
     two = [p for p in fitted if p["r_h_method"] == "2point"]
@@ -438,14 +448,23 @@ def _write_single_pair_dat(tmp_path):
     return p
 
 
-def test_single_pair_file_is_ok_with_rebased_confidence(tmp_path):
+def test_single_pair_file_fits_cleanly_but_is_unresolved_without_a_sigma_column(tmp_path):
     # #18 end-to-end: a file whose every T point rests on one ± pair is a sound
-    # measurement and must not report confidence 0.0 / low_confidence.
+    # measurement (r_h_method == "antisym", not low_confidence, exact R_H below) --
+    # that part of #18's original claim is unaffected and re-asserted below.
+    # Repinned (spec §4.5, 2026-09): the AGGREGATE status/confidence is no longer 1.0/"ok"
+    # for an unrelated reason -- this fixture carries no Std. Dev. column, so no point has
+    # EITHER sigma family (r_h_sigma stays None: a single-pair fit has zero residual DOF;
+    # r_h_sigma_instrument stays None: there is no std column to derive it from). Spec
+    # §4.1: "an unquantified uncertainty is not evidence of a small one" -- every point is
+    # therefore unresolved, resolved_fraction is 0.0, and confidence = min(fit_quality, 0.0)
+    # = 0.0 regardless of how good the fit itself is.
     rt = load_dat(_write_single_pair_dat(tmp_path))
     cfg = RunConfig.load(hall={"hall_channel": 1, "thickness_mm": 0.1})
     res = HallTempDepAnalyzer().analyze(rt, cfg)
-    assert res.status == "ok"
-    assert res.confidence == 1.0
+    assert res.status == "low_confidence"
+    assert res.confidence == 0.0
+    assert res.confidence_parts["resolved"] == 0.0
     pts = [p for p in res.data["points"] if p["R_H"] is not None]
     assert pts and all(p["r_h_method"] == "antisym" for p in pts)
     assert all(p["antisym_points"] == 1 for p in pts)

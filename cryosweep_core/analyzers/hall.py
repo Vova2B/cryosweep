@@ -197,6 +197,11 @@ def _stage_fit(H, R, thickness_m, geometry_sign):
         out["slope_sigma_ohm_per_T"] = None
         out["r_h_sigma"] = None
         out["sigma_zero_dof"] = True
+        # Spec §4.5(a): the same zero-residual-DOF fact that makes sigma dishonest at 0.0
+        # makes r2 dishonest at 1.0 -- a line through two points fits them exactly no
+        # matter how noisy the underlying data is, so r2 == 1.0 here is a tautology, not
+        # a measurement.
+        out["r2"] = None
     else:
         ssig = float(fit.sigma["slope"])
         ssig = ssig if np.isfinite(ssig) else None
@@ -695,9 +700,12 @@ class HallAnalyzer:
         if thickness_m is None:
             # A missing thickness is a missing USER INPUT, not a broken file (same rule as
             # hall_channel above and molar_mass on VSM): gate with a remedy, and KEEP the
-            # slope-only points in data so the work is not discarded.
+            # slope-only points in data so the work is not discarded. `_stage_fit` computes
+            # r2 without needing a thickness (only R_H does), so r2s is genuinely populated
+            # here -- report the real mean, not a hardcoded None (Task 2 review, carried).
             return Result(status="gated", confidence=0.4,
-                          confidence_parts={"detector": 1.0, "segmentation": 1.0, "fit": None},
+                          confidence_parts={"detector": 1.0, "segmentation": 1.0,
+                                            "fit": (float(np.mean(r2s)) if r2s else None)},
                           gate=[Gate(need="thickness_mm",
                                      reason="R_H = slope x thickness; without a thickness "
                                             "only the slope is measured",
@@ -705,12 +713,18 @@ class HallAnalyzer:
                                              "example": "--thickness 0.07 --thickness-unit mm"})],
                           warnings=[skip_warn] if skip_warn else [],
                           data=hd.model_dump(mode="json"), provenance=prov)
-        elif r2s:
-            conf = float(np.mean(r2s)); status = "ok" if conf >= cfg.confidence_min else "low_confidence"
-        else:
-            conf, status = 0.4, "low_confidence"
+        # Spec §4.5: two ceilings, and confidence is the lower. `fit` says how well the
+        # lines fit; `resolved` says how many R_H are distinguishable from zero. A result
+        # cannot be more trustworthy than either. min, not a product: multiplying two
+        # ceilings understates a result that is merely noisy OR merely scattered.
+        fit_quality = float(np.mean(r2s)) if r2s else 1.0
+        resolved_fraction = (sum(1 for p in points if is_resolved(p)) / len(points)
+                             if points else 0.0)
+        conf = float(min(fit_quality, resolved_fraction))
+        status = "ok" if conf >= cfg.confidence_min else "low_confidence"
         return Result(status=status, confidence=conf,
                       confidence_parts={"detector": 1.0, "segmentation": 1.0,
-                                        "fit": (float(np.mean(r2s)) if r2s else None)},
+                                        "fit": (float(np.mean(r2s)) if r2s else None),
+                                        "resolved": float(resolved_fraction)},
                       warnings=([skip_warn] if skip_warn else []) + sigma_noise_warnings(points),
                       data=hd.model_dump(mode="json"), provenance=prov)

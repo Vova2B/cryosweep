@@ -103,9 +103,20 @@ def test_rxy_vs_b_uses_manifest_runconfig():
 
 
 def test_two_point_coverage_does_not_deflate_confidence():
-    """Regression (final-review): extending R_H(T) coverage with flagged 2-point points must NOT
-    lower status/confidence — `frac` is computed over the trusted antisym points only, so a file
-    with all-good antisym fits + a long 2-point tail stays confident, not blended down."""
+    """Regression (final-review): extending R_H(T) coverage with flagged 2-point points must
+    NOT lower `antisym_fraction` — it is computed over the trusted antisym points only, so a
+    file with all-good antisym fits + a long 2-point tail keeps that diagnostic at 1.0, not
+    blended down to antisym/(antisym+2point).
+
+    Repinned (spec §4.5, 2026-09): `res.confidence` itself is no longer antisym_fraction — it
+    is min(fit_quality, resolved_fraction), and resolved_fraction's denominator is ALL points,
+    2-point tail included (spec §4.1: an unresolved point counts against the fraction
+    whichever method produced it). This fixture carries no instrument-sigma column, so only
+    the points whose antisym fit has >=3 points (residual sigma, exactly 0.0 on this
+    noise-free fixture — a real, if degenerate, resolved number) count as resolved: 23 of the
+    38 points. That is an intentional consequence of this task's rebase, not a regression of
+    the defect this test originally guarded against.
+    """
     from cryosweep_core.analyzers.hall_tempdep import HallTempDepAnalyzer
     e = _manifest_entry("hall_tdep_RH_T")
     dat = _dat(e["dat"])
@@ -117,9 +128,9 @@ def test_two_point_coverage_does_not_deflate_confidence():
     n_anti = sum(1 for p in pts if p.get("R_H") is not None and p.get("r_h_method") != "2point")
     n_2pt = sum(1 for p in pts if p.get("r_h_method") == "2point")
     assert n_anti > 0 and n_2pt > 0                       # both methods present (coverage extended)
-    # confidence reflects the antisym fraction (1.0 here), NOT antisym/(antisym+2point) ~0.6
-    assert res.confidence == 1.0 and res.status == "ok"
     assert res.confidence_parts["antisym_fraction"] == 1.0
+    assert res.status == "ok"
+    assert res.confidence == pytest.approx(23 / 38)
 
 
 def _two_panel_result_with_rxx():

@@ -16,7 +16,7 @@ from cryosweep_core.detect.sweeps import segment_sweeps
 from cryosweep_core.analyzers.hall import (_carrier_n, _mobility,
                                       _long_rho_xx, field_sweep_points,
                                       _mobility_gap_reason, _RHO_XX_NO_ZERO_FIELD,
-                                      WithheldDerived, decline_unresolved)
+                                      WithheldDerived, decline_unresolved, is_resolved)
 from cryosweep_core.fitting.transport import LinearFitModel
 from cryosweep_core.result import Result, Provenance, Gate
 from cryosweep_core.registry import Need
@@ -408,15 +408,20 @@ def _reconstruct_points(
             pt.slope_ohm_per_T = slope
             pt.slope_pos_ohm_per_T = slope    # by antisym construction pos==neg==avg
             pt.slope_neg_ohm_per_T = slope
-            pt.r2 = float(fit.r2)
             pt.R_H = (slope * thickness_m * geometry_sign) if thickness_m is not None else None
             pt.carrier_n, pt.carrier_type = _carrier_n(pt.R_H)
             pt.r_h_method = "antisym"
             # Residual sigma (spec §2.2): >= 3 antisym points -> linregress stderr; exactly
-            # 2 -> zero residual DOF, stderr is 0.0 -> None + sigma_zero_dof (U4).
+            # 2 -> zero residual DOF, stderr is 0.0 -> None + sigma_zero_dof (U4). Spec
+            # §4.5(a): r2 at exactly 2 points is the same tautology -- a line through two
+            # points fits them exactly regardless of how linear the underlying data really
+            # is -- so it stays None there too, not `fit.r2` (measured: this is the ONLY
+            # source of a non-None r2 hall-tdep ever reports, and every one of them was
+            # exactly 1.0).
             if antisym_points >= 3:
                 ssig = float(fit.sigma["slope"])
                 pt.slope_sigma_ohm_per_T = ssig if np.isfinite(ssig) else None
+                pt.r2 = float(fit.r2)
             else:
                 pt.sigma_zero_dof = True
             # Instrument sigma (closed O4): exact linear propagation through the same
@@ -785,19 +790,30 @@ class HallTempDepAnalyzer:
                                    ["no fittable T point (need >=2 antisym points)"],
                           data=data.model_dump(mode="json"), provenance=prov)
 
-        # D8: confidence = fraction of non-low_confidence fitted points; NEVER mean r².
-        # Basis = the TRUSTED antisym points only. The 2-point fallback (B) EXTENDS coverage
-        # with honestly-flagged low_confidence tail points; counting them in the denominator
+        # D8: "antisym_fraction" = fraction of non-low_confidence fitted points, basis the
+        # TRUSTED antisym points only. The 2-point fallback (B) EXTENDS coverage with
+        # honestly-flagged low_confidence tail points; counting them in the denominator
         # would let extra coverage deflate status (backwards). Antisym-only frac keeps
-        # "antisym_fraction" literally accurate. If there are no antisym points at all
-        # (2-point coverage only), the result is genuinely low_confidence (frac 0).
-        # #18 (2026-09-02): single-pair points are labelled "antisym" (they are one) and
-        # so now count in this basis — the fraction covers the points actually fitted.
+        # "antisym_fraction" literally accurate. #18 (2026-09-02): single-pair points are
+        # labelled "antisym" (they are one) and so count in this basis — the fraction
+        # covers the points actually fitted. Kept as a reported diagnostic (spec §4.5
+        # still names it), but it no longer DRIVES confidence: it was 1.0 by construction
+        # whenever every fitted point simply met tdep_min_antisym_points (default 1), which
+        # says nothing about how many R_H are actually resolved from zero.
         antisym_fitted = [p for p in fitted if p.r_h_method != "2point"]
         frac = (sum(1 for p in antisym_fitted if not p.low_confidence) / len(antisym_fitted)
                 if antisym_fitted else 0.0)
-        conf = float(frac)
-        status = "ok" if frac >= 0.5 else "low_confidence"
+        # Spec §4.5: confidence = min(fit quality, resolved fraction), same rule as `hall`.
+        # fit_quality is the mean r2 over points whose r2 survives the zero-DOF rule above,
+        # or 1.0 (no constraint) when none do — reported honestly as `fit: None` below, not
+        # as a fabricated 1.0. `resolved` is computed over ALL points (not `fitted`): a
+        # point with no R_H at all counts as unresolved, never silently excluded (§4.1).
+        r2s = [p.r2 for p in points if p.r2 is not None]
+        fit_quality = float(np.mean(r2s)) if r2s else 1.0
+        resolved_fraction = (sum(1 for p in points if is_resolved(p)) / len(points)
+                             if points else 0.0)
+        conf = float(min(fit_quality, resolved_fraction))
+        status = "ok" if conf >= 0.5 else "low_confidence"
         # Closed O4 + hardening 2: honest aggregate warning when the instrument sigma says
         # the R_H(T) points are noise-dominated (> 50 % relative). EXPECTED to fire on the
         # real Hall file's channel (nV-level signal, median std/rho 61 %) — flag, never drop.
@@ -818,6 +834,8 @@ class HallTempDepAnalyzer:
                 "detector": 1.0,
                 "segmentation": 1.0,
                 "antisym_fraction": float(frac),
+                "fit": (float(np.mean(r2s)) if r2s else None),
+                "resolved": float(resolved_fraction),
             },
             data=data.model_dump(mode="json"),
             provenance=prov,
