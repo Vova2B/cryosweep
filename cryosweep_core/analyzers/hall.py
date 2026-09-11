@@ -1,5 +1,6 @@
 from __future__ import annotations
 import hashlib, pathlib
+from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 from pydantic import BaseModel, ConfigDict
@@ -97,7 +98,10 @@ class HallTempPoint(BaseModel):
     # 0.0 -- when fewer than two resolved. Judged against each rung's OWN sigma: narrower
     # rungs have fewer points, and comparing to the full fit's sigma makes sample size
     # look like window sensitivity.
-    r_h_ladder: list[dict] = []
+    # Fix round 1, Minor: None (never []) when the ladder did not run, matching the
+    # sibling convention (power_law_ladder in resistivity.py, cw_ladder in mag.py) so a
+    # parser reading all three envelopes never has to special-case Hall.
+    r_h_ladder: list[dict] | None = None
     r_h_spread: float | None = None
 
 class Capability(BaseModel):
@@ -216,82 +220,6 @@ def _stage_fit(H, R, thickness_m, geometry_sign):
         out["r_h_sigma"] = (ssig * thickness_m) if (ssig is not None and thickness_m) else None
     return out
 
-_LADDER_FRACTIONS = (1.00, 0.75, 0.50, 0.25)
-_LADDER_MIN_POINTS = 5
-#: Floor on the spread, RELATIVE to |R_H| of the full-window rung, so float noise on exact
-#: data cannot trip the flag. Relative, not absolute: R_H spans many decades across samples
-#: and an absolute floor would be a different rule at each scale (the TTO kappa_ph floor is
-#: absolute only because its quantity, an exponent, is already dimensionless).
-#: Pinned 2026-09-07 by measurement on the real Hall file: 3*sigma, not the floor, is the
-#: binding term at every one of the file's 9 temperatures -- spread/(3*sig_max) ratios ran
-#: 0.00-0.09, nowhere near either term, so `window_sensitive` is quiet across the whole
-#: file (spec §4.6 expected it "quiet except possibly at 200/300 K"; measurement corrects
-#: that to quiet everywhere -- see test_real_file_ladder_is_quiet). The floor exists to
-#: backstop the degenerate case 3*sigma cannot cover: an exactly-linear fit where BOTH
-#: sigma and spread collapse toward float noise together (the straight synthetic fixture,
-#: spread ~1e-23 against a 3-sigma of ~1e-16 -- 3-sigma alone already wins there too, but
-#: not by construction). The flag's verdict is identical for any floor from 0.005 to 0.5 on
-#: both synthetic fixtures and the real file (test_ladder_floor_is_not_finely_tuned).
-_LADDER_REL_FLOOR = 0.05
-
-
-def _r_h_ladder(Hp, R_asym, S_asym, thickness_m, geometry_sign):
-    """Refit R_asym vs B over |B| <= f*B_max for f in _LADDER_FRACTIONS. Returns
-    (rungs, spread, flags). spread is max-min over RESOLVED rungs, None (never 0.0) when
-    fewer than two resolve.
-
-    RULING (controller audit item 3, 2026-09-07): a rung's own sigma is judged by the SAME
-    precedence resolved_sigma()/is_resolved() already use for a whole point -- instrument
-    sigma where the antisym stage supports it (the stronger constraint), residual sigma
-    otherwise -- rather than hand-rolling a third definition that judges every rung on
-    residual sigma alone. MEASURED on the real Hall file before choosing between the two
-    options the audit posed: the rules are NOT equivalent. Residual sigma excluded ZERO
-    rungs at every one of the file's 9 temperatures; instrument sigma excluded the f=0.25
-    rung at 2-50 K and both f<=0.5 rungs at 100-300 K (e.g. T=100 K, f=0.25: R_H=7.58e-12,
-    residual sigma 6.25e-12 [resolved] vs instrument sigma 2.91e-11 [not]). A residual-only
-    rule would report every narrow rung "resolved" on a file whose points the point-level
-    rule sometimes calls unresolved -- the same word backed by weaker evidence. Using the
-    shared precedence keeps ONE definition of "resolved" driving both the per-point decline
-    and this ladder.
-    """
-    rungs, flags = [], []
-    if Hp.size == 0:
-        return rungs, None, ["ladder_incomplete"]
-    bmax = float(np.max(np.abs(Hp)))
-    for f in _LADDER_FRACTIONS:
-        m = np.abs(Hp) <= f * bmax * (1 + 1e-12)
-        if m.sum() < _LADDER_MIN_POINTS or np.unique(np.abs(Hp[m])).size < 2:
-            continue
-        fit = _stage_fit(Hp[m], R_asym[m], thickness_m, geometry_sign)
-        if fit is None or fit["R_H"] is None:
-            continue
-        sig = None
-        if S_asym is not None:
-            ssig_i = slope_sigma_ols(Hp[m] / _OE_PER_T, S_asym[m])
-            if ssig_i is not None and thickness_m:
-                sig = float(ssig_i * thickness_m)
-        if sig is None:
-            sig = fit.get("r_h_sigma")
-        unresolved = not (sig is not None and abs(sig) < abs(fit["R_H"]))
-        rungs.append({"f": f, "R_H": fit["R_H"], "sigma": sig, "r2": fit["r2"],
-                      "n_points": fit["n_points"], "unresolved": unresolved})
-    good = [r for r in rungs if not r["unresolved"]]
-    if len(good) < 2:
-        # A rung whose own sigma is unresolved is not a measurement, and several such rungs
-        # agree with each other for the wrong reason -- the resistivity precedent, where
-        # bound-pinned rungs faked a window-stable exponent. They stay IN the ladder
-        # carrying unresolved: True, so nothing is hidden.
-        return rungs, None, ["ladder_incomplete"]
-    vals = [r["R_H"] for r in good]
-    spread = float(max(vals) - min(vals))
-    sig_max = max(abs(r["sigma"]) for r in good)
-    full = next((r for r in good if r["f"] == 1.00), good[0])
-    floor = _LADDER_REL_FLOOR * abs(full["R_H"])
-    if spread > max(3.0 * sig_max, floor):
-        flags.append("window_sensitive")
-    return rungs, spread, flags
-
-
 def _carrier_n(R_H):
     if not R_H:                                   # None or 0
         return None, None
@@ -343,6 +271,110 @@ def decline_unresolved(pt) -> None:
     pt.carrier_n_sigma = pt.mobility_sigma = None
     pt.carrier_n_sigma_instrument = pt.mobility_sigma_instrument = None
     pt.derived_flags = [*pt.derived_flags, "r_h_unresolved"]
+
+
+_LADDER_FRACTIONS = (1.00, 0.75, 0.50, 0.25)
+_LADDER_MIN_POINTS = 5
+#: Floor on the spread, RELATIVE to |R_H| of the full-window rung, so float noise on exact
+#: data cannot trip the flag. Relative, not absolute: R_H spans many decades across samples
+#: and an absolute floor would be a different rule at each scale (the TTO kappa_ph floor is
+#: absolute only because its quantity, an exponent, is already dimensionless).
+#: Pinned 2026-09-07 by measurement on the real Hall file: 3*sigma, not the floor, is the
+#: binding term at every one of the file's 9 temperatures -- spread/(3*sig_max) ratios ran
+#: 0.003-0.087, nowhere near either term, so `window_sensitive` is quiet across the whole
+#: file (spec §4.6 expected it "quiet except possibly at 200/300 K"; measurement corrects
+#: that to quiet everywhere -- see test_real_file_ladder_is_quiet). The floor exists to
+#: backstop the degenerate case 3*sigma cannot cover: an exactly-linear fit where BOTH
+#: sigma and spread collapse toward float noise together (the straight synthetic fixture,
+#: spread ~1e-23 against a 3-sigma of ~1e-16 -- 3-sigma alone already wins there too, but
+#: not by construction). The flag's verdict is identical for any floor from 0.005 to 0.5 on
+#: both synthetic fixtures and the real file (test_ladder_floor_is_not_finely_tuned).
+_LADDER_REL_FLOOR = 0.05
+
+
+def _r_h_ladder(Hp, R_asym, S_asym, thickness_m, geometry_sign):
+    """Refit R_asym vs B over |B| <= f*B_max for f in _LADDER_FRACTIONS. Returns
+    (rungs, spread, flags). spread is max-min over RESOLVED rungs, None (never 0.0) when
+    fewer than two resolve.
+
+    RULING (controller audit item 3, 2026-09-07; fix round 1, Important #1): a rung's own
+    sigma is judged by calling the SAME `resolved_sigma()`/`is_resolved()` this module
+    already uses to decide whether a whole point's R_H is resolved -- not a textual
+    reimplementation of their precedence. A rung is a bare `_stage_fit` dict, not a
+    HallTempPoint, so it has no `r_h_sigma_instrument` attribute to read; a lightweight
+    `SimpleNamespace` carrying the three attributes those two functions actually read
+    (R_H, r_h_sigma, r_h_sigma_instrument) is passed through them instead. This is not
+    cosmetic: fix round 1 found the first version re-derived the identical precedence
+    inline, so nothing enforced the two stayed in sync -- if `is_resolved`'s comparison,
+    its zero-sigma handling, or its "neither family available" fallback ever changes, a
+    hand-rolled copy would not follow, silently. Routing through the real functions closes
+    that gap with no behaviour change (same values in, same verdict out).
+
+    MEASURED on the real Hall file before choosing instrument-preferred over residual-only
+    (the audit's two options): the rules are NOT equivalent. Residual sigma excluded ZERO
+    rungs at every one of the file's 9 temperatures; instrument sigma excluded the f=0.25
+    rung at 2-50 K and both f<=0.5 rungs at 100-300 K (e.g. T=100 K, f=0.25: R_H=7.58e-12,
+    residual sigma 6.25e-12 [resolved] vs instrument sigma 2.91e-11 [not]). A residual-only
+    rule would report every narrow rung "resolved" on a file whose points the point-level
+    rule sometimes calls unresolved -- the same word backed by weaker evidence.
+
+    "ladder_thin" (fix round 1, Important #2): at the three temperatures above where
+    instrument sigma excludes BOTH narrower rungs, `good` holds exactly the two WIDEST
+    windows -- the least-different pair the ladder can compare, sitting right at the
+    `ladder_incomplete` floor of two. `window_sensitive`'s absence there is real (verified:
+    even folding the excluded rungs back in, 3*sigma still grows faster than the spread
+    does), but it is a verdict over half the window range, not the full f=1.00->0.25 span
+    the other six points get -- and nothing distinguished the two before this flag. On a
+    noisier sample MORE points would fall to two rungs, so the ladder would read quieter
+    exactly as the data gets worse; that anti-correlation is worth flagging even though it
+    does not change today's verdict on this file.
+    """
+    rungs, flags = [], []
+    if Hp.size == 0:
+        return rungs, None, ["ladder_incomplete"]
+    bmax = float(np.max(np.abs(Hp)))
+    for f in _LADDER_FRACTIONS:
+        m = np.abs(Hp) <= f * bmax * (1 + 1e-12)
+        if m.sum() < _LADDER_MIN_POINTS or np.unique(np.abs(Hp[m])).size < 2:
+            continue
+        fit = _stage_fit(Hp[m], R_asym[m], thickness_m, geometry_sign)
+        if fit is None or fit["R_H"] is None:
+            continue
+        sig_inst = None
+        if S_asym is not None:
+            ssig_i = slope_sigma_ols(Hp[m] / _OE_PER_T, S_asym[m])
+            if ssig_i is not None and thickness_m:
+                sig_inst = float(ssig_i * thickness_m)
+        # The real is_resolved()/resolved_sigma() -- not a look-alike -- via a stand-in
+        # carrying only the attributes those two functions read.
+        rung_pt = SimpleNamespace(R_H=fit["R_H"], r_h_sigma=fit.get("r_h_sigma"),
+                                  r_h_sigma_instrument=sig_inst)
+        sig = resolved_sigma(rung_pt)
+        unresolved = not is_resolved(rung_pt)
+        rungs.append({"f": f, "R_H": fit["R_H"], "sigma": sig, "r2": fit["r2"],
+                      "n_points": fit["n_points"], "unresolved": unresolved})
+    good = [r for r in rungs if not r["unresolved"]]
+    if len(good) < 2:
+        # A rung whose own sigma is unresolved is not a measurement, and several such rungs
+        # agree with each other for the wrong reason -- the resistivity precedent, where
+        # bound-pinned rungs faked a window-stable exponent. They stay IN the ladder
+        # carrying unresolved: True, so nothing is hidden.
+        return rungs, None, ["ladder_incomplete"]
+    vals = [r["R_H"] for r in good]
+    spread = float(max(vals) - min(vals))
+    sig_max = max(abs(r["sigma"]) for r in good)
+    full = next((r for r in good if r["f"] == 1.00), good[0])
+    floor = _LADDER_REL_FLOOR * abs(full["R_H"])
+    if spread > max(3.0 * sig_max, floor):
+        flags.append("window_sensitive")
+    if len(good) == 2:
+        # The spread rests on the two WIDEST windows only -- the minimum before
+        # ladder_incomplete would fire instead, and the least-different pair available.
+        # Distinct from ladder_incomplete (fewer than two): here a spread IS reported, but
+        # over half the window range, not the full ladder every other point compares.
+        flags.append("ladder_thin")
+    return rungs, spread, flags
+
 
 # Review round 1 (2026-09-07), Important #3: `derived_flags` tokens for the two distinct
 # ways a longitudinal source can fail to produce rho_xx. Never collapse them into one
@@ -613,7 +645,7 @@ def field_sweep_points(df, cmap, cfg, hc, thickness_m, rho_fn, rho_reason) -> li
             if thickness_m is not None:
                 rungs, spread, lflags = _r_h_ladder(Hp, R_asym, S_asym, thickness_m,
                                                     hc.geometry_sign)
-                pt.r_h_ladder = rungs
+                pt.r_h_ladder = rungs or None    # [] -> None (fix round 1, Minor)
                 pt.r_h_spread = spread
                 if lflags:
                     pt.derived_flags = [*pt.derived_flags, *lflags]
