@@ -63,7 +63,11 @@ def test_confidence_is_capped_by_the_resolved_fraction(tmp_path):
 def test_confidence_parts_report_both_ceilings(tmp_path):
     res = _analyze(_write(tmp_path, 5e-4, 1e-12, "conf_ok.dat"))
     assert set(res.confidence_parts) >= {"fit", "resolved"}
-    assert res.confidence == min(res.confidence_parts["fit"] or 1.0,
+    # `is None`, not a truthy test: a mean r2 of exactly 0.0 is the WORST possible fit
+    # quality, and `0.0 or 1.0` would read it as "no fit evidence, so no constraint" --
+    # the opposite claim. Only a literal None means no rung survived the zero-DOF rule.
+    fit = res.confidence_parts["fit"]
+    assert res.confidence == min(1.0 if fit is None else fit,
                                  res.confidence_parts["resolved"])
 
 
