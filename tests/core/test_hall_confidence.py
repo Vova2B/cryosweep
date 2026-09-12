@@ -170,3 +170,75 @@ def test_gated_branch_reports_real_fit_when_r2_is_available(hall_synth_path):
     r2s = [p["r2"] for p in res.data["points"] if p.get("r2") is not None]
     assert r2s, "fixture must exercise a real, non-tautological r2 for this test to mean anything"
     assert res.confidence_parts["fit"] == float(np.mean(r2s))
+
+
+# ---- Carried from Task 6's review: hall_tempdep hardcoded its own "ok if conf >= 0.5"
+# instead of reading cfg.confidence_min like every other confidence_min consumer, so
+# raising --confidence-min moved `hall`'s status and silently left hall_tempdep's alone.
+# Both fixtures below are built so their DEFAULT-config status is "ok" (confidence >=
+# 0.5), then the SAME raised confidence_min (0.9, above both measured confidences) must
+# push BOTH to "low_confidence" -- that is the one observable difference the fork made,
+# and the only test that proves the two analyzers now share one rule. -------------------
+
+_MIX_HDR = ("[Header]\nBYAPP, Resistivity\nINFO, conf_mix_synth, SAMPLE\n[Data]\n"
+            "Temperature (K),Magnetic Field (Oe),Bridge 1 Resistance (Ohms),"
+            "Bridge 1 Resistivity (Ohm-m),Bridge 1 Std. Dev. (Ohm-m),"
+            "Bridge 2 Resistance (Ohms),Bridge 2 Resistivity (Ohm-m)\n")
+
+def _write_hall_mixed_resolution(tmp_path):
+    """Two held-T field sweeps (>16 rows each, well clear of the 16-row separator floor):
+    T=10 K carries tiny (resolved) instrument sigma, T=20 K huge (unresolved) sigma, both
+    with the same clean linear slope so fit_quality stays ~1.0 and resolved_fraction = 0.5
+    is the binding ceiling -- confidence lands exactly on the default confidence_min, so
+    the fixture's own default status is "ok"."""
+    rows = []
+    for T, sd_rho in ((10.0, 1e-12), (20.0, 1e-4)):
+        for b in np.arange(-20000.0, 20000.1, 1000.0):
+            rxy = 1e-3 + 5e-4 * (b / 1e4)
+            rows.append(f"{T:.4f},{b:.1f},{rxy:.10e},{rxy / _RATIO:.10e},{sd_rho:.10e},"
+                        f"{1e-3:.10e},{1e-6:.10e}")
+    p = tmp_path / "conf_mix.dat"
+    p.write_text(_MIX_HDR + "\n".join(rows) + "\n")
+    return p
+
+_TDEP_MIX_HDR = ("[Header]\nBYAPP, Resistivity\nINFO, tdep_conf_mix_synth, SAMPLE\n[Data]\n"
+                  "Temperature (K),Magnetic Field (Oe),Bridge 1 Resistance (Ohms),"
+                  "Bridge 1 Resistivity (Ohm-m),Bridge 1 Std. Dev. (Ohm-m)\n")
+
+def _write_tdep_majority_resolved(tmp_path):
+    """Same construction as _write_tdep_mixed_resolution above, but with the resolved/
+    unresolved cutoff moved from T=30 to T=50 so most points are resolved (measured
+    resolved_fraction 0.8205, comfortably >= the default confidence_min of 0.5 -- this
+    fixture's default status is "ok", unlike the mostly-unresolved one above."""
+    rows = []
+    for b, sign in ((10000.0, 1.0), (-10000.0, -1.0), (20000.0, 1.0), (-20000.0, -1.0)):
+        rxy = 1e-3 + sign * 5e-4 * (abs(b) / 1e4)
+        for i in range(70):
+            T = 2.0 + i
+            sd_rho = 1e-12 if T < 50.0 else 1e-4
+            rows.append(f"{T:.4f},{b:.1f},{rxy:.10e},{rxy / _RATIO:.10e},{sd_rho:.10e}")
+    p = tmp_path / "tdep_mix.dat"
+    p.write_text(_TDEP_MIX_HDR + "\n".join(rows) + "\n")
+    return p
+
+def test_raised_confidence_min_moves_both_hall_probes(tmp_path):
+    hall_path = _write_hall_mixed_resolution(tmp_path)
+    tdep_path = _write_tdep_majority_resolved(tmp_path)
+    hall_cfg_kwargs = dict(hall_channel=1, thickness_mm=0.1, longitudinal_channel=2)
+    tdep_cfg_kwargs = dict(hall_channel=1, thickness_mm=0.1)
+
+    hall_default = HallAnalyzer().analyze(load_dat(hall_path), RunConfig(hall=hall_cfg_kwargs))
+    from cryosweep_core.analyzers.hall_tempdep import HallTempDepAnalyzer
+    tdep_default = HallTempDepAnalyzer().analyze(load_dat(tdep_path), RunConfig(hall=tdep_cfg_kwargs))
+    assert hall_default.status == "ok", "fixture must give an 'ok' baseline for this test to mean anything"
+    assert tdep_default.status == "ok", "fixture must give an 'ok' baseline for this test to mean anything"
+
+    hall_raised = HallAnalyzer().analyze(
+        load_dat(hall_path), RunConfig(hall=hall_cfg_kwargs, confidence_min=0.9))
+    tdep_raised = HallTempDepAnalyzer().analyze(
+        load_dat(tdep_path), RunConfig(hall=tdep_cfg_kwargs, confidence_min=0.9))
+    assert hall_raised.confidence == hall_default.confidence, "raising the threshold must not change the fitted value"
+    assert tdep_raised.confidence == tdep_default.confidence, "raising the threshold must not change the fitted value"
+    assert hall_raised.status == "low_confidence", "--confidence-min 0.9 must move hall"
+    assert tdep_raised.status == "low_confidence", \
+        "hall_tempdep hardcoded its own 0.5 threshold instead of reading cfg.confidence_min"

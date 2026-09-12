@@ -16,7 +16,8 @@ from cryosweep_core.detect.sweeps import segment_sweeps
 from cryosweep_core.analyzers.hall import (_carrier_n, _mobility,
                                       _long_rho_xx, field_sweep_points,
                                       _mobility_gap_reason, _RHO_XX_NO_ZERO_FIELD,
-                                      WithheldDerived, decline_unresolved, is_resolved)
+                                      WithheldDerived, decline_unresolved, is_resolved,
+                                      hall_confidence)
 from cryosweep_core.fitting.transport import LinearFitModel
 from cryosweep_core.result import Result, Provenance, Gate
 from cryosweep_core.registry import Need
@@ -812,8 +813,7 @@ class HallTempDepAnalyzer:
         fit_quality = float(np.mean(r2s)) if r2s else 1.0
         resolved_fraction = (sum(1 for p in points if is_resolved(p)) / len(points)
                              if points else 0.0)
-        conf = float(min(fit_quality, resolved_fraction))
-        status = "ok" if conf >= 0.5 else "low_confidence"
+        status, conf = hall_confidence(fit_quality, resolved_fraction, cfg.confidence_min)
         # Closed O4 + hardening 2: honest aggregate warning when the instrument sigma says
         # the R_H(T) points are noise-dominated (> 50 % relative). EXPECTED to fire on the
         # real Hall file's channel (nV-level signal, median std/rho 61 %) — flag, never drop.

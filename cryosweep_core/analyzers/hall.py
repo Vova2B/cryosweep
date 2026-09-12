@@ -273,6 +273,20 @@ def decline_unresolved(pt) -> None:
     pt.derived_flags = [*pt.derived_flags, "r_h_unresolved"]
 
 
+def hall_confidence(fit_quality: float, resolved_fraction: float,
+                     confidence_min: float) -> tuple[str, float]:
+    """Spec Sec 4.5: confidence = min(fit quality, resolved fraction) -- two ceilings, and
+    a result cannot be more trustworthy than either. Shared by both Hall analyzers so the
+    rule cannot drift between them the way it did before this helper existed: Task 6 wrote
+    the same four lines twice, and hall_tempdep's copy hardcoded "ok if conf >= 0.5"
+    instead of reading confidence_min from RunConfig the way hall.py's copy (and every
+    other confidence_min consumer) already did -- harmless at the default of 0.5, but it
+    silently forked which threshold a raised --confidence-min actually moved."""
+    conf = float(min(fit_quality, resolved_fraction))
+    status = "ok" if conf >= confidence_min else "low_confidence"
+    return status, conf
+
+
 _LADDER_FRACTIONS = (1.00, 0.75, 0.50, 0.25)
 _LADDER_MIN_POINTS = 5
 #: Floor on the spread, RELATIVE to |R_H| of the full-window rung, so float noise on exact
@@ -864,8 +878,7 @@ class HallAnalyzer:
         fit_quality = float(np.mean(r2s)) if r2s else 1.0
         resolved_fraction = (sum(1 for p in points if is_resolved(p)) / len(points)
                              if points else 0.0)
-        conf = float(min(fit_quality, resolved_fraction))
-        status = "ok" if conf >= cfg.confidence_min else "low_confidence"
+        status, conf = hall_confidence(fit_quality, resolved_fraction, cfg.confidence_min)
         return Result(status=status, confidence=conf,
                       confidence_parts={"detector": 1.0, "segmentation": 1.0,
                                         "fit": (float(np.mean(r2s)) if r2s else None),
