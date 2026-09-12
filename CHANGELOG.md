@@ -29,9 +29,10 @@ where the old behaviour degraded silently instead of saying so.
   written before the measurement bridge settled. `data.skipped_rows` always reports the count;
   a reversal warning fires (naming `--skip-rows 0`) when the row the default actually dropped
   looks physical rather than corrupted.
-- **A default-off inspection series draws the points a decline rule withheld.** Both
-  temperature-dependent Hall panels (carrier density and mobility) can plot the withheld points
-  as a hollow, non-default series, reachable from the GUI curve checklist or `PlotSpec.curves`.
+- **A default-off inspection series draws the points a decline rule withheld.** All four Hall
+  carrier-density and mobility panels — on the field-sweep probe as well as the
+  temperature-dependent one — can plot the withheld points as a hollow, non-default series,
+  reachable from the GUI curve checklist or `PlotSpec.curves`.
   Absent by default, so every existing figure renders byte-identically.
 
 ### Changed

@@ -170,15 +170,19 @@ Hall has its own gate/decline vocabulary beyond the generic table above.
 - **`carrier_n` / `carrier_type` / `mobility` reading `null` is not an error and not missing
   data** — read `derived_flags` on the point before concluding the tool failed:
 
-  | flag | meaning | what to do |
-  |---|---|---|
-  | `antisym_r_h_missing` | Stage B produced no R_H at all (Stage C has nothing to derive from) | check field coverage / `--hall-channel`; R_H_raw (Stage A) is still visible for transparency |
-  | `r_h_unresolved` | R_H exists but σ ≥ \|R_H\| — the decline rule above | more/better field points, or accept the withheld quantities are not resolvable on this data |
-  | `rho_xx_no_zero_field` | a longitudinal source was supplied but has no \|H\| < 50 Oe row within `temp_interval` of this Hall setpoint | widen `--temp-interval`, or accept mobility is not available at this T |
-  | `rho_xx_channel_missing` | the longitudinal channel's resistivity column is absent from the file — a DIFFERENT problem from the row above, never conflated with it | check `--long-channel` / `--long-file` |
-  | `window_sensitive` | the field-window ladder's spread exceeds max(3σ, 5% of the full-window \|R_H\|) — the fit window moves R_H | report the spread alongside R_H; do not average it away |
-  | `ladder_incomplete` | fewer than TWO ladder rungs resolved — **no spread is reported at all** | treat R_H as unreplicated across windows; do not read a `null` spread as "stable" |
-  | `ladder_thin` | exactly two rungs resolved — a spread IS reported, but only between the two widest windows, not the full ladder | trust the spread less than a `ladder_incomplete`-free point's |
+  The first four flags say why something was WITHHELD; the last three describe a reported
+  R_H and withhold nothing. Both live in `derived_flags`, so check which kind you have
+  before concluding a value is missing.
+
+  | flag | withholds? | meaning | what to do |
+  |---|---|---|---|
+  | `antisym_r_h_missing` | yes | Stage B produced no R_H at all (Stage C has nothing to derive from) | check field coverage / `--hall-channel`; R_H_raw (Stage A) is still visible for transparency |
+  | `r_h_unresolved` | yes | R_H exists but σ ≥ \|R_H\| — the decline rule above | more/better field points, or accept the withheld quantities are not resolvable on this data |
+  | `rho_xx_no_zero_field` | yes | a longitudinal source was supplied but has no \|H\| < 50 Oe row within `temp_interval` of this Hall setpoint | widen `--temp-interval`, or accept mobility is not available at this T |
+  | `rho_xx_channel_missing` | yes | the longitudinal channel's resistivity column is absent from the file — a DIFFERENT problem from the row above, never conflated with it | check `--long-channel` / `--long-file` |
+  | `window_sensitive` | no | the field-window ladder's spread exceeds max(3σ, 5% of the full-window \|R_H\|) — the fit window moves R_H | report the spread alongside R_H; do not average it away |
+  | `ladder_incomplete` | no | fewer than TWO ladder rungs resolved — **no spread is reported at all** | treat R_H as unreplicated across windows; do not read a `null` spread as "stable" |
+  | `ladder_thin` | no | exactly two rungs resolved — a spread IS reported, but only between the two widest windows, not the full ladder | read the spread as a lower bound: two windows cannot show a trend, so quote it without implying the ladder converged |
 
   `ladder_incomplete` and `ladder_thin` are mutually exclusive and say opposite things — "no
   answer" vs "a weakly-based answer" — never read one as the other.

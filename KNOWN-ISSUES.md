@@ -8,10 +8,18 @@ figures produced while verifying the item-1 fix. They are recorded here rather t
 left because the project's own rule is that a result you cannot trust is more useful reported
 than hidden.
 
-**Items 1–18, 21–22 and 23 change no fitted number and no value in an exported CSV; items 19
-and 20 do.** Items 1–8 and 11–16 are display; items 9 and 18 are reporting-honesty gaps; item 10
-is CLI ergonomics; item 17 hides a GUI control and item 22 makes one act on the wrong target;
-items 19 and 20 are correctness bugs; item 21 is an unfinished feature.
+Items 24 onwards were found later, most of them while making the Hall analyzers decline to
+publish quantities they cannot support; each names what reproduces it.
+
+**Which items change a number.** Of items 1–23: only 19 and 20 change a fitted number or a
+value in an exported CSV. Items 1–8 and 11–16 are display; items 9 and 18 are reporting-honesty
+gaps; item 10 is CLI ergonomics; item 17 hides a GUI control and item 22 makes one act on the
+wrong target; item 21 is an unfinished feature. Of the later items, **26, 27, 29, 30 and 33
+change a fitted number or a CSV value**; the rest are display, reporting or documentation.
+
+**Several later items were fixed before any release carried them** — they were introduced and
+corrected inside the same unreleased work. Those are marked *never released*, and if you are
+running a published version they cannot affect you.
 
 Items 1–17 each name the shipped example that reproduces them, and item 22 reproduces on any
 file with more than one plot — so those have a target to verify a fix against. Items 18–21
@@ -239,7 +247,7 @@ at R_asym(0) = 0, label it `antisym`, and rebase the fraction on the points actu
 and the report disowns it.
 
 *Addendum, 2026-09-12: the "measured confidence 0.0 → 1.0" figure above was correct when
-written and is superseded by the Hall integrity slice, not regressed by it.* Confidence is
+written and was deliberately superseded by the later Hall integrity work, not regressed by it.* Confidence is
 now `min(fit_quality, resolved_fraction)` (item 33 below): `fit_quality` was the 1.0 this
 note quotes, but that fit-quality reading was itself found tautological — every non-`None`
 r² hall-tdep ever reported came from a 2-point antisym fit, which fits any two points
@@ -413,6 +421,8 @@ examples: `cryosweep hall-tdep examples/hall_temperature_dependence.dat --hall-c
 of 130. On the real file, 72 of 138 points withhold. R_H itself is never withheld — only what is
 derived from it.
 
+(Item 20's fix note lists `antisym_r_h_missing` as the withholding reason; this entry adds a second, `r_h_unresolved`. That note is incomplete rather than wrong — the two say different things: no R_H was produced at all, versus an R_H that exists but is not resolved against its own σ.)
+
 **27. Mobility's ρ_xx was averaged over the whole field loop, and could be borrowed from an
 unrelated temperature.** *FIXED 2026-09-07 (a9afe1b, 3a17eae): ρ_xx for mobility is now the
 median of the longitudinal channel's own rows at \|H\| < 50 Oe (`ZERO_FIELD_OE`), queried per Hall
@@ -427,7 +437,7 @@ row: a 10 K loop with no \|H\| < 50 Oe row of its own was measured receiving 50 
 outright — 3× wrong — with `rho_xx_field_oe` stamped as if a real zero-field measurement existed
 at 10 K. Real file only.
 
-**28. The mobility decline reason misdiagnosed why mobility was missing.** *FIXED 2026-09-07
+**28. The mobility decline reason misdiagnosed why mobility was missing.** *FIXED 2026-09-07, never released
 (f53bdb0, 0bb194b): reworked as an evidence ladder — report a file-level fact outright,
 generalise a per-point cause only when every declining point carries it, describe a mix as a
 mix, and assert no per-point cause when there is no per-point evidence to draw one from.* The
@@ -438,7 +448,7 @@ cause, or when the file-level ρ_xx signal was clean but no zero-field row fell 
 only — no shipped example currently reaches the mixed-cause case.
 
 **29. A NaN instrument sigma at an otherwise-good row could silently move the resistance fit.**
-*FIXED 2026-09-10 (c45f894): sigma now gets its own independent mask and interpolation source,
+*FIXED 2026-09-10, never released (c45f894): sigma now gets its own independent mask and interpolation source,
 so a row's own resistance and field validity determine which rows feed `R_asym`/`R_H`/`r2`,
 regardless of what its sigma column contains.* `_antisymmetrize` AND-ed the sigma mask into the
 R,H mask, so a row with perfectly finite resistance but a NaN std-dev was dropped from the fit
@@ -453,13 +463,16 @@ first N rows of the file before either Hall analyzer runs; the count is always r
 (`data.skipped_rows`), and a reversal warning fires when the row the default actually dropped
 looks physical, naming `--skip-rows 0` as the way to get it back.* Some PPMS runs write a first
 data row taken before the measurement bridge has settled — not noisy, not a reading at all.
-Measured on the real file's corrupted channel: row 0 carried a resistance 10–11 orders of
-magnitude off the file median, and left unmasked it moved the published R_H(300 K) from a sound
--2.7424e-10 Ω·m (r² = 0.669, on the trend set by the 200 K neighbour) to -1.4346e-04 (r² =
-0.002) — one row in 5786 moving R_H by a factor of 5×10⁵. On the file's ordinary channel,
-defaulting to `--skip-rows 1` still moves results (eight of nine field-sweep points
-bit-identical, the ninth 3.28%, inside its own σ band). Real file only; full derivation in
-`docs/physics-reference.md`.
+Measured on a real **resistivity-option** file's corrupted channel — not the Hall-wired
+measurement the rest of this section's "real file only" items refer to: row 0 carried a
+resistance 10–11 orders of magnitude off the file median, and left unmasked it moved the
+published R_H(300 K) from a sound -2.7424e-10 m³/C (r² = 0.669, on the trend set by the
+200 K neighbour) to -1.4346e-04 m³/C (r² = 0.002) — one row in 5786 moving R_H by a factor
+of 5×10⁵. (R_H is m³/C; Ω·m is resistivity. A Hall coefficient never carries that unit.) On
+the Hall-wired file's ordinary channel, defaulting to `--skip-rows 1` still moves results
+(eight of nine field-sweep points bit-identical, the ninth 3.28%, inside its own σ band).
+Real files only; full derivation in `docs/physics-reference.md`, which states the same
+measurement with the same file attribution.
 
 **31. Missing thickness degraded to a low-confidence result instead of gating.** *FIXED
 2026-09-07 (8d7ce2c): both Hall analyzers now return `status: "gated"` with a `gate[]` entry
@@ -497,7 +510,7 @@ several of whose points cannot be told apart from zero. See item 18's addendum f
 file's current, correctly lower number.
 
 **34. A naive CSV read of a Hall export could silently return a plausible-looking but wrong
-DataFrame.** *FIXED 2026-09-11 (d9e0886, 0e0fbd5): the leading `#` warning block now opens with
+DataFrame.** *FIXED 2026-09-11, never released (d9e0886, 0e0fbd5): the leading `#` warning block now opens with
 a short comma-free marker line before any warning prose.* Hall CSVs lead with a `#` block
 whenever the run carries warnings — a documented parse-contract change, since Python's `csv`
 module has no comment support and `pandas` needs `comment="#"`:
@@ -519,8 +532,10 @@ one: `cryosweep export examples/hall_field_sweeps.dat --hall-channel 1 --thickne
 honour `#` — `numpy.loadtxt`, Origin, gnuplot — skip the block like any other comment and need no
 change; that is the justification for the convention, not only its cost.
 
+**If you are running a released version, this cannot affect you:** the comment block is introduced by the same unreleased work that fixed its wording, so an export from 0.6.0 carries no `#` block at all and reads cleanly with a plain `pd.read_csv`.
+
 **35. The Hall confidence banner did not name which ceiling bound a `low_confidence` result,
-and once it did, the two ceilings' text could read as though one qualified the other.** *FIXED
+and once it did, the two ceilings' text could read as though one qualified the other.** *FIXED, never released
 2026-09-12 (090e8ee, 3650e3d): each ceiling now carries its own label, separated by a
 semicolon, and a `None` fit value reads as words rather than a bare dash.* A poor R_xy-vs-B fit
 and an R_H not resolved against its own σ are opposite problems with opposite remedies; before
@@ -537,7 +552,7 @@ binding one's number rather than naming an independent, non-binding fact. Real f
 shipped Hall example currently reaches `low_confidence`.
 
 **36. The field-sweep Hall row displayed only the residual sigma, hiding the instrument sigma
-the temp-dep row already showed.** *FIXED 2026-09-12 (868e9c1): the field-sweep R_H@T row now
+the temp-dep row already showed.** *FIXED 2026-09-12, never released (868e9c1): the field-sweep R_H@T row now
 appends the instrument sigma with the same wording used everywhere else in the panel, so the two
 families stay labeled apart wherever both appear.* The two σ families answer different questions
 (fit scatter vs instrument noise) and are never interchangeable; showing only one on the
@@ -560,9 +575,13 @@ was **every** point genuinely resolved by antisymmetrization: 71 of 72 open mark
 file, 55 of 57 on `hall_mixed_sweeps.dat`. It was accidentally true on the synthetic
 `hall_temperature_dependence.dat` example, where all 15 open points really are 0-field+1 points
 — this item is about the other two files, not that one. Scope is exactly the
-`render_hall_tdep_n_t` panel; `render_hall_tdep_mobility_t` never carried this note. At the
-default plot selection (the declined-points series is opt-in) no note ever fires and nothing was
-wrong — this item only bites a reader who turns the new inspection series on.
+`render_hall_tdep_n_t` panel; `render_hall_tdep_mobility_t` never carried this note. At the default plot
+selection the declined-points series is off, so **on that panel** no note fires and nothing was
+wrong — this item only bites a reader who turns the new inspection series on. The note does fire
+at the default selection on the neighbouring `hall_tdep_RH_T` panel, on the real file and on both
+shipped temperature-dependent examples, and it is CORRECT there: that panel ships a genuine
+`R_H (0-field+1)` series with `default_on=True`, which is exactly the estimator handover the note
+was written to warn about.
 
 **38. The topmost data marker was drawn into the axes frame, and whether it was depended on
 the canvas size.** *FIXED 2026-09-12: the glyph allowance is now computed from the marker's
