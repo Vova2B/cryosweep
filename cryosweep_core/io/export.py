@@ -4,6 +4,11 @@ from cryosweep_core.fitting.transport import POWER_LAW_DECLINE_FLAGS, ARRHENIUS_
 from cryosweep_core.fitting.heat_capacity import LOWT_LATTICE_KEYS
 
 
+#: First line of every Hall CSV comment block. MUST stay free of commas -- see
+#: _write_warning_block's docstring for the measurement that makes that load-bearing.
+_READ_HINT = "cryosweep: this file has a comment header - re-read with comment='#'"
+
+
 def _write_warning_block(stem, csv_path, warnings):
     """Run-level warnings survive export BOTH ways (owner, 2026-09-07): a leading '#'
     block that cannot be separated from the data, and a sibling .warnings.txt that a
@@ -12,10 +17,19 @@ def _write_warning_block(stem, csv_path, warnings):
     NB Python's csv module has NO comment support -- csv.DictReader would take the first
     '#' line as the header row -- so every reader in this repo strips '#' lines first.
     pandas needs comment="#". This is a documented parse-contract change.
+
+    The block therefore OPENS with a short comma-free marker line, and that detail is
+    load-bearing rather than decorative. Measured on a real export: with warning prose
+    first, `pandas.read_csv(path)` returned a (10, 3) DataFrame of nonsense and raised
+    NOTHING, because the prose contains commas and pandas split the header line into three
+    plausible-looking columns. With a comma-free first line it raises ParserError instead,
+    and csv.DictReader's bogus first key becomes the remedy sentence itself. Readers that
+    honour '#' (numpy.loadtxt, Origin, gnuplot) skip it like any other comment.
+    A wrong number that announces itself beats a wrong number that does not.
     """
     if not warnings:
         return None
-    body = "".join(f"# {w}\n" for w in warnings)
+    body = f"# {_READ_HINT}\n" + "".join(f"# {w}\n" for w in warnings)
     p = pathlib.Path(csv_path)
     p.write_text(body + p.read_text())
     wp = stem.with_suffix(".warnings.txt")

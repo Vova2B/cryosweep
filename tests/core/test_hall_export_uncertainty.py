@@ -14,6 +14,7 @@ excluded as unresolved -- go to a sibling .hall_ladder.csv, never silently.
 """
 import csv
 import pathlib
+import pytest
 import numpy as np
 from cryosweep_core.io.loader import load_dat
 from cryosweep_core.config import RunConfig
@@ -74,9 +75,44 @@ def test_run_warnings_reach_both_the_comment_block_and_a_sibling_file(
     res, out = _export(tmp_path, hall_synth_path)
     res = res.model_copy(update={"warnings": ["treat these R_H as noise"]})
     out = export_result(res, str(tmp_path / "warned"), fmt="csv")
-    head = pathlib.Path(out["points"]).read_text().splitlines()[0]
-    assert head.startswith("#") and "noise" in head
+    lines = pathlib.Path(out["points"]).read_text().splitlines()
+    # The block now OPENS with the comma-free read hint (so a naive pandas read raises
+    # instead of silently guessing a column count), and the warning follows it. Asserting
+    # the warning is IN the block rather than on line 0 is the stronger claim anyway.
+    assert lines[0].startswith("#") and "comment" in lines[0]
+    block = [ln for ln in lines if ln.startswith("#")]
+    assert any("noise" in ln for ln in block), "the warning still travels with the data"
     assert "noise" in pathlib.Path(out["warnings"]).read_text()
+
+
+def test_the_comment_block_opens_with_a_comma_free_marker_so_a_naive_reader_fails_LOUDLY(
+        tmp_path, hall_synth_path):
+    """The '#' block is a documented parse-contract change (spec 4.7, owner decision), but
+    HOW a naive reader fails is not neutral. Measured on the real file before this guard:
+    `pandas.read_csv(path)` returned a (10, 3) DataFrame of nonsense -- no exception -- because
+    the warning PROSE contains commas, so pandas split the header line into three
+    plausible-looking columns. Silent and wrong, on the most common reader in this field.
+
+    A comma-free FIRST line fixes that: pandas then raises ParserError instead of guessing,
+    and csv.DictReader's bogus first key becomes the remedy sentence itself. Readers that
+    honour '#' (numpy.loadtxt, Origin, gnuplot) skip it like any other comment, so they are
+    unaffected. This test pins the loudness, not the wording."""
+    res, _ = _export(tmp_path, hall_synth_path)
+    res = res.model_copy(update={"warnings": ["a, b, c -- prose that contains commas"]})
+    out = export_result(res, str(tmp_path / "marker"), fmt="csv")
+    path = pathlib.Path(out["points"])
+    first = path.read_text().splitlines()[0]
+
+    assert first.startswith("#"), "the block still leads the file"
+    assert "," not in first, "a comma in the FIRST line is what lets pandas guess a column count"
+    assert "comment" in first, "the first thing a reader sees must name the remedy"
+    # the prose itself is untouched below, commas and all
+    assert any("a, b, c" in ln for ln in path.read_text().splitlines() if ln.startswith("#"))
+
+    pd = pytest.importorskip("pandas")
+    with pytest.raises(Exception):            # ParserError; loud is the whole point
+        pd.read_csv(path)
+    assert pd.read_csv(path, comment="#").shape[1] > 10, "and it reads correctly when told to"
 
 
 _UNRES_HDR = ("[Header]\nBYAPP, Resistivity\nINFO, unres_synth, SAMPLE\n[Data]\n"
