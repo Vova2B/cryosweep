@@ -65,6 +65,34 @@ def test_hall_point_rows_sigma_labels():
     assert "(no σ — 2-point method)" in rows["R_H@300.0K"]
 
 
+def test_hall_field_sweep_row_shows_instrument_sigma_too():
+    """Carried from Task 4's review: the field-sweep row showed only the residual sigma,
+    though the temp-dep row below already shows both families. The two sigma families
+    must stay labeled apart wherever both appear on screen -- matching wording, not new
+    phrasing."""
+    data = {"probe": "hall", "points": [
+        {"temperature": 2.0, "R_H": -7.2e-9, "r_h_sigma": 1.5e-11,
+         "r_h_sigma_instrument": 3.1e-11, "sigma_zero_dof": False},
+    ]}
+    rows = dict(flatten_rows(data))
+    row = rows["R_H@2.0K"]
+    assert "σ residual" in row and "fit scatter" in row
+    assert "σ_inst" in row and "instrument noise, not fit quality" in row
+
+
+def test_hall_field_sweep_row_instrument_sigma_alone():
+    """A point with ONLY instrument sigma (e.g. a 2-point antisym fit, no residual DOF)
+    must still surface it -- the 2-point 'no σ' wording must not swallow it."""
+    data = {"probe": "hall", "points": [
+        {"temperature": 300.0, "R_H": -7.2e-4, "r_h_sigma": None,
+         "r_h_sigma_instrument": 9.0e-6, "sigma_zero_dof": True},
+    ]}
+    rows = dict(flatten_rows(data))
+    row = rows["R_H@300.0K"]
+    assert "(no σ — 2-point method)" in row
+    assert "σ_inst" in row and "instrument noise, not fit quality" in row
+
+
 def test_hall_tdep_instrument_sigma_row_labeled():
     data = {"probe": "hall_tdep", "points": [
         {"temperature": float(t), "R_H": 1.3e-11, "r_h_sigma": None,

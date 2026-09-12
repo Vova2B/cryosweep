@@ -283,6 +283,13 @@ def flatten_rows(data: dict) -> list[tuple[str, str]]:
                 val = f"{rh:.4g} m³/C (no σ — 2-point method)"
             else:
                 val = f"{rh:.4g} m³/C"
+            # Carried from Task 4's review: this row showed only the residual sigma, though
+            # the hall_tdep row below already shows both families. Appended, not merged in,
+            # so the residual clause above stays untouched and the instrument one keeps the
+            # exact wording used everywhere else in this file.
+            inst = p.get("r_h_sigma_instrument")
+            if inst is not None:
+                val += f"; ± {inst:.2g} m³/C σ_inst (instrument noise, not fit quality)"
             rows.append((f"R_H@{t:.1f}K", val))
     if data.get("probe") == "hall_tdep":
         # 138 points on real files — aggregate rows, not one per point.
