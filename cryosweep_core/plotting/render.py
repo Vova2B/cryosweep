@@ -3379,8 +3379,17 @@ def _estimator_method_note(ax, plotted, spec, style):
     plotted (nothing to warn about)."""
     if spec.title:
         return
-    roles = {s.role for _, s in plotted}
-    if "two_point" not in roles or roles == {"two_point"}:
+    # Gate on a FALLBACK series, not merely on the hollow role. A declined-points series
+    # (`*_withheld`) borrows role="two_point" because that is the only hollow-marker
+    # convention a catalog series can reach -- but it is not an estimator family, it is
+    # points with no published value. Measured on the real Hall file: 71 of the 72 open
+    # markers this note would have described were fitted by `antisym`, so the sentence was
+    # false for them and its second clause re-published them as measurements by another
+    # method. Only the trusted-vs-fallback handover is a method boundary.
+    fallback = [s for _, s in plotted
+                if s.role == "two_point" and not s.key.endswith("_withheld")]
+    trusted = [s for _, s in plotted if s.role != "two_point"]
+    if not fallback or not trusted:
         return
     fam = {"fontfamily": style.font_family} if style.font_family else {}
     # Two lines, then a measured width-fit (the _fit_tto_notes idiom): one line at font_pt-1

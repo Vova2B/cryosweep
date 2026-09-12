@@ -187,3 +187,49 @@ def test_summary_outside_legend_keeps_third_axis_attached_and_legend_on_canvas()
         g["legend"].x0, g["j_decor_x1"], g["ax"].width)
     assert g["fig_w"] <= inside["fig_w"] + g["legend"].width + 0.15 * inside["fig_w"], (
         g["fig_w"], inside["fig_w"], g["legend"].width)
+
+
+def _hand_built_tdep(points):
+    """A Result carrying exactly the points a test needs. The shipped fixtures cannot produce
+    a RESOLVED 0-field+1 point (every one of theirs is withheld), so the case where a genuine
+    fallback series and a declined series share one panel has to be constructed."""
+    from cryosweep_core.result import Result, Provenance
+    return Result(status="ok", confidence=1.0,
+                  data={"probe": "hall_tdep", "points": points},
+                  provenance=Provenance(file="x", sha256="", app_version="", config={}))
+
+
+def test_the_declined_series_alone_does_not_claim_a_fallback_estimator():
+    """The method-boundary note says "open = 0-field+1 fallback estimator; steps between
+    estimators are method, not physics". Declined points are drawn hollow through the SAME
+    role -- there is no second hollow convention available to a catalog series -- but they are
+    not an estimator family: they are points with no published value at all. Measured on the
+    real file, 71 of the 72 open markers this note would describe were fitted by `antisym`,
+    so the sentence is false for them, and its second clause re-publishes them as measurements
+    by another method. The note is therefore gated on a FALLBACK series being present, not
+    merely on the hollow role."""
+    from cryosweep_core.plotting.spec import PlotSpec
+    from cryosweep_core.plotting.catalog import series_hall_tdep_n_t
+    res = _tdep_result()
+    keys = {s.key for s in series_hall_tdep_n_t(res)}
+    assert "n_withheld" in keys and "n_2point" not in keys, "fixture must hold only declined open points"
+    fig = render_kind(res, "hall_tdep_n_T", PlotSpec(curves=["n_antisym", "n_withheld"]))
+    assert fig.axes[0].get_title() == ""
+
+
+def test_a_genuine_fallback_still_warns_even_beside_a_declined_series():
+    """The gate above must not silence the real case. When a 0-field+1 point actually carries
+    a value, the handover between estimators is real physics-vs-method and the reader still
+    needs telling -- the presence of a declined series alongside must not suppress it."""
+    from cryosweep_core.plotting.spec import PlotSpec
+    from cryosweep_core.plotting.catalog import series_hall_tdep_n_t
+    res = _hand_built_tdep([
+        {"temperature": 10.0, "carrier_n": 1e28, "withheld": None, "r_h_method": "antisym"},
+        {"temperature": 20.0, "carrier_n": 2e28, "withheld": None, "r_h_method": "2point"},
+        {"temperature": 30.0, "carrier_n": None, "r_h_method": "antisym",
+         "withheld": {"carrier_n": 5e28, "carrier_type": "holes", "mobility": 2e-3}},
+    ])
+    assert {s.key for s in series_hall_tdep_n_t(res)} == {"n_antisym", "n_2point", "n_withheld"}
+    fig = render_kind(res, "hall_tdep_n_T",
+                      PlotSpec(curves=["n_antisym", "n_2point", "n_withheld"]))
+    assert "method" in fig.axes[0].get_title()
