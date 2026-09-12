@@ -628,10 +628,91 @@ def _ensure_top_headroom(ax, frac=_TOP_HEADROOM_FRAC, max_uncover=0.25):
     dmax = float(ys.max())
     if (dmax - hi) > max_uncover * span:        # a robust-view exclusion, not tight headroom
         return
+    frac = max(frac, _glyph_headroom_frac(ax))
     if (hi - dmax) >= frac * span:
         return
     # solve for the top that leaves `frac` of the NEW span clear: (top-dmax)/(top-lo) = frac
     ax.set_ylim(top=(dmax - frac * lo) / (1.0 - frac))
+
+
+def _widen_margin_for_glyphs(ax, spec):
+    """Make matplotlib's own y-margin large enough to contain the marker GLYPH.
+
+    KNOWN-ISSUES #6 was fixed on the two panels it was reported against (the TTO kappa panel
+    and the ACMS chi panels) and nowhere else, so every other kind still drew its topmost
+    glyph into the frame. The cause is generic: matplotlib's 5% margin is measured to the
+    data COORDINATE, and the glyph drawn at that coordinate is a PHYSICAL size in points, so
+    whether it fits depends on the canvas. Measured on the Hall R_H(T) panel at 7 pt markers,
+    before this existed -- clear space between the topmost glyph and the frame:
+
+        90 x 70 mm  ->  +10.2 px      60 x 45 mm  ->  -2.4 px      40 x 30 mm  ->  -10.5 px
+
+    The GUI draws its grid panels small, which is why it shows there and not in an export.
+
+    A MARGIN rather than a limit, deliberately. `set_ylim` latches the axis
+    (`autoscaley_on` -> False), and two documented contracts pull against each other under
+    that: `robust_view=False` must set no limit at all, while the robust view must be a no-op
+    on clean data (True and False agreeing). `set_ymargin` + `autoscale_view` expands the view
+    and leaves the axis unlatched, which satisfies both -- and it is the right concept, since
+    the defect is precisely that the existing margin is too small for the glyph.
+
+    Symmetric by construction, so the LOWEST glyph gains the same allowance; that clipping is
+    the same defect and had never been reported. No-op once anything has set explicit limits
+    (an explicit spec range, or the robust view's own narrowing) -- there `_ensure_top_headroom`
+    remains the right mechanism, and it keeps its `max_uncover` guard against re-opening a
+    deliberate outlier exclusion."""
+    if spec.ymin is not None or spec.ymax is not None:
+        return
+    if not ax.get_autoscaley_on():               # something set limits deliberately; leave them
+        return
+    # Measure, widen, re-measure: widening the margin re-flows constrained layout, which
+    # changes the very axes height the requirement was computed from (measured: 337 px at
+    # measure time, 267 px after, on a 60x45 mm canvas -- enough to leave the glyph clipped
+    # after a single pass). Same idiom as the note's width-fit loop below. Converges in two
+    # or three passes; the bound is there so a pathological layout cannot spin.
+    for _ in range(4):
+        q = _glyph_headroom_frac(ax)             # glyph radius as a share of the AXES height
+        if q <= 0.0:
+            return
+        # `set_ymargin(f)` adds f*data_span at BOTH ends, so the visible gap is only
+        # f/(1+2f) of the resulting view. Solve that for the f which actually delivers `q`.
+        need = min(q / (1.0 - 2.0 * q) if q < 0.4 else 0.25, 0.25)
+        if need <= ax.get_ymargin() + 1e-4:      # already wide enough
+            return
+        ax.set_ymargin(need)
+        ax.autoscale_view(scalex=False)
+
+
+def _glyph_headroom_frac(ax):
+    """The share of the span a marker GLYPH occupies on THIS canvas.
+
+    `_TOP_HEADROOM_FRAC` is a fixed share of the data span, but the thing it stands in for --
+    "matplotlib's 5% margin plus roughly a marker radius" -- is a physical size in points. A
+    share that clears a 7 pt glyph on the shipped 90x70 mm canvas does not clear it on a
+    smaller one, and the GUI draws its grid panels small. Measured on the Hall R_H(T) panel
+    at 7 pt markers before this existed: +10.2 px of clear space at 90x70 mm, **-2.4 px at
+    60x45 mm and -10.5 px at 40x30 mm** -- i.e. the topmost glyph crossed the frame, and
+    whether it did depended only on the canvas size. Returns 0.0 when the axes cannot be
+    measured, which degrades to the old fixed fraction rather than to an exception."""
+    # Deliberately does NOT force a draw. By the time this runs the figure has already been
+    # laid out (`_finish` draws once to measure the legend), so the cached renderer gives the
+    # real axes box -- and constrained layout does not converge exactly, so an EXTRA
+    # `draw_without_rendering()` here perturbs anti-aliasing: measured 7 pixels of 879101 at
+    # 1/255 on one VSM golden, i.e. it would have churned a byte-identity oracle for a
+    # difference no one can see. Measure what is there; do not re-lay-out to measure it.
+    try:
+        fig = ax.get_figure()
+        height_px = ax.get_window_extent(fig.canvas.get_renderer()).height
+    except Exception:                            # un-realizable canvas: keep the fixed fraction
+        return 0.0
+    if not np.isfinite(height_px) or height_px <= 0:
+        return 0.0
+    sizes = [ln.get_markersize() for ln in ax.lines
+             if ln.get_gid() is None and ln.get_marker() not in (None, "None", "")]
+    if not sizes:
+        return 0.0
+    radius_px = max(sizes) / 72.0 * fig.dpi / 2.0
+    return float(min((radius_px + 1.0) / height_px, 0.25))   # never demand a quarter of the view
 
 
 def _axis_maxabs(lines, which):
@@ -4579,7 +4660,16 @@ def render_kind(results, kind_key, spec=None, style=None, overlay=None):
     fn = _RENDERERS.get(kind_key)
     if fn is None:
         raise KeyError(f"unknown plot kind: {kind_key}")
-    return fn(results, spec, style, overlay)
+    fig = fn(results, spec, style, overlay)
+    # Last, because the requirement is measured in PIXELS and the canvas is still moving
+    # until here: `_finish` grows the figure to fit an outside legend (`set_size_inches`),
+    # which changes the axes box after every earlier hook. Measured at robust-view time on a
+    # 60x45 mm canvas the axes read 337 px against a final 267 px -- enough to under-provide
+    # and leave the glyph clipped.
+    for ax in fig.axes:
+        if ax.get_yscale() == "linear":
+            _widen_margin_for_glyphs(ax, spec if spec is not None else PlotSpec())
+    return fig
 
 def render_for(result, spec=None, style=None):
     if isinstance(result, list):

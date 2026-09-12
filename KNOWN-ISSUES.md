@@ -563,3 +563,45 @@ file, 55 of 57 on `hall_mixed_sweeps.dat`. It was accidentally true on the synth
 `render_hall_tdep_n_t` panel; `render_hall_tdep_mobility_t` never carried this note. At the
 default plot selection (the declined-points series is opt-in) no note ever fires and nothing was
 wrong — this item only bites a reader who turns the new inspection series on.
+
+**38. The topmost data marker was drawn into the axes frame, and whether it was depended on
+the canvas size.** *FIXED 2026-09-12: the glyph allowance is now computed from the marker's
+actual pixel radius against the measured axes height and applied as a y-margin, on every plot
+kind.* Matplotlib's default 5% y-margin is measured to the data COORDINATE; the marker drawn at
+that coordinate has a physical size in points, so whether it fits inside the frame is a function
+of how large the figure is. `_ensure_top_headroom` had corrected this (item 6) on the two panels
+it was reported against — the thermal-transport κ panel and the AC-susceptibility χ panels — and
+nowhere else, and it expressed the allowance as a fixed 8% of the data span, which is the wrong
+unit for a physical glyph.
+
+Measured on the temperature-dependent Hall R_H(T) panel, as clear space between the topmost
+marker and the frame (negative = the marker crosses it):
+
+| | 3 pt | 7 pt | 9 pt | 12 pt | 16 pt | 20 pt |
+|---|---|---|---|---|---|---|
+| at the shipped 90 × 70 mm | +18.5 px | +10.2 px | +6.0 px | **−0.2 px** | **−8.6 px** | **−16.9 px** |
+
+| | 140 × 110 mm | 90 × 70 mm | 60 × 45 mm | 40 × 30 mm |
+|---|---|---|---|---|
+| at 7 pt markers | +71.0 px | +10.2 px | **−2.4 px** | **−10.5 px** |
+
+Both are one spin-box away in the GUI: the marker size and the figure width/height are adjacent
+controls in the styling panel. Below about 50 × 38 mm the axes box is only a few marker diameters
+tall and matplotlib itself reports `constrained_layout not applied because axes sizes collapsed
+to zero`; no allowance can place a glyph inside a box that small, and the fix does not pretend
+otherwise.
+
+The allowance is applied as a **margin**, not as a limit. `set_ylim` latches the axis
+(`autoscaley_on` → False), and two existing guarantees pull against each other under that:
+`robust_view=False` must set no limit at all, while the robust view must be a no-op on clean
+data. `set_ymargin` widens the view and leaves the axis unlatched, satisfying both — and it is
+the right concept, since the defect is exactly that the existing margin is too small for the
+glyph. Margins are symmetric, so the lowest marker gains the same allowance; that clipping is the
+same defect and had never been reported separately.
+
+At the shipped defaults nothing changes: every figure in the repository renders byte-identically,
+including the byte-pinned VSM oracle images, because at 90 × 70 mm with markers of 9 pt or less
+the requirement is already below matplotlib's own 5% margin. **Not covered:** a point excluded
+because the robust view deliberately narrowed around a heavy tail still sits outside the frame
+with no marker of its own — that is a different question (the view is hiding an outlier on
+purpose) and remains open.
