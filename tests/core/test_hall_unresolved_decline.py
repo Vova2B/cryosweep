@@ -174,7 +174,7 @@ def test_real_file_field_sweep_declines_nothing(hall_real_path):
     """The field-sweep probe averages 136-186 antisymmetrised points into each T's fit,
     against 1-3 field values for a temp-dep point -- its relative instrument sigma never
     approaches the sigma >= |R_H| threshold on this file. A test asserting a decline here
-    would be wrong and would fail (task-5 brief, Global Constraints)."""
+    would be wrong and would fail."""
     if not hall_real_path.exists():
         import pytest
         pytest.skip("real Hall measurement file gitignored/absent")

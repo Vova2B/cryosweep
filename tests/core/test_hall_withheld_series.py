@@ -8,8 +8,9 @@ Covers BOTH probes that carry a `withheld` dict on their points: the field-sweep
 probe (series_hall_n_t / series_hall_mobility_t) and the temperature-dependent
 `hall_tdep` probe (series_hall_tdep_n_t / series_hall_tdep_mobility_t). On the real Hall
 file only `hall_tdep` ever withholds anything (72/138 points); `hall` withholds nothing on
-any file in hand, so its coverage here is necessarily synthetic -- see task-9 brief,
-"CONTROLLER AUDIT, 2026-09-11".
+any file we have, so its coverage here is necessarily synthetic. That asymmetry is the whole
+reason both probes are covered: a field sweep whose R_H does not resolve is a real case, it
+simply is not one the reference files exercise.
 """
 from cryosweep_core.plotting.catalog import (
     series_hall_n_t, series_hall_mobility_t,

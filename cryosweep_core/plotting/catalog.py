@@ -858,7 +858,7 @@ def series_hall_tdep_n_t(result, field_unit="Oe"):
     if wpts:
         # Shares role="two_point" with the "n (0-field+1)" fallback above -- both are
         # non-trusted series and render.py's hollow-marker convention only special-cases
-        # that role string (see catalog.py:588 series_hall_mobility_t for the fuller note).
+        # that role string (see `_hall_withheld` for the fuller note).
         out.append(Series(key="n_withheld", label="n (declined)",
                           x=[p["temperature"] for p in wpts],
                           y=[p["carrier_n"] for p in wpts],
