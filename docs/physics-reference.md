@@ -244,6 +244,77 @@ The same discipline holds outside Hall: window-sensitivity spreads (Curie-Weiss 
 resistivity power-law n ladder, TTO κ_ph ladder) are **not error bars** and are never written
 with `±`; the statistical σ is labeled `σ_stat (fit scatter only)` and listed last.
 
+### R_H resolution: the decline rule, zero-field ρ_xx, the field-window ladder, and confidence
+
+**Decline rule (`r_h_unresolved`):** carrier_n, carrier_type, mobility and their own σ
+companions are withheld whenever R_H's own uncertainty is not strictly smaller than R_H itself
+— **σ ≥ |R_H|**, σ being the instrument sigma where the file supports it, the residual sigma
+otherwise, and treated as unresolved when NEITHER family is available (an unquantified
+uncertainty is not evidence of a small one). The line is not a convention, it is the point at
+which the quantities stop meaning anything: at σ ≥ |R_H| the ±1σ interval on R_H contains zero,
+so n = 1/(e·|R_H|) has no finite upper bound, and the carrier sign — sign(R_H), the thing a Hall
+measurement exists to determine — is undetermined within that interval. R_H and its σ are always
+kept and reported; only the quantities *derived* from R_H are withheld, under a `withheld` field
+that keeps them inspectable without publishing them as measurements. A point that never produced
+an R_H at all keeps its own `antisym_r_h_missing` reason rather than gaining a second one.
+
+**Zero-field ρ_xx for mobility is per Hall setpoint, not per file and not per loop.** μ =
+|R_H|/ρ_xx needs ρ_xx at zero field, at the same temperature as the Hall point. The longitudinal
+source is queried at the NEAREST |H| < 50 Oe (`ZERO_FIELD_OE`, `cryosweep_core.units`) row to
+each Hall setpoint's own temperature; the query declines rather than interpolating or clamping
+across setpoints when the nearest zero-field node lies farther than `HallCfg.temp_interval`
+(default 1.0 K) away. Two distinct reasons never get conflated: `rho_xx_channel_missing` — the
+longitudinal channel's resistivity column is not in the file at all — versus
+`rho_xx_no_zero_field` — the column exists but has no |H| < 50 Oe row within `temp_interval` of
+this particular setpoint. A wrong `--long-channel` is a different problem from a channel that
+was never held at zero field near this temperature, and the two need different remedies.
+
+**Field-window ladder.** R_asym vs B is refit over |B| ≤ f·B_max for f ∈ {1.00, 0.75, 0.50,
+0.25}; a window is attempted only with ≥ 5 points spanning ≥ 2 distinct field magnitudes. A
+rung's own resolution is judged by the SAME `is_resolved()` precedence as the point-level decline
+rule above (not a separate, looser criterion) — on the real Hall file the two rules are not
+equivalent: an instrument-sigma rule excludes narrower rungs a residual-only rule would have
+called resolved. `r_h_spread` = max−min R_H over the resolved rungs, and is `None` (never `0.0`)
+whenever fewer than two rungs resolve (`ladder_incomplete` — no spread is reported at all).
+Exactly two resolved rungs still reports a spread, but flags it `ladder_thin`: the comparison
+rests on only the two widest windows, not the full f = 1.00→0.25 span every other point gets — a
+weakly-based answer, distinct from `ladder_incomplete`'s no answer. `window_sensitive` fires when
+
+**spread > max(3·σ_max, 0.05·|R_H(f=1.00)|)**
+
+— 3σ of the noisiest resolved rung, or 5% of the full-window R_H, whichever is larger. The floor
+is relative to |R_H| (R_H spans many decades across samples, unlike a dimensionless exponent)
+and exists only to backstop the degenerate case where an exactly-linear fit collapses both σ and
+spread toward float noise together; on the real Hall file 3σ is the binding term at every
+temperature, with spread/(3σ) ratios of 0.003–0.087 — nowhere near either term, so
+`window_sensitive` is quiet across the whole file. The ladder is skipped entirely (no rungs, no
+flag) when thickness is not supplied: every rung's R_H would then be `None` too, and that is a
+missing user input the thickness gate already names, not evidence the data itself was thin.
+
+**Confidence = min(fit quality, resolved fraction)** on both Hall analyzers, shared through one
+`hall_confidence()` helper so the rule cannot fork between them. `fit_quality` is the mean r²
+over points whose fit has nonzero residual degrees of freedom; `resolved_fraction` is the
+fraction of points passing the decline rule's own `is_resolved()` check. **r² is `None` wherever
+a fit has zero residual degrees of freedom** — a line through exactly two points fits them
+exactly regardless of how noisy the underlying data really is, so r² = 1.0 there is a tautology,
+not a measurement — and such points are excluded from the r² mean rather than pulling it toward
+1.0. When that exclusion leaves no r² at all (no point has ≥ 3 antisym points), `fit_quality`
+defaults to **1.0** — no constraint, not a claim of perfect fit — while `confidence_parts.fit`
+itself is reported as `None`, so a reader can still tell "no r² survived" apart from "r² was
+measured at 1.0". Each ceiling is independent: a poor R_xy-vs-B fit and an R_H that is not
+resolved against its own σ are opposite problems with opposite remedies, and `confidence_parts =
+{fit, resolved}` names which one binds.
+
+**CSV parse contract.** A Hall points CSV that carries run-level warnings opens with them as
+`#`-prefixed lines before the header row, so a naive reader must be told `comment='#'`
+(`pandas.read_csv(path, comment="#")`; `numpy.loadtxt`, Origin and gnuplot already honour `#`
+and need nothing). Skipping that no longer risks a silently-wrong read: the block opens with a
+short comma-free marker line specifically so a naive `pandas.read_csv(path)` either raises
+`ParserError` or returns a single column named by the remedy sentence — never a plausible
+multi-column frame of nonsense, which is what an earlier, comma-bearing version of the block
+was measured producing (a 10×3 DataFrame, no exception raised, because the warning prose's own
+commas split the header into three plausible-looking columns).
+
 ### Dilatometry (not yet implemented)
 
 **Thermal expansion:**

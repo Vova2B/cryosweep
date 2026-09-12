@@ -76,14 +76,15 @@ untouched. Still synchronous, out of this item's scope: `MainWindow._reanalyze_a
 
 ## Targeted for 1.0 — analysis
 
-### `current_density_J`
+### `current_density_J` — **done**
 
-[KNOWN-ISSUES](KNOWN-ISSUES.md) item 21: the field is declared, consumed by two plot series,
-and never assigned. Resolving it means either implementing J = I/A — which needs the excitation
-current column canonicalized and a cross-sectional area the Hall probe currently has no input
-for — or removing the wiring. **The decision is deliberately still open**; a costed
-recommendation is being prepared, and shipping a half-wired feature past 1.0 is not acceptable
-either way.
+Shipped (see [KNOWN-ISSUES](KNOWN-ISSUES.md) item 21): every temp-dep Hall point reports the
+instrument's excitation current I (`Bridge N Excitation (uA)`, canonicalized), and
+J = I/(w·t) fills `current_density_J` as a capability that activates only when sample width
+(`--width-mm`) and thickness are both supplied — an ungated J on unset geometry would be
+scale-arbitrary, the same failure the resistivity geometry-unset warning names. This is the
+same input-dependent-capability pattern every other gated quantity in the product already
+follows, not a half-wired feature.
 
 ### Known display issues
 

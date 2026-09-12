@@ -1,5 +1,107 @@
 # Changelog
 
+## [Unreleased]
+
+Both Hall analyzers now ask whether a fit's own uncertainty makes its derived quantities
+meaningless, instead of only whether the fit ran. A Hall coefficient whose ±1σ interval
+contains zero still has an undetermined carrier sign — the thing a Hall measurement exists to
+determine — so carrier density, carrier type and mobility are withheld in that case, R_H itself
+never is, and the exit code changes for the two cases (missing thickness, noise-dominated data)
+where the old behaviour degraded silently instead of saying so.
+
+### Added
+
+- **A second σ family, `r_h_sigma_instrument`, on the field-sweep analyzer** — the file's own
+  repeat-noise propagated through the same slope estimator as the existing residual σ, matching
+  what the temperature-dependent analyzer already reported. The two are never conflated: one
+  measures fit quality, the other instrument noise, and every surface labels them apart.
+- **A field-window ladder for R_H.** `hall`'s R_asym-vs-B fit is re-run at |B| ≤ f·B_max for
+  f = 1.00/0.75/0.50/0.25; each point's `r_h_ladder` carries per-rung R_H/σ/r²/n_points, and
+  `r_h_spread` is the max−min across the resolved rungs (`null`, never `0.0`, when fewer than
+  two resolve). Three new flags: `window_sensitive` (the fit window moves R_H by more than
+  max(3σ, 5% of the full-window value) — a real spread, not an error bar), `ladder_incomplete`
+  (fewer than two rungs resolved — no spread is reported at all) and `ladder_thin` (exactly two
+  rungs resolved — a spread IS reported, but only between the two widest windows). A new
+  sibling `<stem>.hall_ladder.csv` carries the rungs themselves, one row per
+  (temperature, rung).
+- **`--skip-rows N`** (`HallCfg.skip_rows`; CLI flag; GUI field; default **1**) drops the first
+  N rows of the file before either Hall analyzer runs, for PPMS runs whose first data row was
+  written before the measurement bridge settled. `data.skipped_rows` always reports the count;
+  a reversal warning fires (naming `--skip-rows 0`) when the row the default actually dropped
+  looks physical rather than corrupted.
+- **A default-off inspection series draws the points a decline rule withheld.** Both
+  temperature-dependent Hall panels (carrier density and mobility) can plot the withheld points
+  as a hollow, non-default series, reachable from the GUI curve checklist or `PlotSpec.curves`.
+  Absent by default, so every existing figure renders byte-identically.
+
+### Changed
+
+- **Mobility's ρ_xx is now taken at zero field, per temperature setpoint** — not averaged over
+  the field loop, and not borrowed from a nearby temperature's zero-field row.
+  **This changes reported mobility numbers on real data**: re-measured on the real Hall file,
+  mobility rises 49% / 3% / 27% at 2 / 5 / 10 K. A setpoint with no zero-field row of its own
+  within `temp_interval` now declines mobility (`rho_xx_no_zero_field`) rather than silently
+  borrowing an unrelated temperature's value. A user comparing new output against old output on
+  the same file should expect this — it is a fix, not a regression.
+- **Missing `--thickness` now gates instead of degrading silently.** `status` moves from
+  `low_confidence` to `gated`, and the CLI exit code for `hall`/`hall-tdep` moves **11 → 10**.
+  R_H = slope × thickness, so without a thickness the analyzers have only a slope, and the
+  `gate[]` entry now names `--thickness` as the remedy.
+- **Confidence is `min(fit_quality, resolved_fraction)` on both Hall analyzers**, replacing a
+  formula that could read 1.0 by construction regardless of how much of the result was actually
+  resolved. A noise-dominated `hall-tdep` file that used to report `status: "ok"` can now report
+  `status: "low_confidence"`, exit **0 → 11**. `--confidence-min` now moves both analyzers'
+  status identically — it previously moved only `hall`'s.
+  **This move is real but does not occur on any shipped example**, so do not expect the exit
+  code of a shipped example to change: `hall_temperature_dependence.dat` goes from confidence
+  1.0 to 0.605263 (23 of 38 points resolved), and `hall_mixed_sweeps.dat` from 1.0 to 0.561538
+  (73 of 130) — both stay `status: "ok"`. Only the real reference file crosses the threshold,
+  to confidence 0.478261 and exit 11. Field-sweep `hall` confidence is unchanged on every file
+  we have.
+- **`carrier_n`, `carrier_type` and `mobility` are `null` wherever R_H's own uncertainty does
+  not resolve it** — σ ≥ |R_H|, checked against the instrument sigma where the file supports it
+  and the residual sigma otherwise — under a machine-readable `r_h_unresolved` flag; the
+  withheld values are kept, inspectable, under each point's `withheld` field. **R_H and its own
+  σ are never withheld** — only what would have been *derived* from it. The
+  `carrier_concentration` capability itself now reads `applicable: false` once every point in a
+  result declines it, instead of staying `true` because R_H happens to be present.
+  On the shipped `hall-tdep` examples this withholds 15 of 38 points
+  (`hall_temperature_dependence.dat`) and 57 of 130 (`hall_mixed_sweeps.dat`); on the real
+  file, 72 of 138. A withheld value is not missing data and not an error, and seeing it on
+  real, noisy measurements — including two of the shipped examples — is the tool working, not
+  breaking.
+- **Hall CSV exports (`hall`/`hall-tdep`) carry a leading `#` comment block** whenever the run
+  has warnings — a parse-contract change for any external reader:
+
+  ```python
+  pandas.read_csv(path, comment="#")   # the one-line remedy
+  ```
+
+  Skip it and the failure is **silent, not an error**: the block opens with a short comma-free
+  marker line specifically so a naive reader cannot come back with a plausible-looking wrong
+  answer — it now either raises `ParserError` or returns a single column named by the remedy
+  sentence, never a plausible multi-column frame. (An earlier, comma-bearing version of this
+  same block was measured returning a 10×3 DataFrame of nonsense with no exception at all — the
+  marker line exists because of that measurement.) `numpy.loadtxt`, Origin and gnuplot already
+  honour `#` and need no change.
+
+### Fixed
+
+- **The method-boundary note on the Hall carrier-density panel no longer describes declined
+  points as the output of a fallback estimator.** It now fires only where a genuine 0-field+1
+  fallback series is plotted beside a trusted one, not merely whenever a hollow-marker series
+  of any kind shares the panel with a non-hollow one.
+- A `NaN` instrument-sigma value at an otherwise-good row could silently drop that row from the
+  antisymmetrized fit, moving R_asym/R_H/r² for the whole setpoint; sigma now gets its own
+  independent mask.
+- The mobility decline reason could overgeneralize a single point's cause — or misname it — to
+  the whole file; it is now an evidence ladder that reports a mix as a mix.
+- The Hall confidence banner named neither ceiling on a `low_confidence` result, and once
+  named, the two ceilings' text could read as though one qualified the other; each now carries
+  its own label, separated by a semicolon.
+- The field-sweep Hall row displayed only the residual sigma; it now shows the instrument sigma
+  too, matching the temperature-dependent row.
+
 ## 0.6.0 — 2026-09-07
 
 Measurement files that state their own sample mass and molar mass are now read, and every
