@@ -34,16 +34,20 @@ def _hall_confidence_note(result) -> str | None:
     if "resolved" not in parts:
         return None
     fit, resolved = parts.get("fit"), parts["resolved"]
-    fit_words = ("no fit-quality evidence survived the zero-degrees-of-freedom rule"
+    # Each ceiling carries its own label and they are separated by a semicolon. The
+    # earlier phrasing put the non-binding one in a bare parenthetical, which landed
+    # right after the gloss on the binding one -- two stacked parentheticals that read
+    # as though both qualified the same number.
+    fit_words = ("fit quality — no r² survived the zero-degrees-of-freedom rule"
                  if fit is None else f"fit quality r² = {fit:.3f}")
-    resolved_words = f"resolved fraction = {resolved:.3f} (R_H distinguishable from zero)"
+    resolved_words = f"resolved fraction {resolved:.3f} (R_H distinguishable from zero)"
     fit_binds = fit is not None and fit <= resolved
     resolved_binds = fit is None or resolved <= fit
     if fit_binds and resolved_binds:
-        return f"binding ceiling: both equally -- {fit_words}; {resolved_words}"
+        return f"binding ceiling — both equally: {fit_words}; {resolved_words}"
     if resolved_binds:
-        return f"binding ceiling: {resolved_words} ({fit_words})"
-    return f"binding ceiling: {fit_words} ({resolved_words})"
+        return f"binding ceiling: {resolved_words}; other ceiling: {fit_words}"
+    return f"binding ceiling: {fit_words}; other ceiling: {resolved_words}"
 
 class StatusBanner(QLabel):
     def __init__(self):

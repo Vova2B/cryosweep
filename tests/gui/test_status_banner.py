@@ -87,3 +87,36 @@ def test_banner_confidence_note_only_fires_when_status_is_low_confidence(qapp):
                          data={"probe": "hall"}, provenance=_prov()))
     t = b.text()
     assert "binding" not in t and "ceiling" not in t
+
+
+def _banner_text(qapp, probe, parts, conf):
+    from cryosweep_gui.status_banner import StatusBanner
+    b = StatusBanner()
+    b.show_result(Result(status="low_confidence", confidence=conf, confidence_parts=parts,
+                         data={"probe": probe}, provenance=_prov()))
+    return b.text()
+
+
+def test_the_two_ceilings_are_separately_labelled_not_stacked_parentheticals(qapp):
+    """Review Minor: the clauses used to read `resolved fraction = X (R_H distinguishable
+    from zero) (no fit-quality evidence survived ...)`. Two bare parentheticals back to back
+    read as though BOTH qualify the resolved fraction, when the second is actually explaining
+    why the OTHER ceiling is absent. Each clause now carries its own label and they are
+    separated by a semicolon, so no clause can be read as qualifying the one before it.
+    This pins the STRUCTURE, not the prose."""
+    t = _banner_text(qapp, "hall_tdep", {"fit": None, "resolved": 0.478}, 0.478)
+    ceiling = [seg for seg in t.split("|") if "binding ceiling" in seg][0]
+    head, semi, tail = ceiling.partition(";")
+    assert semi, "the two ceilings are separated by a semicolon, not nested in parens"
+    assert "resolved fraction" in head and "fit quality" in tail
+    assert ceiling.count("(") == 1, "exactly one parenthetical -- the gloss on the binding term"
+
+
+def test_a_tie_between_the_two_ceilings_names_both(qapp):
+    """The equal-ceilings branch existed but no test reached it (review Minor). A tie is not
+    a rounding curiosity: min() picks one arbitrarily, so naming a single winner would imply
+    a distinction the numbers do not support."""
+    t = _banner_text(qapp, "hall", {"fit": 0.4, "resolved": 0.4}, 0.4)
+    ceiling = [seg for seg in t.split("|") if "binding ceiling" in seg][0]
+    assert "fit quality" in ceiling and "resolved fraction" in ceiling
+    assert "--" not in ceiling, "user-facing text uses an em dash, not ASCII hyphens"
