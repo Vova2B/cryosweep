@@ -22,10 +22,14 @@ def _write_warning_block(stem, csv_path, warnings):
     load-bearing rather than decorative. Measured on a real export: with warning prose
     first, `pandas.read_csv(path)` returned a (10, 3) DataFrame of nonsense and raised
     NOTHING, because the prose contains commas and pandas split the header line into three
-    plausible-looking columns. With a comma-free first line it raises ParserError instead,
-    and csv.DictReader's bogus first key becomes the remedy sentence itself. Readers that
-    honour '#' (numpy.loadtxt, Origin, gnuplot) skip it like any other comment.
-    A wrong number that announces itself beats a wrong number that does not.
+    plausible-looking columns. A comma-free first line removes that: the naive read becomes
+    either a ParserError or a single column whose NAME is the remedy -- which of the two
+    depends on pandas' implicit-index heuristic and so on the incidental column count (every
+    artifact this project produces today raises; a 25-column case was measured giving the
+    one-column form). Either way it can no longer come back as a plausible multi-column frame,
+    which is the only outcome that matters. csv.DictReader's bogus first key likewise becomes
+    the remedy sentence. Readers that honour '#' (numpy.loadtxt, Origin, gnuplot) skip it like
+    any other comment. A wrong number that announces itself beats a wrong number that does not.
     """
     if not warnings:
         return None

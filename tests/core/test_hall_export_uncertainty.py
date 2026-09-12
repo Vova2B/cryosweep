@@ -96,7 +96,8 @@ def test_the_comment_block_opens_with_a_comma_free_marker_so_a_naive_reader_fail
     A comma-free FIRST line fixes that: pandas then raises ParserError instead of guessing,
     and csv.DictReader's bogus first key becomes the remedy sentence itself. Readers that
     honour '#' (numpy.loadtxt, Origin, gnuplot) skip it like any other comment, so they are
-    unaffected. This test pins the loudness, not the wording."""
+    unaffected. This test pins the loudness, not the wording -- and not the specific
+    failure, which is one of two depending on column count (see the comment below)."""
     res, _ = _export(tmp_path, hall_synth_path)
     res = res.model_copy(update={"warnings": ["a, b, c -- prose that contains commas"]})
     out = export_result(res, str(tmp_path / "marker"), fmt="csv")
@@ -109,9 +110,21 @@ def test_the_comment_block_opens_with_a_comma_free_marker_so_a_naive_reader_fail
     # the prose itself is untouched below, commas and all
     assert any("a, b, c" in ln for ln in path.read_text().splitlines() if ln.startswith("#"))
 
+    # The GUARANTEE is not "pandas raises" -- that is one of two outcomes, and which one you
+    # get depends on pandas' implicit-index heuristic and so on the incidental column count.
+    # Measured: on every artifact this project produces today (real file, both probes, both
+    # shipped examples -- 26 columns) it raises ParserError; a reviewer measured a 25-column
+    # case yielding a (39, 1) frame whose single column IS the marker text. The invariant that
+    # holds in both, and the one worth pinning, is that a naive read can never come back as a
+    # PLAUSIBLE multi-column frame of nonsense -- which is exactly what it did before.
     pd = pytest.importorskip("pandas")
-    with pytest.raises(Exception):            # ParserError; loud is the whole point
-        pd.read_csv(path)
+    try:
+        naive = pd.read_csv(path)
+    except Exception:
+        naive = None                          # raised: unmistakable, nothing more to check
+    if naive is not None:
+        assert naive.shape[1] == 1, "a naive read must never look like plausible data"
+        assert str(naive.columns[0]).startswith("#"), "and its one column names the remedy"
     assert pd.read_csv(path, comment="#").shape[1] > 10, "and it reads correctly when told to"
 
 
