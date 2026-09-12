@@ -577,6 +577,20 @@ def series_resistivity_mr_pct_t(result, field_unit="Oe"):
 def _hall_points(result, ykey):
     return [p for p in (result.data or {}).get("points", []) if p.get(ykey) is not None]
 
+def _hall_withheld(result, ykey):
+    """Points whose `ykey` was WITHHELD by the decline rule (spec Sec 4.1), carrying the
+    value that was not published. Never mixed into the trusted series. Shared by both
+    point schemas that carry a `withheld` dict -- the field-sweep `hall` probe's points
+    and the `hall_tdep` probe's points are shaped identically here."""
+    out = []
+    for p in (result.data or {}).get("points", []):
+        if p.get(ykey) is not None:
+            continue
+        w = p.get("withheld") or {}
+        if w.get(ykey) is not None:
+            out.append({"temperature": p["temperature"], ykey: w[ykey]})
+    return sorted(out, key=lambda p: p["temperature"])
+
 def series_hall_rh_t(result, field_unit="Oe"):
     pts = _hall_points(result, "R_H")
     if not pts:
@@ -587,19 +601,38 @@ def series_hall_rh_t(result, field_unit="Oe"):
 
 def series_hall_mobility_t(result, field_unit="Oe"):
     pts = _hall_points(result, "mobility")
-    if not pts:
-        return []
-    pts = sorted(pts, key=lambda p: p["temperature"])
-    return [Series(key="mu", label="μ",
-                   x=[p["temperature"] for p in pts], y=[p["mobility"] for p in pts], default_on=True)]
+    out = []
+    if pts:
+        pts = sorted(pts, key=lambda p: p["temperature"])
+        out.append(Series(key="mu", label="μ",
+                          x=[p["temperature"] for p in pts], y=[p["mobility"] for p in pts],
+                          default_on=True))
+    wpts = _hall_withheld(result, "mobility")
+    if wpts:
+        # default_on=False -> absent from the kind's default set, so every existing render
+        # is byte-identical; role="two_point" -> the hollow-marker/dashed convention
+        # render.py already uses for a non-trusted estimator (KNOWN-ISSUES #2).
+        out.append(Series(key="mu_withheld", label="μ (declined)",
+                          x=[p["temperature"] for p in wpts],
+                          y=[p["mobility"] for p in wpts],
+                          default_on=False, role="two_point"))
+    return out
 
 def series_hall_n_t(result, field_unit="Oe"):
     pts = _hall_points(result, "carrier_n")
-    if not pts:
-        return []
-    pts = sorted(pts, key=lambda p: p["temperature"])
-    return [Series(key="n", label="n",
-                   x=[p["temperature"] for p in pts], y=[p["carrier_n"] for p in pts], default_on=True)]
+    out = []
+    if pts:
+        pts = sorted(pts, key=lambda p: p["temperature"])
+        out.append(Series(key="n", label="n",
+                          x=[p["temperature"] for p in pts], y=[p["carrier_n"] for p in pts],
+                          default_on=True))
+    wpts = _hall_withheld(result, "carrier_n")
+    if wpts:
+        out.append(Series(key="n_withheld", label="n (declined)",
+                          x=[p["temperature"] for p in wpts],
+                          y=[p["carrier_n"] for p in wpts],
+                          default_on=False, role="two_point"))
+    return out
 
 def series_hall_r2_t(result, field_unit="Oe"):
     pts = _hall_points(result, "r2")
@@ -821,6 +854,15 @@ def series_hall_tdep_n_t(result, field_unit="Oe"):
         out.append(Series(key="n_2point", label="n (0-field+1)",
                           x=[p["temperature"] for p in twop],
                           y=[p["carrier_n"] for p in twop], default_on=True, role="two_point"))
+    wpts = _hall_withheld(result, "carrier_n")
+    if wpts:
+        # Shares role="two_point" with the "n (0-field+1)" fallback above -- both are
+        # non-trusted series and render.py's hollow-marker convention only special-cases
+        # that role string (see catalog.py:588 series_hall_mobility_t for the fuller note).
+        out.append(Series(key="n_withheld", label="n (declined)",
+                          x=[p["temperature"] for p in wpts],
+                          y=[p["carrier_n"] for p in wpts],
+                          default_on=False, role="two_point"))
     return out
 
 
@@ -841,6 +883,12 @@ def series_hall_tdep_mobility_t(result, field_unit="Oe"):
         out.append(Series(key="sigma", label="σ",
                           x=[p["temperature"] for p in pts_sigma],
                           y=[p["sigma"] for p in pts_sigma], default_on=False))
+    wpts = _hall_withheld(result, "mobility")
+    if wpts:
+        out.append(Series(key="mu_withheld", label="μ (declined)",
+                          x=[p["temperature"] for p in wpts],
+                          y=[p["mobility"] for p in wpts],
+                          default_on=False, role="two_point"))
     return out
 
 

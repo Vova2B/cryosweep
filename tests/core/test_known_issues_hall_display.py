@@ -69,13 +69,20 @@ def test_no_method_boundary_note_on_n_t_when_the_fallback_carries_no_n():
     nor an instrument one and are withheld (r_h_unresolved) -- carrier_n is null on every
     one of them. R_H(T) still shows a real boundary between the two fit methods (R_H is
     untouched by the decline), so hall_tdep_RH_T keeps the note (parametrized case above).
-    n(T) does not: with no plotted "two_point" role there is no boundary left to warn
-    about on THIS panel, and the note correctly stays silent. This test used to be the
-    "hall_tdep_n_T" arm of the parametrized case above; it moved here once that stopped
-    being true for this fixture."""
+    n(T) does not: at the DEFAULT selection there is no "two_point"-role series plotted, so
+    there is no boundary left to warn about on THIS panel, and the note correctly stays
+    silent. This test used to be the "hall_tdep_n_T" arm of the parametrized case above; it
+    moved here once that stopped being true for this fixture.
+
+    2026-09-12 (task 9): the withheld carrier_n from these very points is now surfaced as
+    its own "n_withheld" inspection series, so the RAW series list legitimately carries a
+    "two_point" role again (KNOWN-ISSUES #2's hollow-marker convention, reused rather than
+    invented a second one for a non-trusted estimator) -- it is just default_on=False, so
+    render_kind's no-spec (default) call never selects it and the note stays silent."""
     from cryosweep_core.plotting.catalog import series_hall_tdep_n_t
     res = _tdep_result()
-    assert "two_point" not in {s.role for s in series_hall_tdep_n_t(res)}
+    two_point_series = [s for s in series_hall_tdep_n_t(res) if s.role == "two_point"]
+    assert two_point_series and all(s.default_on is False for s in two_point_series)
     fig = render_kind(res, "hall_tdep_n_T")
     assert fig.axes[0].get_title() == ""
 
