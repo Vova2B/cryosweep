@@ -16,7 +16,12 @@ _HDR = ("[Header]\nBYAPP, Resistivity\nINFO, decline_synth, SAMPLE\n[Data]\n"
 
 
 def _row(T, B_oe):
-    r = 1e-3 + 5e-4 * (B_oe / 1e4)
+    # A deterministic ODD-in-B scatter (sin) so the 10 K loop carries a REAL residual sigma
+    # that survives antisymmetrization (an even-in-B scatter would cancel out of R_asym):
+    # since the residual-sigma floor an exactly linear loop's float-noise sigma is None,
+    # and with no std column the point would then decline as unresolved -- which is not
+    # the decline this file is about.
+    r = 1e-3 + 5e-4 * (B_oe / 1e4) + 1e-6 * np.sin(B_oe / 1300.0)
     return f"{T:.4f},{B_oe:.1f},{r:.10e},{1e-3:.10e},{1e-6:.10e}"
 
 

@@ -122,8 +122,11 @@ def test_point_model_defaults():
 
 # ---- Task 6: HallTempDepAnalyzer.analyze() tests ---------------------------
 
-def test_analyze_synth_exact(hall_tdep_synth_path):
-    rt = load_dat(hall_tdep_synth_path)
+def test_analyze_synth_exact(hall_tdep_std_synth_path):
+    # std fixture: the noiseless one publishes no carrier density / mobility since the
+    # residual-sigma floor (its float-noise residual sigma is not an uncertainty estimate
+    # and it has no instrument std column). Same geometry, same R_H oracle below.
+    rt = load_dat(hall_tdep_std_synth_path)
     cfg = RunConfig(hall={"hall_channel": 1, "thickness_mm": 0.05, "longitudinal_channel": 2})
     res = HallTempDepAnalyzer().analyze(rt, cfg)
     assert res.status == "ok"
@@ -381,9 +384,13 @@ def test_two_point_extended_capability(hall_tdep_synth_path):
     assert caps["two_point_extended"]["applicable"] is True
 
 
-def test_tdep_rh_series_split_by_method(hall_tdep_synth_path):
+def test_tdep_rh_series_split_by_method(hall_tdep_std_synth_path):
     from cryosweep_core.plotting.catalog import series_hall_tdep_rh_t, series_hall_tdep_n_t
-    res = _full_tdep(hall_tdep_synth_path)
+    # std fixture (2026-09-14): on the noiseless one NO n series survives any more -- its
+    # antisym residual sigma is float noise and declined too. Here the antisym points resolve
+    # on their instrument sigma (1.25e-8 < |R_H| 3e-8) while the 2-point tail still does not
+    # (3.5e-8 > 2.5e-8), so the split below is the same one the docstring describes.
+    res = _full_tdep(hall_tdep_std_synth_path)
     keys = {s.key for s in series_hall_tdep_rh_t(res)}
     assert {"R_H_antisym", "R_H_2point"} <= keys
     # 2026-09-10 (spec Sec 4.1): this fixture carries no Std. Dev. column, so its 2-point

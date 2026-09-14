@@ -44,7 +44,13 @@ def test_degenerate_rh_axis_is_padded():
     import pq_compare
 
     for eid in ("hall_tdep_summary", "hall_tdep_rh_n_twin"):
-        entry = [e for e in pq_compare._load_manifest() if e.get("id") == eid][0]
+        entry = dict([e for e in pq_compare._load_manifest() if e.get("id") == eid][0])
+        # The manifest points these entries at the noiseless fixture, which publishes no
+        # carrier density since the residual-sigma floor (a float-noise sigma is not an
+        # uncertainty estimate) -- so both kinds have no n series there. The std fixture
+        # has the same geometry (same 3.31e-15 R_H span) plus the instrument sigma that
+        # resolves it; the manifest itself is outside this repository.
+        entry["dat"] = "tests/core/fixtures/hall_tdep_std_synth.dat"
         fig, status = pq_compare._render_v2(entry)
         assert fig is not None, status
         fig.canvas.draw()

@@ -16,7 +16,11 @@ _HDR = ("[Header]\nBYAPP, Resistivity\nINFO, sig_synth, SAMPLE\n[Data]\n"
 _RATIO = 1000.0          # R/rho, constant -> the constancy gate passes
 
 def _row(T, B_oe, sd_rho):
-    rxy = 1e-3 + 5e-4 * (B_oe / 1e4)
+    # deterministic ODD-in-B scatter (sin, so it survives antisymmetrization) so the
+    # residual family is a real number: since the residual-sigma floor an exactly linear
+    # loop's float-noise residual sigma is None, and this file is about BOTH families
+    # being present and apart
+    rxy = 1e-3 + 5e-4 * (B_oe / 1e4) + 2e-7 * np.sin(B_oe / 1300.0)
     return (f"{T:.4f},{B_oe:.1f},{rxy:.10e},{rxy / _RATIO:.10e},{sd_rho:.10e},"
             f"{1e-3:.10e},{1e-6:.10e}")
 
@@ -61,7 +65,7 @@ def test_absent_std_column_leaves_instrument_sigma_None_without_error():
     hdr = _HDR.replace("Bridge 1 Std. Dev. (Ohm-m),", "")
     rows = []
     for b in np.arange(-20000.0, 20000.1, 250.0):
-        rxy = 1e-3 + 5e-4 * (b / 1e4)
+        rxy = 1e-3 + 5e-4 * (b / 1e4) + 2e-7 * np.sin(b / 1300.0)   # odd scatter -> real residual sigma
         rows.append(f"10.0000,{b:.1f},{rxy:.10e},{rxy / _RATIO:.10e},{1e-3:.10e},{1e-6:.10e}")
     with tempfile.TemporaryDirectory() as d:
         p = pathlib.Path(d) / "nostd.dat"

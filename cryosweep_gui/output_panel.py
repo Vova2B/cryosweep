@@ -281,6 +281,9 @@ def flatten_rows(data: dict) -> list[tuple[str, str]]:
                 val = f"{rh:.4g} ± {sig:.2g} m³/C (σ residual — fit scatter)"
             elif p.get("sigma_zero_dof"):
                 val = f"{rh:.4g} m³/C (no σ — 2-point method)"
+            elif p.get("sigma_degenerate"):
+                # a zero-residual fit's sigma is float noise, not an uncertainty estimate
+                val = f"{rh:.4g} m³/C (no σ — residual σ degenerate: exact fit, no scatter to estimate from)"
             else:
                 val = f"{rh:.4g} m³/C"
             # Carried from Task 4's review: this row showed only the residual sigma, though
@@ -298,9 +301,12 @@ def flatten_rows(data: dict) -> list[tuple[str, str]]:
         if pts:
             n_res = sum(1 for p in pts if p.get("r_h_sigma") is not None)
             n_2pt = sum(1 for p in pts if p.get("sigma_zero_dof"))
+            n_deg = sum(1 for p in pts if p.get("sigma_degenerate"))
+            deg_txt = (f"; {n_deg} have a degenerate residual σ (exact fit, no scatter to "
+                       f"estimate from — not an uncertainty)" if n_deg else "")
             rows.append(("R_H(T) σ (residual)",
                          f"{n_res}/{len(pts)} points carry a residual σ (fit scatter); "
-                         f"{n_2pt} are 2-point (no σ)"))
+                         f"{n_2pt} are 2-point (no σ){deg_txt}"))
             inst = sorted(p["r_h_sigma_instrument"] for p in pts
                           if p.get("r_h_sigma_instrument") is not None)
             if inst:

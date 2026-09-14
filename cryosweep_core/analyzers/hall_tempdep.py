@@ -17,7 +17,7 @@ from cryosweep_core.analyzers.hall import (_carrier_n, _mobility,
                                       _long_rho_xx, field_sweep_points,
                                       _mobility_gap_reason, _RHO_XX_NO_ZERO_FIELD,
                                       WithheldDerived, decline_unresolved, is_resolved,
-                                      hall_confidence)
+                                      hall_confidence, degenerate_residual_sigma)
 from cryosweep_core.fitting.transport import LinearFitModel
 from cryosweep_core.result import Result, Provenance, Gate
 from cryosweep_core.registry import Need
@@ -92,6 +92,12 @@ class HallTDepPoint(BaseModel):
     # HallTempPoint.rho_xx_field_oe. Task 1 could not add it here because this model had no
     # per-point decline vocabulary; it does now.
     rho_xx_field_oe: float | None = None
+    # 2026-09-14 (append-only): the antisym fit's residual sigma was float noise from a
+    # zero-residual fit (relative sigma < hall.SIGMA_REL_FLOOR) or non-finite, and was set
+    # to None with this as the reason. DISTINCT from sigma_zero_dof (< 3 antisym points):
+    # here the fit had residual DOF to spare and the residuals still vanished. Same field,
+    # same meaning as HallTempPoint.sigma_degenerate.
+    sigma_degenerate: bool = False
 
 
 class HallTDepStage(BaseModel):
@@ -423,7 +429,17 @@ def _reconstruct_points(
             # exactly 1.0).
             if antisym_points >= 3:
                 ssig = float(fit.sigma["slope"])
-                pt.slope_sigma_ohm_per_T = ssig if np.isfinite(ssig) else None
+                # Same rule as hall._stage_fit, via the same helper: a residual sigma the
+                # residuals could not support (float noise from an exactly linear fit, or
+                # non-finite) is None with `sigma_degenerate` as its reason -- is_resolved
+                # would otherwise read a sigma of exactly 0.0 as maximally resolved and
+                # certify a carrier density from the ABSENCE of scatter. Measured on the
+                # noiseless shipped example: the whole relative-sigma population is
+                # {0.0, 1.49e-8}. Distinct from sigma_zero_dof below (< 3 points).
+                if degenerate_residual_sigma(ssig, slope):
+                    pt.sigma_degenerate = True
+                else:
+                    pt.slope_sigma_ohm_per_T = ssig
                 pt.r2 = float(fit.r2)
             else:
                 pt.sigma_zero_dof = True

@@ -112,7 +112,9 @@ def _write_instrument_sigma(tmp_path, name, sd=_INSTSIG_SD):
 def test_a_dominant_instrument_sigma_declines_every_rung_even_when_residual_sigma_is_zero(tmp_path):
     res = _analyze(_write_instrument_sigma(tmp_path, "instsig.dat"))
     p = res.data["points"][0]
-    assert p["r_h_sigma"] == 0.0                          # perfectly linear: residual is nil
+    # perfectly linear: the residual sigma is float noise, so since the residual-sigma
+    # floor it is None with `sigma_degenerate` as its reason (it used to read 0.0 here)
+    assert p["r_h_sigma"] is None and p["sigma_degenerate"] is True
     assert p["r_h_sigma_instrument"] is not None
     assert abs(p["r_h_sigma_instrument"]) > abs(p["R_H"])  # instrument sigma swamps R_H
     assert all(r["unresolved"] for r in p["r_h_ladder"])   # every rung follows suit

@@ -65,7 +65,10 @@ def _export_hall(result, stem) -> dict:
               "sigma_zero_dof", "rho_xx_field_oe (Oe)",
               "r_h_window_spread_not_an_error_bar (m^3/C)", "thickness_m", "geometry_sign",
               "carrier_n_withheld (1/m^3)", "carrier_type_withheld",
-              "mobility_withheld (m^2/Vs)"]
+              "mobility_withheld (m^2/Vs)",
+              # 2026-09-14: the residual sigma's decline reason, beside sigma_zero_dof's
+              # (they are distinct: n < 3 vs. residuals that vanished with DOF to spare)
+              "sigma_degenerate"]
     with pp.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields); w.writeheader()
         for p in pts:
@@ -89,7 +92,8 @@ def _export_hall(result, stem) -> dict:
                         "thickness_m": d.get("thickness_m"), "geometry_sign": d.get("geometry_sign"),
                         "carrier_n_withheld (1/m^3)": withheld.get("carrier_n"),
                         "carrier_type_withheld": withheld.get("carrier_type"),
-                        "mobility_withheld (m^2/Vs)": withheld.get("mobility")})
+                        "mobility_withheld (m^2/Vs)": withheld.get("mobility"),
+                        "sigma_degenerate": p.get("sigma_degenerate")})
     out["points"] = str(pp)
     # Controller audit (d): the ladder RUNGS, not only their spread, one row per
     # (temperature, rung) -- a lone spread number says the window moved R_H by some
@@ -148,7 +152,10 @@ def _export_hall_tdep(result, stem) -> dict:
               "sigma_zero_dof", "rho_xx_field_oe (Oe)",
               "thickness_m", "geometry_sign",
               "carrier_n_withheld (1/m^3)", "carrier_type_withheld",
-              "mobility_withheld (m^2/Vs)"]
+              "mobility_withheld (m^2/Vs)",
+              # 2026-09-14: the residual sigma's decline reason, beside sigma_zero_dof's
+              # (they are distinct: n < 3 vs. residuals that vanished with DOF to spare)
+              "sigma_degenerate"]
     with pp.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields); w.writeheader()
         for p_ in pts:
@@ -177,7 +184,8 @@ def _export_hall_tdep(result, stem) -> dict:
                         "thickness_m": d.get("thickness_m"), "geometry_sign": d.get("geometry_sign"),
                         "carrier_n_withheld (1/m^3)": withheld.get("carrier_n"),
                         "carrier_type_withheld": withheld.get("carrier_type"),
-                        "mobility_withheld (m^2/Vs)": withheld.get("mobility")})
+                        "mobility_withheld (m^2/Vs)": withheld.get("mobility"),
+                        "sigma_degenerate": p_.get("sigma_degenerate")})
     out["points"] = str(pp)
     cap = stem.with_suffix(".capabilities.csv")
     with cap.open("w", newline="") as f:

@@ -16,7 +16,15 @@ from cryosweep_core.analyzers.dispatch import analyze_file
 from cryosweep_core.plotting.render import render_kind
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+FIX = pathlib.Path(__file__).resolve().parent / "fixtures"
 _REG = build_default_registry()
+
+# The shipped noiseless example publishes NO carrier density since the residual-sigma floor
+# (hall.SIGMA_REL_FLOOR: a float-noise residual sigma is not an uncertainty estimate, and
+# the file carries no instrument std column), so every kind that draws an n axis has nothing
+# to plot on it. Tests of those kinds run on the std fixture instead -- the same geometry,
+# so the same degenerate 3e-15 R_H span, plus the instrument sigma that resolves it.
+STD_FIXTURE = "hall_tdep_std_synth.dat"
 
 
 def _analyze(example, probe, width_mm=None, **hall):
@@ -25,7 +33,8 @@ def _analyze(example, probe, width_mm=None, **hall):
         setattr(cfg.hall, k, v)
     if width_mm is not None:
         cfg.geometry.width_mm = width_mm
-    return analyze_file(load_dat(str(ROOT / "examples" / example)), cfg, _REG)
+    path = (FIX / example) if example == STD_FIXTURE else (ROOT / "examples" / example)
+    return analyze_file(load_dat(str(path)), cfg, _REG)
 
 
 # ---------------- #2: estimator families must be visually separable -----------------------
@@ -80,7 +89,9 @@ def test_no_method_boundary_note_on_n_t_when_the_fallback_carries_no_n():
     invented a second one for a non-trusted estimator) -- it is just default_on=False, so
     render_kind's no-spec (default) call never selects it and the note stays silent."""
     from cryosweep_core.plotting.catalog import series_hall_tdep_n_t
-    res = _tdep_result()
+    # std fixture (see STD_FIXTURE): the noiseless example now has no n series at all. Its
+    # 2-point tail is still withheld here -- instrument sigma 3.5e-8 against |R_H| 2.5e-8.
+    res = _analyze(STD_FIXTURE, "hall_tdep", hall_channel=1, thickness_mm=0.05)
     two_point_series = [s for s in series_hall_tdep_n_t(res) if s.role == "two_point"]
     assert two_point_series and all(s.default_on is False for s in two_point_series)
     fig = render_kind(res, "hall_tdep_n_T")
@@ -107,9 +118,10 @@ def test_no_warning_when_only_one_estimator_family():
     # Every kind that draws an R_H axis, not just the one the item named: the summary and
     # the twin were rendering a plain "1e-7" header while hall_tdep_RH_T carried mathtext,
     # i.e. the same quantity formatted two ways depending on which kind you opened.
-    ("hall_temperature_dependence.dat", "hall_tdep", "hall_tdep_summary",
+    # (std fixture, not the example: these two kinds draw an n axis -- see STD_FIXTURE)
+    (STD_FIXTURE, "hall_tdep", "hall_tdep_summary",
      dict(hall_channel=1, thickness_mm=0.5, longitudinal_channel=2)),
-    ("hall_temperature_dependence.dat", "hall_tdep", "hall_tdep_rh_n_twin",
+    (STD_FIXTURE, "hall_tdep", "hall_tdep_rh_n_twin",
      dict(hall_channel=1, thickness_mm=0.5)),
 ])
 def test_r_h_axis_never_concatenates_scale_and_offset(example, probe, kind, hall):

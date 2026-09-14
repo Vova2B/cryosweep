@@ -29,7 +29,7 @@ def test_stage_fit_slope_sigma_matches_linregress():
     lr = linregress(H / _OE_PER_T, R)
     assert d["slope_sigma_ohm_per_T"] == pytest.approx(float(lr.stderr), abs=1e-12)
     assert d["r_h_sigma"] == pytest.approx(float(lr.stderr) * 1e-4, rel=1e-12)
-    assert "sigma_zero_dof" not in d
+    assert d["sigma_zero_dof"] is False and d["sigma_degenerate"] is False
 
 
 def test_stage_fit_two_points_sigma_none_zero_dof():
@@ -225,9 +225,11 @@ def test_synth_std_fixture_antisym_and_2point_closed_forms():
     pts = {p["temperature"]: p for p in r.data["points"]}
     p30 = pts[30.0]                       # 3 antisym pairs at B = 2/4/6 T
     assert p30["antisym_points"] == 3
-    # residual sigma: exact-line fit -> finite, tiny (fit noise), NOT None at n >= 3
-    assert p30["slope_sigma_ohm_per_T"] is not None
-    assert abs(p30["slope_sigma_ohm_per_T"]) < 1e-10
+    # residual sigma: exact-line fit -> float noise (measured < 1e-10 Ohm/T against a
+    # 6e-4 slope), which since the residual-sigma floor is None with sigma_degenerate as
+    # its reason rather than a tiny number that would read as maximal resolution
+    assert p30["slope_sigma_ohm_per_T"] is None
+    assert p30["sigma_degenerate"] is True and p30["sigma_zero_dof"] is False
     # instrument sigma closed form: 2.5e-4 Ohm/T (see make_hall_tdep_std.py)
     assert p30["slope_sigma_instrument_ohm_per_T"] == pytest.approx(2.5e-4, rel=1e-6)
     assert p30["r_h_sigma_instrument"] == pytest.approx(1.25e-8, rel=1e-6)

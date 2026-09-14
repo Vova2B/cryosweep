@@ -53,10 +53,12 @@ def test_hall_probe_checklist_has_pq2_kinds(qapp, hall_path):
     assert "Antisymmetrization" in labels
 
 
-def test_hall_tdep_checklist_has_pq2_kinds(qapp, hall_tdep_synth_path):
+# std fixture: the noiseless one publishes no carrier density since the residual-sigma
+# floor, so hall_tdep_summary / hall_tdep_rh_n_twin would have no backing series.
+def test_hall_tdep_checklist_has_pq2_kinds(qapp, hall_tdep_std_synth_path):
     from cryosweep_gui.main_window import MainWindow
     win = MainWindow()
-    tab = _hall_tdep_tab(win, hall_tdep_synth_path)
+    tab = _hall_tdep_tab(win, hall_tdep_std_synth_path)
     assert "hall_tdep_summary" in tab.controls.enabled_kinds()
     assert "hall_tdep_rh_n_twin" in tab.controls.enabled_kinds()
     assert "hall_tdep_stages" in tab.controls.enabled_kinds()
@@ -115,12 +117,12 @@ def test_gated_kind_survives_layout_roundtrip(qapp, hall_path):
     assert "hall_rh_n_twin" in kinds       # backed kind -> kept
 
 
-def test_new_kinds_round_trip_through_layout_restore(qapp, hall_tdep_synth_path):
+def test_new_kinds_round_trip_through_layout_restore(qapp, hall_tdep_std_synth_path):
     """A PlotLayout containing the new kinds, dumped/reloaded, still reconciles intact
     once real analysis data backs them (non-gated case of the round trip)."""
     from cryosweep_gui.main_window import MainWindow
     win = MainWindow()
-    tab = _hall_tdep_tab(win, hall_tdep_synth_path)
+    tab = _hall_tdep_tab(win, hall_tdep_std_synth_path)
     result = tab._last_result
     assert result.status == "ok"
 

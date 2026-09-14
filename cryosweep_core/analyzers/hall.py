@@ -105,6 +105,11 @@ class HallTempPoint(BaseModel):
     # parser reading all three envelopes never has to special-case Hall.
     r_h_ladder: list[dict] | None = None
     r_h_spread: float | None = None
+    # 2026-09-14 (append-only): the trusted stage's residual sigma was float noise from a
+    # zero-residual fit (relative sigma < SIGMA_REL_FLOOR) or non-finite, and was set to
+    # None with this as the reason. DISTINCT from sigma_zero_dof (n < 3): here the fit had
+    # residual DOF to spare and the residuals still vanished.
+    sigma_degenerate: bool = False
 
 class Capability(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -189,6 +194,35 @@ def _antisymmetrize(H, R, sigma_R=None):
             s_asym = np.sqrt(s_pos ** 2 + s_neg ** 2) / 2.0
     return Hp, (r_pos - r_neg) / 2.0, s_asym
 
+#: A residual slope sigma whose RELATIVE size on R_H (sigma_slope / |slope| -- thickness
+#: cancels) sits below this is float noise from a zero-residual fit, not an uncertainty
+#: estimate. Measured: the noiseless shipped example's whole relative-sigma population is
+#: {0.0, 1.49e-8}; the smallest relative residual sigma on any real file is ~2.7e-2. 1e-6
+#: sits in a gap more than three orders of magnitude wide on BOTH sides, so it is not
+#: finely tuned (test_floor_is_not_finely_tuned pins that any floor in [1e-7, 1e-5]
+#: declines the identical set on every file). A RELATIVE floor, never `== 0.0`: an exact-
+#: zero test is itself a float-noise predicate -- on that example it would decline 19
+#: points and publish the other 4 as certain to eight significant digits.
+SIGMA_REL_FLOOR = 1e-6
+
+
+def degenerate_residual_sigma(ssig, slope) -> bool:
+    """True when a residual slope sigma is NOT an uncertainty estimate: non-finite, or
+    smaller than SIGMA_REL_FLOOR relative to the slope it qualifies (a zero-slope,
+    zero-sigma constant-y fit counts too: 0/0 is no estimate either). Shared by both Hall
+    analyzers so the rule cannot drift between them -- the asymmetry that let one probe
+    hold "absent evidence never certifies" while the other read a sigma of exactly 0.0 as
+    maximally resolved is how this drifted in the first place. Read the module constant at
+    call time so a test can move the floor."""
+    ssig = float(ssig)
+    if not np.isfinite(ssig):
+        return True
+    slope = abs(float(slope))
+    if slope == 0.0:
+        return ssig == 0.0
+    return (ssig / slope) < SIGMA_REL_FLOOR
+
+
 def _stage_fit(H, R, thickness_m, geometry_sign):
     """Linear fit R vs B (B=H/10000); returns slope (Ohm/T), r2, R_H = slope*thickness*sign."""
     H = np.asarray(H, float); R = np.asarray(R, float)
@@ -206,6 +240,8 @@ def _stage_fit(H, R, thickness_m, geometry_sign):
     # 2026-08-10 spec §2.1: the residual slope sigma was already computed by linregress and
     # previously discarded here. n < 3 -> zero residual DOF, linregress stderr 0.0 (measured):
     # 0.0 would assert perfect certainty, so it is None + sigma_zero_dof (U4).
+    out["sigma_zero_dof"] = False
+    out["sigma_degenerate"] = False
     if H.size < 3:
         out["slope_sigma_ohm_per_T"] = None
         out["r_h_sigma"] = None
@@ -217,7 +253,15 @@ def _stage_fit(H, R, thickness_m, geometry_sign):
         out["r2"] = None
     else:
         ssig = float(fit.sigma["slope"])
-        ssig = ssig if np.isfinite(ssig) else None
+        # A sigma the residuals could not support -- float noise from an exactly linear
+        # fit, or non-finite -- is None with its reason, never a number: is_resolved reads
+        # abs(0.0) < abs(R_H) as maximally resolved, which would certify a carrier density
+        # from the ABSENCE of scatter. `sigma_degenerate` is distinct from `sigma_zero_dof`
+        # above: that one means n < 3, this one means the residuals vanished with DOF to
+        # spare. Both may be False; they never mean the same thing.
+        if degenerate_residual_sigma(ssig, slope):
+            ssig = None
+            out["sigma_degenerate"] = True
         out["slope_sigma_ohm_per_T"] = ssig
         out["r_h_sigma"] = (ssig * thickness_m) if (ssig is not None and thickness_m) else None
     return out
@@ -692,6 +736,7 @@ def field_sweep_points(df, cmap, cfg, hc, thickness_m, rho_fn, rho_reason) -> li
         # mu = |R_H|/rho_xx are pure reciprocal/scale). Stage B only, like the values.
         trusted = anti if anti is not None else raw
         pt.sigma_zero_dof = bool(trusted.get("sigma_zero_dof", False))
+        pt.sigma_degenerate = bool(trusted.get("sigma_degenerate", False))
         if pt.R_H and pt.r_h_sigma is not None:
             rel = pt.r_h_sigma / abs(pt.R_H)
             if pt.carrier_n is not None:
