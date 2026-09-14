@@ -17,7 +17,9 @@ from cryosweep_core.analyzers.hall import (_carrier_n, _mobility,
                                       _long_rho_xx, field_sweep_points,
                                       _mobility_gap_reason, _RHO_XX_NO_ZERO_FIELD,
                                       WithheldDerived, decline_unresolved, is_resolved,
-                                      hall_confidence, degenerate_residual_sigma)
+                                      hall_confidence, degenerate_residual_sigma,
+                                      published_r2s, fit_quality_unavailable_warning,
+                                      FIT_QUALITY_UNAVAILABLE)
 from cryosweep_core.fitting.transport import LinearFitModel
 from cryosweep_core.result import Result, Provenance, Gate
 from cryosweep_core.registry import Need
@@ -149,6 +151,9 @@ class HallTempDepData(BaseModel):
     # before this analysis ran. Same field as HallData.skipped_rows -- one flag, one
     # meaning, across both Hall analyzers.
     skipped_rows: int = 0
+    # 2026-09-14 (append-only): result-level machine-readable flags, same field and meaning
+    # as HallData.flags (e.g. fit_quality_unavailable).
+    flags: list[str] = []
 
 
 # ---- pure helpers ----------------------------------------------------------
@@ -825,15 +830,20 @@ class HallTempDepAnalyzer:
         frac = (sum(1 for p in antisym_fitted if not p.low_confidence) / len(antisym_fitted)
                 if antisym_fitted else 0.0)
         # Spec §4.5: confidence = min(fit quality, resolved fraction), same rule as `hall`.
-        # fit_quality is the mean r2 over points whose r2 survives the zero-DOF rule above,
-        # or 1.0 (no constraint) when none do — reported honestly as `fit: None` below, not
-        # as a fabricated 1.0. `resolved` is computed over ALL points (not `fitted`): a
-        # point with no R_H at all counts as unresolved, never silently excluded (§4.1).
-        r2s = [p.r2 for p in points if p.r2 is not None]
-        fit_quality = float(np.mean(r2s)) if r2s else 1.0
+        # 2026-09-14: fit_quality is the mean r2 over the points that PUBLISHED a carrier
+        # density (published_r2s -- a declined point's r2 stays on the point but does not
+        # move the published result's ceiling), with `fit_n` saying how many went in. When
+        # none did, hall_confidence drops the term, caps the status and returns the flag:
+        # the old `else 1.0` scored the absence of fit evidence as a perfect fit beside a
+        # `fit: None` that said otherwise. `resolved` is computed over ALL points (not
+        # `fitted`): a point with no R_H at all counts as unresolved, never silently
+        # excluded (§4.1).
+        pub_r2s = published_r2s(points)
+        fit_quality = float(np.mean(pub_r2s)) if pub_r2s else None
         resolved_fraction = (sum(1 for p in points if is_resolved(p)) / len(points)
                              if points else 0.0)
-        status, conf = hall_confidence(fit_quality, resolved_fraction, cfg.confidence_min)
+        status, conf, rflags = hall_confidence(fit_quality, resolved_fraction,
+                                               cfg.confidence_min)
         # Closed O4 + hardening 2: honest aggregate warning when the instrument sigma says
         # the R_H(T) points are noise-dominated (> 50 % relative). EXPECTED to fire on the
         # real Hall file's channel (nV-level signal, median std/rho 61 %) — flag, never drop.
@@ -865,6 +875,10 @@ class HallTempDepAnalyzer:
                 f"{len(noisy)}/{len(rels)} R_H(T) points carry > 50% relative instrument "
                 f"sigma (median {float(np.median(rels)) * 100:.0f}%) — instrument noise, "
                 f"not fit quality; {verdict}")
+        if FIT_QUALITY_UNAVAILABLE in rflags:
+            n_pub = sum(1 for p in points if p.carrier_n is not None)
+            warns.append(fit_quality_unavailable_warning(points, n_pub))
+        data.flags = [*data.flags, *rflags]
         return Result(
             status=status,
             confidence=conf,
@@ -873,8 +887,9 @@ class HallTempDepAnalyzer:
                 "detector": 1.0,
                 "segmentation": 1.0,
                 "antisym_fraction": float(frac),
-                "fit": (float(np.mean(r2s)) if r2s else None),
+                "fit": fit_quality,
                 "resolved": float(resolved_fraction),
+                "fit_n": float(len(pub_r2s)),
             },
             data=data.model_dump(mode="json"),
             provenance=prov,

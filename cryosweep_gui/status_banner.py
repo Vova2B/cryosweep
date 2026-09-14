@@ -38,7 +38,11 @@ def _hall_confidence_note(result) -> str | None:
     # earlier phrasing put the non-binding one in a bare parenthetical, which landed
     # right after the gloss on the binding one -- two stacked parentheticals that read
     # as though both qualified the same number.
-    fit_words = ("fit quality — no r² survived the zero-degrees-of-freedom rule"
+    # 2026-09-14: a None `fit` no longer defaults to 1.0 inside the analyzers -- the term
+    # is dropped, the status is capped at low_confidence and the envelope carries the
+    # fit_quality_unavailable flag. Say that, rather than naming one of its causes.
+    fit_words = ("fit quality — no fit-quality evidence: no published point carries a "
+                 "usable r², so the status is capped at low_confidence"
                  if fit is None else f"fit quality r² = {fit:.3f}")
     resolved_words = f"resolved fraction {resolved:.3f} (R_H distinguishable from zero)"
     fit_binds = fit is not None and fit <= resolved

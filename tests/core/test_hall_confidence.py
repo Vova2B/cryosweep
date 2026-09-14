@@ -115,8 +115,9 @@ def test_tempdep_r2_survives_at_three_antisym_points():
 # Same formula as `hall`, over `points` (not `fitted`): resolved_fraction's denominator is
 # every point, including one with no R_H at all (spec §4.1/§4.5). Built from a file with two
 # distinct held-field pairs (+/-10000, +/-20000 Oe) across a T ramp, so every T lands at
-# antisym_points == 2 -- r2 stays None everywhere by (a), so fit_quality defaults to 1.0 and
-# confidence reduces to resolved_fraction alone. One branch carries tiny (resolved)
+# antisym_points == 2 -- r2 stays None everywhere by (a), so the fit ceiling is ABSENT
+# (2026-09-14: not a default 1.0 -- the status is capped at low_confidence and the flag says
+# why) and confidence reduces to resolved_fraction alone. One branch carries tiny (resolved)
 # instrument noise, the other huge (unresolved) noise, so the fraction is a real number
 # strictly between 0 and 1 -- a formula that only ever lands on 0.0 or 1.0 could not be
 # distinguished from the old antisym_fraction-only rule.
@@ -156,8 +157,9 @@ def test_tempdep_confidence_is_capped_by_resolved_fraction(tmp_path):
     n_resolved = sum(1 for p in pts if "r_h_unresolved" not in p["derived_flags"])
     assert 0.0 < n_resolved / len(pts) < 1.0, "fixture must mix resolved and unresolved points"
     assert parts["resolved"] == n_resolved / len(pts)
-    assert res.confidence == parts["resolved"]        # fit_quality defaults to 1.0
-    assert res.status == ("ok" if res.confidence >= 0.5 else "low_confidence")
+    assert res.confidence == parts["resolved"]        # the fit term is dropped, not defaulted
+    assert res.status == "low_confidence"             # capped: absent fit evidence never certifies
+    assert "fit_quality_unavailable" in res.data["flags"]
 
 
 # ---- Carried from Task 2's review: the gated (no-thickness) branch must report a real
@@ -209,9 +211,15 @@ def _write_tdep_majority_resolved(tmp_path):
     """Same construction as _write_tdep_mixed_resolution above, but with the resolved/
     unresolved cutoff moved from T=30 to T=50 so most points are resolved (measured
     resolved_fraction 0.8205, comfortably >= the default confidence_min of 0.5 -- this
-    fixture's default status is "ok", unlike the mostly-unresolved one above."""
+    fixture's default status is "ok", unlike the mostly-unresolved one above.
+
+    2026-09-14: a THIRD pair (+/-30000 Oe), so every T fits three antisym points and carries
+    a real r2. With two pairs r2 is None everywhere and the status is now capped at
+    low_confidence regardless of confidence_min -- an "ok" baseline would be unreachable
+    and this test could not show that the threshold moves it."""
     rows = []
-    for b, sign in ((10000.0, 1.0), (-10000.0, -1.0), (20000.0, 1.0), (-20000.0, -1.0)):
+    for b, sign in ((10000.0, 1.0), (-10000.0, -1.0), (20000.0, 1.0), (-20000.0, -1.0),
+                    (30000.0, 1.0), (-30000.0, -1.0)):
         rxy = 1e-3 + sign * 5e-4 * (abs(b) / 1e4)
         for i in range(70):
             T = 2.0 + i

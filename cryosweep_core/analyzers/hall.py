@@ -130,6 +130,10 @@ class HallData(BaseModel):
     # before this analysis ran. Always present -- a silent skip is the one thing the
     # design must not do, so a reader never has to be told separately what was excluded.
     skipped_rows: int = 0
+    # 2026-09-14 (append-only): result-level machine-readable flags -- reasons that apply to
+    # the whole result rather than to one point (e.g. FIT_QUALITY_UNAVAILABLE). Same field,
+    # same meaning on HallTempDepData.
+    flags: list[str] = []
 
 
 def _sha256(path):
@@ -319,18 +323,71 @@ def decline_unresolved(pt) -> None:
     pt.derived_flags = [*pt.derived_flags, "r_h_unresolved"]
 
 
-def hall_confidence(fit_quality: float, resolved_fraction: float,
-                     confidence_min: float) -> tuple[str, float]:
+#: Result-level flag: no published point carried a finite r2, so the fit ceiling could
+#: not be established. Annotates and caps; never revokes (see hall_confidence).
+FIT_QUALITY_UNAVAILABLE = "fit_quality_unavailable"
+
+
+def published_r2s(points) -> list[float]:
+    """The r2 values the `fit` ceiling averages: finite, and from points that actually
+    PUBLISHED a carrier density. A declined point contributes nothing to the published
+    result, so its r2 must not move the published result's fit ceiling -- but r2 STAYS on
+    the point itself: sigma and r2 are different claims and are never conflated; this is
+    only about what the aggregate averages. A non-finite r2 (a constant-y channel: ss_tot
+    is zero) is no evidence either, not a number that happens to be nan."""
+    return [float(p.r2) for p in points
+            if p.carrier_n is not None and p.r2 is not None and np.isfinite(p.r2)]
+
+
+def hall_confidence(fit_quality: float | None, resolved_fraction: float,
+                     confidence_min: float) -> tuple[str, float, list[str]]:
     """Spec Sec 4.5: confidence = min(fit quality, resolved fraction) -- two ceilings, and
     a result cannot be more trustworthy than either. Shared by both Hall analyzers so the
     rule cannot drift between them the way it did before this helper existed: Task 6 wrote
     the same four lines twice, and hall_tempdep's copy hardcoded "ok if conf >= 0.5"
     instead of reading confidence_min from RunConfig the way hall.py's copy (and every
     other confidence_min consumer) already did -- harmless at the default of 0.5, but it
-    silently forked which threshold a raised --confidence-min actually moved."""
+    silently forked which threshold a raised --confidence-min actually moved.
+
+    2026-09-14: `fit_quality` is None (or non-finite) when no published point carries an
+    r2 -- absent BY CONSTRUCTION for the one-pair-per-temperature protocol (138/138 points
+    on the real Hall file, 130/130 on the shipped subset), so not an edge case. Both
+    callers used to substitute 1.0, scoring the absence of fit evidence as a PERFECT fit
+    while the envelope beside it reported `fit: None`. Substituting 0.0 is the same
+    conflation inverted: min() makes it absorbing, so confidence would pin at exactly 0.0
+    on every such file and erase the informative `resolved` term -- against this repo's
+    own convention (power_law_n_spread is None, never 0.0, plus a flag that annotates
+    without revoking). So: the fit term is DROPPED from the min, confidence is the
+    remaining ceiling, the status is CAPPED at low_confidence (absent evidence can never
+    certify `ok`), and FIT_QUALITY_UNAVAILABLE is returned for the caller to publish.
+    Changed here, once, so the rule cannot fork again."""
+    flags: list[str] = []
+    if fit_quality is None or not np.isfinite(fit_quality):
+        conf = float(resolved_fraction)
+        flags.append(FIT_QUALITY_UNAVAILABLE)
+        return "low_confidence", conf, flags
     conf = float(min(fit_quality, resolved_fraction))
     status = "ok" if conf >= confidence_min else "low_confidence"
-    return status, conf
+    return status, conf, flags
+
+
+def fit_quality_unavailable_warning(points, n_published: int) -> str:
+    """Why no r2 reached the fit ceiling, in the reader's terms."""
+    n_zero_dof = sum(1 for p in points if getattr(p, "sigma_zero_dof", False))
+    n_nonfinite = sum(1 for p in points
+                      if p.r2 is not None and not np.isfinite(p.r2))
+    why = []
+    if n_zero_dof:
+        why.append(f"{n_zero_dof} of {len(points)} points fit through fewer than three "
+                   f"antisymmetrized points, where r² is undefined")
+    if n_nonfinite:
+        why.append(f"{n_nonfinite} carry a non-finite r² (constant signal)")
+    if not n_published:
+        why.append("no point published a carrier density")
+    return (f"fit quality could not be established: none of the {n_published} published "
+            f"point(s) carries a usable r² ({'; '.join(why) or 'no r² available'}) — "
+            f"confidence rests on the resolved fraction alone and the status is capped at "
+            f"low_confidence")
 
 
 _LADDER_FRACTIONS = (1.00, 0.75, 0.50, 0.25)
@@ -921,7 +978,10 @@ class HallAnalyzer:
         hd = HallData(probe="hall", hall_channel=hc.hall_channel, thickness_m=thickness_m,
                       geometry_sign=hc.geometry_sign, longitudinal_source=long_source,
                       points=points, capabilities=caps, skipped_rows=n_skip)
-        r2s = [p.r2 for p in points if p.r2 is not None]
+        # Gated branch (below): every FINITE r2 -- nothing can publish without a thickness,
+        # and this `fit` is a diagnostic there, not a confidence input. Main branch: the
+        # published basis (published_r2s), which is what the `fit` ceiling is a claim about.
+        r2s = [float(p.r2) for p in points if p.r2 is not None and np.isfinite(p.r2)]
         if thickness_m is None:
             # A missing thickness is a missing USER INPUT, not a broken file (same rule as
             # hall_channel above and molar_mass on VSM): gate with a remedy, and KEEP the
@@ -942,13 +1002,25 @@ class HallAnalyzer:
         # lines fit; `resolved` says how many R_H are distinguishable from zero. A result
         # cannot be more trustworthy than either. min, not a product: multiplying two
         # ceilings understates a result that is merely noisy OR merely scattered.
-        fit_quality = float(np.mean(r2s)) if r2s else 1.0
+        # 2026-09-14: the fit ceiling averages r2 over the points that PUBLISHED a carrier
+        # density (published_r2s), and `fit_n` says how many went into the mean. When none
+        # did, hall_confidence drops the term, caps the status and hands back the flag --
+        # no 1.0 default (see its docstring).
+        pub_r2s = published_r2s(points)
+        fit_quality = float(np.mean(pub_r2s)) if pub_r2s else None
         resolved_fraction = (sum(1 for p in points if is_resolved(p)) / len(points)
                              if points else 0.0)
-        status, conf = hall_confidence(fit_quality, resolved_fraction, cfg.confidence_min)
+        status, conf, rflags = hall_confidence(fit_quality, resolved_fraction,
+                                               cfg.confidence_min)
+        warns = ([skip_warn] if skip_warn else []) + sigma_noise_warnings(points)
+        if FIT_QUALITY_UNAVAILABLE in rflags:
+            n_pub = sum(1 for p in points if p.carrier_n is not None)
+            warns.append(fit_quality_unavailable_warning(points, n_pub))
+        hd.flags = [*hd.flags, *rflags]
         return Result(status=status, confidence=conf,
                       confidence_parts={"detector": 1.0, "segmentation": 1.0,
-                                        "fit": (float(np.mean(r2s)) if r2s else None),
-                                        "resolved": float(resolved_fraction)},
-                      warnings=([skip_warn] if skip_warn else []) + sigma_noise_warnings(points),
+                                        "fit": fit_quality,
+                                        "resolved": float(resolved_fraction),
+                                        "fit_n": float(len(pub_r2s))},
+                      warnings=warns,
                       data=hd.model_dump(mode="json"), provenance=prov)
