@@ -70,9 +70,16 @@ where the old behaviour degraded silently instead of saying so.
   code of a shipped example to change: `hall_temperature_dependence.dat` goes from confidence
   1.0 to 0.605263 (23 of 38 points resolved), and `hall_mixed_sweeps.dat` from 1.0 to 0.561538
   (73 of 130) — both stay `status: "ok"`. Only the real reference file crosses the threshold,
-  to confidence 0.478261 and exit 11. Field-sweep `hall` confidence is unchanged on every
-  file we have, to the last digit: its new `resolved` term is 1.0 throughout, and the
-  `--skip-rows` default below leaves those files' fits untouched.
+  to confidence 0.478261 and exit 11. **Field-sweep `hall` confidence moves too, but far less
+  often:** across every shipped example on either channel, exactly one configuration changes —
+  `hall_mixed_sweeps.dat` channel 2, 0.248483 → 0.111111, because its `resolved` term is
+  0.111111. Every other shipped example is identical to the last digit on both channels. The
+  `resolved` term is *not* 1.0 everywhere, though: on our reference measurement files it reads
+  1.0, 0.888889, 0.555556 and 0.0 on different channels, and where it is the smaller of the two
+  ceilings it sets the confidence. Separately, the `--skip-rows` default below moves two
+  reference-file confidences by changing the fit itself (one by 4×10⁻⁵, one from 0.887969 to
+  0.962119). **No field-sweep `hall` status or exit code changes in any of these cases** — only
+  the confidence number.
 - **`carrier_n`, `carrier_type` and `mobility` are `null` wherever R_H's own uncertainty does
   not resolve it** — σ ≥ |R_H|, checked against the instrument sigma where the file supports it
   and the residual sigma otherwise — under a machine-readable `r_h_unresolved` flag; the
