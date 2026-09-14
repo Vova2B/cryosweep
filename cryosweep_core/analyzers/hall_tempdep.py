@@ -24,7 +24,9 @@ from cryosweep_core.registry import Need
 from cryosweep_core.io.loader import load_dat
 from cryosweep_core.io.columns import canonicalize_columns
 from cryosweep_core.grouping import cluster_field_setpoints
-from cryosweep_core.analyzers.hall_sigma import row_sigma_R, slope_sigma_ols, skip_row_warning
+from cryosweep_core.analyzers.hall_sigma import (row_sigma_R, slope_sigma_ols,
+                                                 skip_row_warning, resolve_skip_rows,
+                                                 auto_skip_warning)
 
 from cryosweep_core.units import OE_PER_T as _OE_PER_T   # single-sourced
 
@@ -685,13 +687,15 @@ class HallTempDepAnalyzer:
                           errors=[f"hall channel {hc.hall_channel} resistance / T / H not found"],
                           data={"probe": "hall_tdep"}, provenance=prov)
 
-        # Task 4b: a user-controlled leading-row skip -- see hall.py's HallAnalyzer.analyze
-        # for the full rationale. Same estimator, same flag, applied here too so one
-        # config field means one thing across both Hall analyzers (the real file's bad
-        # row was measured to leave this analyzer byte-identical either way, but it still
-        # honours the flag for consistency rather than because it needs it).
-        n_skip = max(0, int(hc.skip_rows))
-        skip_warn = skip_row_warning(df, cmap, hc.hall_channel, n_skip) if n_skip else None
+        # The leading-row skip -- see hall.py's HallAnalyzer.analyze for the full
+        # rationale. Same resolver, same flag, applied here too so one config field means
+        # one thing across both Hall analyzers (the real file's bad row was measured to
+        # leave this analyzer byte-identical either way, but it still honours the flag for
+        # consistency rather than because it needs it).
+        n_skip, from_auto = resolve_skip_rows(hc.skip_rows, df, cmap)
+        skip_warn = (auto_skip_warning(df, cmap, n_skip) if from_auto
+                     else (skip_row_warning(df, cmap, hc.hall_channel, n_skip) if n_skip
+                           else None))
         if n_skip:
             df = df.iloc[n_skip:].reset_index(drop=True)
 

@@ -20,10 +20,11 @@ class HallInputPanel(InputPanel):
         self.width_edit = QLineEdit(); self.width_edit.setPlaceholderText("mm (optional, for J)")
         self.long_file_btn = QPushButton("Choose longitudinal file…")
         self.long_file_label = QLabel("(same file)")
-        # Task 4b: leading rows to drop before analysis (owner design -- an operator
-        # count, never a detector). Defaults to "1" so the panel matches HallCfg.skip_rows.
-        self.skip_rows_edit = QLineEdit("1")
-        self.skip_rows_edit.setPlaceholderText("leading rows to drop (default 1)")
+        # Leading rows to drop before analysis. "auto" drops only rows that are provably
+        # corrupt; a number drops exactly that many and turns detection off. Defaults to
+        # "auto" so the panel matches HallCfg.skip_rows.
+        self.skip_rows_edit = QLineEdit("auto")
+        self.skip_rows_edit.setPlaceholderText("auto, or a row count")
         form.addRow("Hall channel", self.hall_channel_edit)
         form.addRow("Thickness", self.thickness_edit)
         form.addRow("Thickness unit", self.thickness_unit)
@@ -72,9 +73,15 @@ class HallInputPanel(InputPanel):
             hall["longitudinal_channel"] = int(lch)
         if self._long_file:
             hall["longitudinal_file"] = self._long_file
-        skip = opt_float(self.skip_rows_edit.text())
-        if skip is not None:
-            hall["skip_rows"] = int(skip)
+        skip_txt = self.skip_rows_edit.text().strip()
+        if skip_txt.lower() == "auto":
+            hall["skip_rows"] = "auto"
+        else:
+            skip = opt_float(skip_txt)
+            # a negative or unparseable entry leaves the field alone rather than raising
+            # in a panel the user is still typing into -- HallCfg's own default applies.
+            if skip is not None and skip >= 0:
+                hall["skip_rows"] = int(skip)
         ov = {"hall": hall}
         w = opt_float(self.width_edit.text())
         if w is not None:
@@ -104,7 +111,7 @@ class HallInputPanel(InputPanel):
             combo.blockSignals(False)
         self.long_channel_edit.setText(state.get("long_channel", ""))
         self.set_longitudinal_file(state.get("long_file"))
-        self.skip_rows_edit.setText(state.get("skip_rows", "1"))
+        self.skip_rows_edit.setText(state.get("skip_rows", "auto"))
 
 register_panel("hall", HallInputPanel)
 register_panel("hall_tdep", HallInputPanel)   # D7: Temp-Dep Hall reuses the Hall inputs (reads cfg.hall)

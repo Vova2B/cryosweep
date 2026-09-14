@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, NonNegativeInt
 
 class SampleGeometry(BaseModel):
     width_mm: float | None = None
@@ -31,10 +31,17 @@ class HallCfg(BaseModel):
     tdep_two_point_fallback: bool = True     # zero-field-subtracted 2-point R_H(T) fallback (Sub-feature B)
     # Some PPMS runs write a first data row taken before the bridge has settled -- not a
     # noisy reading, not a reading at all (measured: R off by 10-11 orders of magnitude
-    # from the file median). Operator-controlled, not a detector: drops the first N rows
-    # of the file before either Hall analyzer runs. Default 1 because the defect is common
-    # enough to warrant it; --skip-rows 0 restores the pre-existing (unfiltered) behaviour.
-    skip_rows: int = 1
+    # from the file median). "auto" (the default) drops leading rows only where they are
+    # PROVABLY corrupt by that measure; an explicit integer drops exactly that many and
+    # turns detection off, because the operator has already decided. 0 drops nothing.
+    #
+    # This defaulted to an unconditional 1 until 2026-09-14. The evidence for making the
+    # threshold act rather than only warn: across every resistivity-format file available,
+    # row 0 sits between 0.26x and 14.7x the file median EXCEPT on the one corrupted file,
+    # where it sits at 1.16e12x and 1.32e11x. Ten empty orders of magnitude separate the
+    # two populations. Dropping row 0 unconditionally cost a good row on every other file
+    # -- up to 9.6% on a published R_H -- to catch a defect no good file comes near.
+    skip_rows: Literal["auto"] | NonNegativeInt = "auto"
 
 
 class ResistivityCfg(BaseModel):

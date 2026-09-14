@@ -9,11 +9,16 @@ rather than with how well a model fits:
    WEAKER, DIFFERENT claim than the residual (fit-scatter) sigma: it measures the
    instrument's repeat noise, not how well the line fits. The two must never share a
    label.
-2. `skip_row_warning` (2026-09-10), which judges whether a row the operator skipped
-   looked physical. It is not a sigma primitive; it lives here because it makes the same
-   per-row comparison against the file's own reported std-dev, and both Hall analyzers
-   need one copy. The module scope is deliberately "per-row instrument facts" rather than
-   "sigma" alone -- if something lands here that is neither, it belongs elsewhere.
+2. The leading-row judgement (2026-09-10; made conditional 2026-09-14) -- one ratio
+   test with two consumers. `corrupt_leading_rows` decides what `skip_rows="auto"` drops;
+   `skip_row_warning` tells an operator who passed an explicit count that a row they
+   dropped looked fine. Both read the same `SKIP_PHYSICAL_RATIO` from the same place on
+   purpose: a threshold that acts and a threshold that warns must never be able to
+   disagree about the same row. Neither is a sigma primitive; they live here because they
+   make the same per-row comparison against the file's own reported std-dev, and both Hall
+   analyzers need one copy. The module scope is deliberately "per-row instrument facts"
+   rather than "sigma" alone -- if something lands here that is neither, it belongs
+   elsewhere.
 """
 from __future__ import annotations
 import numpy as np
@@ -63,6 +68,132 @@ def row_sigma_R(df, cmap, channel: int):
 #: this is not a tuning exercise; a test pins the choice's insensitivity across many orders
 #: of magnitude either side.
 SKIP_PHYSICAL_RATIO = 1e6
+
+
+#: Auto mode never scans -- and so never drops -- more than this many leading rows,
+#: however broken the head of a file is. A bounded blast radius is what makes a detector
+#: acceptable here at all: the measured defect is a SINGLE pre-settling row, so ten is
+#: already generous, and a file whose first ten rows are all unphysical has a problem no
+#: row-skip should be quietly papering over.
+AUTO_SCAN_CAP = 10
+
+
+def _channel_ratios(df, cmap, channel: int, baseline_skip: int):
+    """(|R| ratio, sigma ratio) per row for `channel`, against its own baseline median.
+
+    The baseline EXCLUDES the first `baseline_skip` rows so the comparison can never be
+    circular: a corrupt row must not be allowed to inflate the median it is judged
+    against. Either element is None when that quantity has no comparable baseline.
+    """
+    res_key = f"resistance_ch{channel}"
+    if res_key not in cmap.logical:
+        return None, None
+    R = pd.to_numeric(df[cmap.logical[res_key]], errors="coerce").to_numpy(float)
+    if baseline_skip >= R.size:
+        return None, None
+    kept_R = R[baseline_skip:]
+    med_R = float(np.nanmedian(np.abs(kept_R))) if np.isfinite(kept_R).any() else None
+    r_ratio = np.abs(R) / med_R if (med_R and med_R > 0) else None
+    sigma = row_sigma_R(df, cmap, channel)
+    s_ratio = None
+    if sigma is not None:
+        kept_sigma = sigma[baseline_skip:]
+        if np.isfinite(kept_sigma).any():
+            med_sigma = float(np.nanmedian(kept_sigma))
+            if med_sigma and med_sigma > 0:
+                s_ratio = sigma / med_sigma
+    return r_ratio, s_ratio
+
+
+def _row_is_corrupt(ratios, i: int) -> bool:
+    """True only on POSITIVE evidence -- some ratio exists for row `i` and exceeds the
+    threshold. A row nothing can judge is never condemned."""
+    for r_ratio, s_ratio in ratios:
+        for ratio in (r_ratio, s_ratio):
+            if ratio is None:
+                continue
+            v = ratio[i]
+            if np.isfinite(v) and v > SKIP_PHYSICAL_RATIO:
+                return True
+    return False
+
+
+def corrupt_leading_rows(df, cmap, max_scan: int = AUTO_SCAN_CAP) -> int:
+    """How many leading rows are PROVABLY corrupt -- the count `skip_rows="auto"` drops.
+
+    A row counts corrupt when, on ANY resistance channel present, its |R| or its reported
+    instrument sigma exceeds SKIP_PHYSICAL_RATIO times that channel's baseline median. Any
+    one channel's evidence condemns the whole row because a reading taken before the bridge
+    settled is not a reading on any channel; on the one corrupted file measured here both
+    channels say so at once (1.16e12x on channel 1, 1.32e11x on channel 2).
+
+    Scanning stops at the first row that is not corrupt, and never passes `max_scan`.
+    Absence of evidence is never evidence: a row that cannot be judged -- no usable R, no
+    reported sigma -- is KEPT. On every uncorrupted file measured here this returns 0, which
+    is the whole point of consulting it instead of dropping a row unconditionally.
+    """
+    channels = [ch for ch in (1, 2, 3) if f"resistance_ch{ch}" in cmap.logical]
+    if not channels or len(df) < 4:
+        return 0
+    # Enough clean rows must remain to form a median. On a real file (thousands of rows)
+    # this is just max_scan; on a short synthetic it backs off rather than refusing to judge.
+    baseline_skip = min(max_scan, max(1, len(df) // 3))
+    ratios = [_channel_ratios(df, cmap, ch, baseline_skip) for ch in channels]
+    n = 0
+    while n < max_scan and _row_is_corrupt(ratios, n):
+        n += 1
+    return n
+
+
+def resolve_skip_rows(skip_rows, df, cmap) -> tuple[int, bool]:
+    """(count, came_from_auto) -- how many leading rows to drop, for both Hall analyzers.
+
+    "auto" consults `corrupt_leading_rows`. An explicit integer is obeyed verbatim AND
+    turns detection off: the operator has already decided, and a detector that overrode
+    them would make `--skip-rows 0` mean something other than "keep everything".
+    """
+    if skip_rows == "auto":
+        return corrupt_leading_rows(df, cmap), True
+    return max(0, int(skip_rows)), False
+
+
+def auto_skip_warning(df, cmap, n_skip: int) -> str | None:
+    """Say what auto dropped and why, naming the evidence and the flag that reverses it.
+
+    Dropping data silently is the one thing this design must never do -- so when auto acts
+    it reports the worst-offending channel's own numbers. Silent when it dropped nothing,
+    which is the common case and needs no noise.
+    """
+    if n_skip <= 0:
+        return None
+    baseline_skip = min(AUTO_SCAN_CAP, max(1, len(df) // 3))
+    worst = None                                   # (ratio, channel, value, median, what)
+    for ch in (1, 2, 3):
+        if f"resistance_ch{ch}" not in cmap.logical:
+            continue
+        R = pd.to_numeric(df[cmap.logical[f"resistance_ch{ch}"]], errors="coerce").to_numpy(float)
+        r_ratio, s_ratio = _channel_ratios(df, cmap, ch, baseline_skip)
+        sigma = row_sigma_R(df, cmap, ch)
+        for i in range(min(n_skip, R.size)):
+            if r_ratio is not None and np.isfinite(r_ratio[i]) and r_ratio[i] > 0:
+                # the ratio was formed AS |R[i]|/median, so the median divides back out
+                cand = (r_ratio[i], ch, abs(R[i]), abs(R[i]) / r_ratio[i], "|R|", "Ohm")
+                if worst is None or cand[0] > worst[0]:
+                    worst = cand
+            if (s_ratio is not None and sigma is not None
+                    and np.isfinite(s_ratio[i]) and s_ratio[i] > 0):
+                cand = (s_ratio[i], ch, sigma[i], sigma[i] / s_ratio[i],
+                        "reported std", "Ohm")
+                if worst is None or cand[0] > worst[0]:
+                    worst = cand
+    if worst is None:
+        return None
+    ratio, ch, value, median, what, unit = worst
+    plural = "" if n_skip == 1 else "s"
+    return (f"dropped {n_skip} leading data row{plural} as unphysical: channel {ch} "
+            f"{what} = {value:.2e} {unit} is {ratio:.1e} times the file median "
+            f"({median:.2e} {unit}). Re-run with --skip-rows 0 to keep "
+            f"{'it' if n_skip == 1 else 'them'}.")
 
 
 def skip_row_warning(df, cmap, channel: int, skip_rows: int) -> str | None:

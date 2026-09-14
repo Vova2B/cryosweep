@@ -24,20 +24,21 @@ where the old behaviour degraded silently instead of saying so.
   rungs resolved — a spread IS reported, but only between the two widest windows). A new
   sibling `<stem>.hall_ladder.csv` carries the rungs themselves, one row per
   (temperature, rung).
-- **`--skip-rows N`** (`HallCfg.skip_rows`; CLI flag; GUI field; default **1**) drops the first
-  N rows of the file before either Hall analyzer runs, for PPMS runs whose first data row was
-  written before the measurement bridge settled. `data.skipped_rows` always reports the count;
-  a reversal warning fires (naming `--skip-rows 0`) when the row the default actually dropped
-  looks physical rather than corrupted.
-  **This default changes published numbers on existing files, and it is the only change in
-  this release that does so for the field-sweep `hall` probe.** Dropping one leading row
-  re-fits the loop that row belonged to: on `hall_field_sweeps.dat` R_H moves by 0.001 %
-  (still `-2.500e-07 m³/C` as quoted in the README), on `hall_mixed_sweeps.dat` the 300 K
-  loop's R_H moves by 9.6 %, and on the real reference file by 3.3 %; each file's confidence
-  moves with it, none changes status. Passing `--skip-rows 0` reproduces the previous
-  release's field-sweep output exactly, to the last digit. Note also that the reversal
-  warning fires on **every** Hall file we have — the default drops a row that looks physical
-  in all six — so treat it as a prompt to check your own file, not as a rare edge case.
+- **`--skip-rows auto|N`** (`HallCfg.skip_rows`; CLI flag; GUI field; default **`auto`**)
+  drops leading rows before either Hall analyzer runs, for PPMS runs whose first data row was
+  written before the measurement bridge settled — a row that is not a noisy reading but not a
+  reading at all. `auto` drops a row **only where it is provably corrupt**: more than 10⁶×
+  the file's own median on `|R|` or on the instrument's reported σ, on any channel. An
+  explicit integer drops exactly that many and turns detection off, because the operator has
+  already decided; `0` drops none. `data.skipped_rows` always reports the count, `auto` names
+  the evidence and the reversal when it acts, and an explicit count still warns when a row it
+  dropped looked physical.
+  The threshold acts rather than merely warning because the two populations do not overlap:
+  across every resistivity-format file available to us, row 0 sits between 0.26× and 14.7× the
+  file median — except on one corrupted file, where it sits at 1.16×10¹² and 1.32×10¹¹. Ten
+  empty orders of magnitude separate them. `auto` scans at most 10 leading rows, so its reach
+  is bounded, and a row it cannot judge at all (no usable R, no reported σ) is kept: absence
+  of evidence is not evidence.
 - **A default-off inspection series draws the points a decline rule withheld.** Every Hall
   panel carrying a carrier density or a mobility — on the field-sweep probe as well as the
   temperature-dependent one, the combined `R_H + carrier n` twin included — can plot the
@@ -69,10 +70,9 @@ where the old behaviour degraded silently instead of saying so.
   code of a shipped example to change: `hall_temperature_dependence.dat` goes from confidence
   1.0 to 0.605263 (23 of 38 points resolved), and `hall_mixed_sweeps.dat` from 1.0 to 0.561538
   (73 of 130) — both stay `status: "ok"`. Only the real reference file crosses the threshold,
-  to confidence 0.478261 and exit 11. On the field-sweep `hall` probe the new `resolved` term
-  is 1.0 on every file we have, so this formula never lowers its confidence — but that
-  probe's reported confidence does still move slightly, because the `--skip-rows` default
-  below changes the fit it is computed from.
+  to confidence 0.478261 and exit 11. Field-sweep `hall` confidence is unchanged on every
+  file we have, to the last digit: its new `resolved` term is 1.0 throughout, and the
+  `--skip-rows` default below leaves those files' fits untouched.
 - **`carrier_n`, `carrier_type` and `mobility` are `null` wherever R_H's own uncertainty does
   not resolve it** — σ ≥ |R_H|, checked against the instrument sigma where the file supports it
   and the residual sigma otherwise — under a machine-readable `r_h_unresolved` flag; the

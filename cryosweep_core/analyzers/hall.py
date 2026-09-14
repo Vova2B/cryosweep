@@ -11,7 +11,9 @@ from cryosweep_core.result import Result, Provenance, Gate
 from cryosweep_core.registry import Need
 from cryosweep_core.io.loader import load_dat
 from cryosweep_core.grouping import cluster_field_setpoints
-from cryosweep_core.analyzers.hall_sigma import row_sigma_R, slope_sigma_ols, skip_row_warning
+from cryosweep_core.analyzers.hall_sigma import (row_sigma_R, slope_sigma_ols,
+                                                 skip_row_warning, resolve_skip_rows,
+                                                 auto_skip_warning)
 
 E_CHG = 1.602176634e-19     # Coulomb
 from cryosweep_core.units import OE_PER_T as _OE_PER_T   # single-sourced
@@ -812,16 +814,20 @@ class HallAnalyzer:
             return Result(status="error",
                           errors=[f"hall channel {hc.hall_channel} resistance column / T / H not found"],
                           data={"probe": "hall"}, provenance=prov)
-        # Task 4b: a user-controlled leading-row skip, not a detector. Some PPMS runs
-        # write a first data row taken before the bridge has settled -- not a noisy
-        # reading, not a reading at all (measured: R off by 10-11 orders of magnitude
-        # from the file median). skip_rows drops the first N rows of the WHOLE file
-        # (every column, not just this channel) before anything else runs; the operator
-        # decides N, never a threshold. The count and, when the dropped row looked
-        # physical, a reversal warning both go out no matter what the rest of the file
-        # yields, so both are computed before df is sliced.
-        n_skip = max(0, int(hc.skip_rows))
-        skip_warn = skip_row_warning(df, cmap, hc.hall_channel, n_skip) if n_skip else None
+        # A leading-row skip over the WHOLE file (every column, not just this channel),
+        # applied before anything else runs. Some PPMS runs write a first data row taken
+        # before the bridge has settled -- not a noisy reading, not a reading at all
+        # (measured: R off by 10-11 orders of magnitude from the file median).
+        #
+        # `skip_rows="auto"` drops only rows that carry that signature; an explicit count
+        # is obeyed verbatim and turns detection off. Each mode gets the warning that fits
+        # it: auto explains what it dropped and why, an explicit count is told when a row
+        # it dropped looked physical. The count and the warning both go out no matter what
+        # the rest of the file yields, so both are computed before df is sliced.
+        n_skip, from_auto = resolve_skip_rows(hc.skip_rows, df, cmap)
+        skip_warn = (auto_skip_warning(df, cmap, n_skip) if from_auto
+                     else (skip_row_warning(df, cmap, hc.hall_channel, n_skip) if n_skip
+                           else None))
         if n_skip:
             df = df.iloc[n_skip:].reset_index(drop=True)
         T = pd.to_numeric(df[cmap.logical["temperature"]], errors="coerce").to_numpy(float)

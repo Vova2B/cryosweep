@@ -135,20 +135,28 @@ source; the physics is reproducible from the formulas here.
   alone, so the row enters the antisymmetrized fit; on that file it moves the published
   R_H(300 K) from a sound -2.7424e-10 (r² = 0.669, on the trend set by the 200 K neighbour's
   -2.8812e-10, r² = 0.999) to -1.4346e-04 (r² = 0.002) — one row in 5786 moving R_H by a
-  factor of 5e5. `HallCfg.skip_rows` (CLI `--skip-rows N`, GUI field; default **1**) drops the
-  first N rows of the file before EITHER Hall analyzer runs (both take the flag so it means
-  one thing across the probe, though the temp-dep reconstruction was measured byte-identical
-  with and without the bad row — it interpolates onto fixed-field curves and the row never
-  reaches a reported point there). **This is an operator-controlled count, not a detector**:
-  no threshold decides whether to skip, and the analyzer never infers which rows are bad.
-  The count is always reported (`data.skipped_rows`), and a reversal warning fires when the
-  row the default actually dropped looks PHYSICAL — comparing its own |R| and reported
-  instrument sigma (`hall_sigma.row_sigma_R`) against the KEPT rows' median, unphysical past
-  a 1e6x ratio (measured: corrupted rows sit at ~1e11-1e13, physical ones at ~1) — naming
-  `--skip-rows 0` as the way to get it back. Defaulting to 1 moves results on every file
-  including good ones: on the real Hall file (channel 1, whose own first row is ordinary)
-  eight of nine field-sweep points are bit-identical and the ninth (300 K) moves 3.28%,
-  inside its own residual sigma band.
+  factor of 5e5. `HallCfg.skip_rows` (CLI `--skip-rows auto|N`, GUI field; default **"auto"**) controls
+  the drop, and applies to EITHER Hall analyzer (both take the flag so it means one thing
+  across the probe, though the temp-dep reconstruction was measured byte-identical with and
+  without the bad row — it interpolates onto fixed-field curves and the row never reaches a
+  reported point there). **"auto" drops leading rows only where they are provably corrupt**,
+  by the same 1e6 ratio the reversal warning uses; an explicit integer drops exactly that
+  many and turns detection off, because the operator has already decided. The count is
+  always reported (`data.skipped_rows`), auto names the evidence and the reversal when it
+  acts, and an explicit count still gets the reversal warning when a row it dropped looks
+  physical.
+  **Why the threshold acts rather than only warning** (2026-09-14): across every
+  resistivity-format file available here, row 0 sits between 0.26x and 14.7x the file median
+  EXCEPT on the one corrupted file, where it sits at 1.16e12x (channel 1) and 1.32e11x
+  (channel 2) — ten empty orders of magnitude between the two populations, with the
+  threshold in the middle of the gap. The earlier unconditional default of 1 therefore cost
+  a good leading row on every other file to catch a defect no good file comes near: it moved
+  R_H by 3.3% at 300 K on the real Hall file (whose own row 0 is ordinary, its reported sigma
+  sitting at 0.89x the median) and by 9.6% on `hall_mixed_sweeps.dat`. Under "auto" those
+  files are untouched and the corrupted one is still caught. Auto scans at most
+  `AUTO_SCAN_CAP` = 10 leading rows, so its blast radius is bounded however broken a file's
+  head is; a row that cannot be judged at all — no usable R, no reported sigma — is KEPT,
+  since absence of evidence is not evidence.
 
 ### Anomalous Hall effect (recognized, deferred)
 

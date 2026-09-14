@@ -74,15 +74,15 @@ def test_hall_panel_build_overrides(qapp):
     assert type(p).__name__ == "HallInputPanel"
     assert p.build_header_patch() == {}                          # hall uses no header fields
     # geometry_sign is always emitted from the combo (default +1); cfg default is also 1 -> parity-safe.
-    # skip_rows (task 4b) is always emitted too, from a text field prefilled "1" -- cfg default is
-    # also 1, same parity as geometry_sign.
-    assert p.build_overrides() == {"hall": {"geometry_sign": 1, "skip_rows": 1}}
+    # skip_rows is always emitted too, from a text field prefilled "auto" -- cfg default is
+    # also "auto", same parity as geometry_sign.
+    assert p.build_overrides() == {"hall": {"geometry_sign": 1, "skip_rows": "auto"}}
     p.hall_channel_edit.setText("1")
     p.thickness_edit.setText("0.1"); p.thickness_unit.setCurrentText("mm")
     p.long_channel_edit.setText("2")
     assert p.build_overrides() == {"hall": {"hall_channel": 1, "thickness_mm": 0.1,
                                             "geometry_sign": 1, "longitudinal_channel": 2,
-                                            "skip_rows": 1}}
+                                            "skip_rows": "auto"}}
     # thickness unit conversion: 100 um == 0.1 mm
     p.thickness_edit.setText("100"); p.thickness_unit.setCurrentText("um")
     assert p.build_overrides()["hall"]["thickness_mm"] == pytest.approx(0.1)
@@ -111,7 +111,7 @@ def test_hall_panel_state_roundtrips_all_inputs(qapp):
     p.geometry_sign.setCurrentText("-1")
     p.long_channel_edit.setText("1")
     p.set_longitudinal_file("/tmp/long.dat")
-    p.skip_rows_edit.setText("3")                       # task 4b: also part of the round trip
+    p.skip_rows_edit.setText("3")           # an explicit count, also part of the round trip
     state = p.get_state()
     q = build_panel("hall")
     q.set_state(state)
@@ -120,7 +120,7 @@ def test_hall_panel_state_roundtrips_all_inputs(qapp):
     assert q.long_file_label.text() == "/tmp/long.dat"
     # blank state restores defaults (no stale carry-over between file entries)
     q.set_state({})
-    assert q.build_overrides() == {"hall": {"geometry_sign": 1, "skip_rows": 1}}
+    assert q.build_overrides() == {"hall": {"geometry_sign": 1, "skip_rows": "auto"}}
 
 def test_hall_panel_sign_change_requests_refit(qapp):
     """Regression (owner 2026-07-09): flipping +1 -> -1 changed nothing until Analyze was
