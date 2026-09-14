@@ -293,6 +293,15 @@ def flatten_rows(data: dict) -> list[tuple[str, str]]:
             inst = p.get("r_h_sigma_instrument")
             if inst is not None:
                 val += f"; ± {inst:.2g} m³/C σ_inst (instrument noise, not fit quality)"
+            # 2026-09-14: a published carrier type is never a bare string -- it carries
+            # Phi(|R_H|/σ), and n carries its EXACT ±1σ interval (a reciprocal's interval
+            # is asymmetric; the linearized σ above understates the upper side).
+            sc = p.get("carrier_sign_confidence")
+            if p.get("carrier_type") is not None and sc is not None:
+                val += f"; {p['carrier_type']}, sign confidence {sc:.2f}"
+                lo, hi = p.get("carrier_n_ci_low"), p.get("carrier_n_ci_high")
+                if lo is not None and hi is not None:
+                    val += f"; n in [{lo:.3g}, {hi:.3g}] m⁻³ (exact ±1σ, not symmetric)"
             rows.append((f"R_H@{t:.1f}K", val))
     if data.get("probe") == "hall_tdep":
         # 138 points on real files — aggregate rows, not one per point.
@@ -321,6 +330,18 @@ def flatten_rows(data: dict) -> list[tuple[str, str]]:
                 rows.append(("R_H(T) σ_inst",
                              f"median {med:.3g} m³/C{rel_txt} on {len(inst)}/{len(pts)} "
                              "points — σ_inst (instrument noise, not fit quality)"))
+            # 2026-09-14: the carrier SIGN's own confidence, aggregated like the rows above
+            # (138 points on real files). Phi(|R_H|/σ) with the σ the decline judges by.
+            sc = sorted(p["carrier_sign_confidence"] for p in pts
+                        if p.get("carrier_type") is not None
+                        and p.get("carrier_sign_confidence") is not None)
+            if sc:
+                med_sc = (sc[len(sc) // 2] if len(sc) % 2
+                          else 0.5 * (sc[len(sc) // 2 - 1] + sc[len(sc) // 2]))
+                n_low = sum(1 for c in sc if c < 0.95)
+                rows.append(("carrier sign confidence",
+                             f"median {med_sc:.2f} over {len(sc)} published points "
+                             f"(Φ(|R_H|/σ)); {n_low}/{len(sc)} below 0.95"))
     if data.get("probe") == "resistivity":
         for b in data.get("bridges") or []:
             ch = b.get("channel")

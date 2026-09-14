@@ -1,5 +1,5 @@
 from __future__ import annotations
-import hashlib, pathlib
+import hashlib, math, pathlib
 from types import SimpleNamespace
 import numpy as np
 import pandas as pd
@@ -71,7 +71,10 @@ class HallTempPoint(BaseModel):
     r_h_sigma_raw: float | None = None               # Stage A: sigma_slope * thickness (m^3/C)
     slope_sigma_ohm_per_T: float | None = None       # Stage B (antisym) residual sigma (Ohm/T)
     r_h_sigma: float | None = None                   # Stage B: sigma_slope * thickness (m^3/C)
-    carrier_n_sigma: float | None = None             # 1/m^3 (relative propagation from r_h_sigma)
+    # LINEARIZED symmetric propagation, n * sigma/|R_H|: valid only for sigma/|R_H| << 1.
+    # n is a reciprocal, so the true +-1 sigma excursion is asymmetric and the upper side
+    # exceeds this by 1/(1 - rel^2) -- see carrier_n_ci_low/high below for the exact one.
+    carrier_n_sigma: float | None = None             # 1/m^3 (linearized, from r_h_sigma)
     mobility_sigma: float | None = None              # m^2/(V*s) (rho_xx sigma NOT folded, §10)
     sigma_zero_dof: bool = False                     # trusted stage had < 3 points (U4)
     # #20 (2026-09-02, append-only): decline reasons for Stage C. ["antisym_r_h_missing"]
@@ -110,6 +113,17 @@ class HallTempPoint(BaseModel):
     # None with this as the reason. DISTINCT from sigma_zero_dof (n < 3): here the fit had
     # residual DOF to spare and the residuals still vanished.
     sigma_degenerate: bool = False
+    # 2026-09-14 (append-only): a sign claim and a reciprocal are not a symmetric error
+    # bar. carrier_sign_confidence = Phi(|R_H|/sigma), the normal CDF -- the probability
+    # the published carrier SIGN is right; published wherever carrier_type is, so the type
+    # is never again a bare unqualified string. carrier_n_ci_low/high are the EXACT
+    # +-1 sigma transform of n = 1/(e|R_H|): 1/(e(|R_H| +- sigma)) -- a transform, not a
+    # propagation; the linearized carrier_n_sigma above is valid only for sigma/|R_H| << 1
+    # (see annotate_carrier_uncertainty). All three use the SAME sigma the decline judges
+    # by (resolved_sigma), and are None on a declined point.
+    carrier_sign_confidence: float | None = None
+    carrier_n_ci_low: float | None = None            # 1/m^3
+    carrier_n_ci_high: float | None = None           # 1/m^3
 
 class Capability(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -321,6 +335,76 @@ def decline_unresolved(pt) -> None:
     pt.carrier_n_sigma = pt.mobility_sigma = None
     pt.carrier_n_sigma_instrument = pt.mobility_sigma_instrument = None
     pt.derived_flags = [*pt.derived_flags, "r_h_unresolved"]
+
+
+#: Below this sign confidence a published carrier type is a coin the reader should see.
+#: Not a decline threshold: the sigma >= |R_H| rule (Phi(1) = 0.841) stands unchanged.
+SIGN_CONFIDENCE_WARN = 0.95
+
+#: The linearized symmetric carrier_n_sigma understates the exact upper bound by exactly
+#: 1/(1 - rel^2), rel = sigma/|R_H|. DERIVED, not tuned: n = n0/(1 -+ rel) exactly, so the
+#: exact upper excursion is n0/(1 - rel) while the symmetric one is n0(1 + rel), and their
+#: ratio is 1/((1 - rel)(1 + rel)) = 1/(1 - rel^2). "Materially understates" is taken as
+#: that ratio exceeding 1.1, i.e. rel > sqrt(1 - 1/1.1) = 0.3015.
+LINEARIZED_UNDERSTATEMENT_MAX = 1.1
+CARRIER_N_SIGMA_LINEARIZED = "carrier_n_sigma_linearized"
+
+
+def _norm_cdf(z: float) -> float:
+    return 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+
+
+def annotate_carrier_uncertainty(pt) -> None:
+    """A sign claim and a reciprocal are not a symmetric error bar. Called on every point
+    AFTER decline_unresolved, by both analyzers, with the SAME sigma the decline judged by
+    (resolved_sigma) -- so a point can never be resolved on one sigma and sign-scored on
+    another. Measured on the real Hall file (channel 1, temperature-dependent): published
+    points span relative sigma 0.721-0.997, median 0.905, at which the carrier sign has a
+    13.5 % chance of being wrong and the reported symmetric carrier_n_sigma/n of 0.91
+    understates the true upper excursion, which is 10.5x n0.
+
+    * carrier_sign_confidence = Phi(|R_H|/sigma): the probability the published sign is
+      right, published wherever carrier_type is.
+    * carrier_n_ci_low/high = 1/(e(|R_H| +- sigma)): the EXACT +-1 sigma transform of the
+      reciprocal, not a propagation. Both None when sigma >= |R_H| -- but that point was
+      already declined: carrier_n_ci_high diverges precisely as sigma -> |R_H|, so the
+      existing sigma >= |R_H| decline rule already IS "the upper bound on n becomes
+      unbounded". No new threshold is added here.
+    * CARRIER_N_SIGMA_LINEARIZED in derived_flags when the symmetric propagation
+      materially understates the exact upper bound (see LINEARIZED_UNDERSTATEMENT_MAX).
+    carrier_n_sigma itself is unchanged: it is the linearized symmetric propagation and
+    stays documented as such."""
+    if pt.carrier_type is None or not pt.R_H:
+        return
+    sig = resolved_sigma(pt)
+    if sig is None:
+        return                       # cannot happen for a published point; never guess
+    a, s = abs(pt.R_H), abs(sig)
+    if s >= a:
+        return                       # already declined -- see decline_unresolved
+    pt.carrier_sign_confidence = float(_norm_cdf(a / s))
+    pt.carrier_n_ci_low = float(1.0 / (E_CHG * (a + s)))
+    pt.carrier_n_ci_high = float(1.0 / (E_CHG * (a - s)))
+    rel = s / a
+    if 1.0 / (1.0 - rel ** 2) > LINEARIZED_UNDERSTATEMENT_MAX:
+        pt.derived_flags = [*pt.derived_flags, CARRIER_N_SIGMA_LINEARIZED]
+
+
+def sign_confidence_warning(points) -> str | None:
+    """One warning when the MAJORITY of a result's published carrier types sit below
+    SIGN_CONFIDENCE_WARN, naming the median so the number is on the surface."""
+    conf = sorted(p.carrier_sign_confidence for p in points
+                  if p.carrier_sign_confidence is not None)
+    if not conf:
+        return None
+    low = sum(1 for c in conf if c < SIGN_CONFIDENCE_WARN)
+    if low * 2 <= len(conf):
+        return None
+    med = float(np.median(conf))
+    return (f"{low}/{len(conf)} published carrier types have a sign confidence below "
+            f"{SIGN_CONFIDENCE_WARN:.2f} (median {med:.2f}, i.e. Phi(|R_H|/σ) with the same "
+            f"σ the decline judges by) — the carrier SIGN is itself uncertain on most "
+            f"points, not only the density")
 
 
 #: Result-level flag: no published point carried a finite r2, so the fit ceiling could
@@ -833,6 +917,7 @@ def field_sweep_points(df, cmap, cfg, hc, thickness_m, rho_fn, rho_reason) -> li
         # quantities, keep R_H and its sigma visible, and say why. Applied last, once every
         # derived quantity above has been computed, so the withheld copy is complete.
         decline_unresolved(pt)
+        annotate_carrier_uncertainty(pt)
         points.append(pt)
     return points
 
@@ -1013,6 +1098,9 @@ class HallAnalyzer:
         status, conf, rflags = hall_confidence(fit_quality, resolved_fraction,
                                                cfg.confidence_min)
         warns = ([skip_warn] if skip_warn else []) + sigma_noise_warnings(points)
+        sign_warn = sign_confidence_warning(points)
+        if sign_warn:
+            warns.append(sign_warn)
         if FIT_QUALITY_UNAVAILABLE in rflags:
             n_pub = sum(1 for p in points if p.carrier_n is not None)
             warns.append(fit_quality_unavailable_warning(points, n_pub))

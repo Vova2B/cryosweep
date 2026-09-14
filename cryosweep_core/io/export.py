@@ -68,7 +68,11 @@ def _export_hall(result, stem) -> dict:
               "mobility_withheld (m^2/Vs)",
               # 2026-09-14: the residual sigma's decline reason, beside sigma_zero_dof's
               # (they are distinct: n < 3 vs. residuals that vanished with DOF to spare)
-              "sigma_degenerate"]
+              "sigma_degenerate",
+              # 2026-09-14: sign confidence Phi(|R_H|/sigma) and the EXACT +-1 sigma
+              # interval on n (a transform of the reciprocal, not a propagation) -- the
+              # linearized carrier_n_sigma columns above are valid only for sigma << |R_H|
+              "carrier_sign_confidence", "carrier_n_ci_low (1/m^3)", "carrier_n_ci_high (1/m^3)"]
     with pp.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields); w.writeheader()
         for p in pts:
@@ -93,7 +97,10 @@ def _export_hall(result, stem) -> dict:
                         "carrier_n_withheld (1/m^3)": withheld.get("carrier_n"),
                         "carrier_type_withheld": withheld.get("carrier_type"),
                         "mobility_withheld (m^2/Vs)": withheld.get("mobility"),
-                        "sigma_degenerate": p.get("sigma_degenerate")})
+                        "sigma_degenerate": p.get("sigma_degenerate"),
+                        "carrier_sign_confidence": p.get("carrier_sign_confidence"),
+                        "carrier_n_ci_low (1/m^3)": p.get("carrier_n_ci_low"),
+                        "carrier_n_ci_high (1/m^3)": p.get("carrier_n_ci_high")})
     out["points"] = str(pp)
     # Controller audit (d): the ladder RUNGS, not only their spread, one row per
     # (temperature, rung) -- a lone spread number says the window moved R_H by some
@@ -155,7 +162,11 @@ def _export_hall_tdep(result, stem) -> dict:
               "mobility_withheld (m^2/Vs)",
               # 2026-09-14: the residual sigma's decline reason, beside sigma_zero_dof's
               # (they are distinct: n < 3 vs. residuals that vanished with DOF to spare)
-              "sigma_degenerate"]
+              "sigma_degenerate",
+              # 2026-09-14: sign confidence Phi(|R_H|/sigma) and the EXACT +-1 sigma
+              # interval on n (a transform of the reciprocal, not a propagation) -- the
+              # linearized carrier_n_sigma columns above are valid only for sigma << |R_H|
+              "carrier_sign_confidence", "carrier_n_ci_low (1/m^3)", "carrier_n_ci_high (1/m^3)"]
     with pp.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields); w.writeheader()
         for p_ in pts:
@@ -185,7 +196,10 @@ def _export_hall_tdep(result, stem) -> dict:
                         "carrier_n_withheld (1/m^3)": withheld.get("carrier_n"),
                         "carrier_type_withheld": withheld.get("carrier_type"),
                         "mobility_withheld (m^2/Vs)": withheld.get("mobility"),
-                        "sigma_degenerate": p_.get("sigma_degenerate")})
+                        "sigma_degenerate": p_.get("sigma_degenerate"),
+                        "carrier_sign_confidence": p_.get("carrier_sign_confidence"),
+                        "carrier_n_ci_low (1/m^3)": p_.get("carrier_n_ci_low"),
+                        "carrier_n_ci_high (1/m^3)": p_.get("carrier_n_ci_high")})
     out["points"] = str(pp)
     cap = stem.with_suffix(".capabilities.csv")
     with cap.open("w", newline="") as f:

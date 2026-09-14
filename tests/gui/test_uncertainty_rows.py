@@ -144,3 +144,42 @@ def test_entropy_rln_verdict_rows():
                                           "matched": True, "tol": 0.25}}
     rows = dict(flatten_rows(matched))
     assert rows["Rln suggestion"] == "R ln3 (matched, 2% off)"
+
+
+# ---- 2026-09-14: a sign claim and a reciprocal are not a symmetric error bar ------------
+
+def test_hall_field_sweep_row_carries_sign_confidence_and_exact_interval():
+    """A published carrier type is never a bare string: the row names Phi(|R_H|/σ) and the
+    exact ±1σ interval on n beside the linearized σ it already showed."""
+    data = {"probe": "hall", "points": [
+        {"temperature": 2.0, "R_H": -7.2e-9, "r_h_sigma": 1.5e-11, "sigma_zero_dof": False,
+         "carrier_type": "electrons", "carrier_n": 8.67e26, "carrier_sign_confidence": 0.8653,
+         "carrier_n_ci_low": 4.55e26, "carrier_n_ci_high": 9.1e27},
+    ]}
+    row = dict(flatten_rows(data))["R_H@2.0K"]
+    assert "sign confidence 0.87" in row
+    assert "electrons" in row
+    assert "4.55e+26" in row and "9.1e+27" in row and "exact" in row
+
+
+def test_hall_field_sweep_row_without_a_published_type_says_nothing_about_a_sign():
+    data = {"probe": "hall", "points": [
+        {"temperature": 2.0, "R_H": -7.2e-9, "r_h_sigma": 1.5e-11, "sigma_zero_dof": False,
+         "carrier_type": None, "carrier_sign_confidence": None},
+    ]}
+    row = dict(flatten_rows(data))["R_H@2.0K"]
+    assert "sign confidence" not in row
+
+
+def test_hall_tdep_sign_confidence_aggregate_row():
+    data = {"probe": "hall_tdep", "points": [
+        {"temperature": float(t), "R_H": 1.3e-11, "r_h_sigma": None,
+         "r_h_sigma_instrument": 1.0e-11, "sigma_zero_dof": False,
+         "carrier_type": "holes", "carrier_sign_confidence": c}
+        for t, c in enumerate((0.86, 0.90, 0.99, 0.87))
+    ] + [{"temperature": 9.0, "R_H": 1.3e-11, "carrier_type": None,
+          "carrier_sign_confidence": None}]}
+    rows = dict(flatten_rows(data))
+    row = rows["carrier sign confidence"]
+    assert "median 0.88" in row or "median 0.89" in row
+    assert "3/4" in row and "0.95" in row

@@ -19,7 +19,8 @@ from cryosweep_core.analyzers.hall import (_carrier_n, _mobility,
                                       WithheldDerived, decline_unresolved, is_resolved,
                                       hall_confidence, degenerate_residual_sigma,
                                       published_r2s, fit_quality_unavailable_warning,
-                                      FIT_QUALITY_UNAVAILABLE)
+                                      FIT_QUALITY_UNAVAILABLE, annotate_carrier_uncertainty,
+                                      sign_confidence_warning)
 from cryosweep_core.fitting.transport import LinearFitModel
 from cryosweep_core.result import Result, Provenance, Gate
 from cryosweep_core.registry import Need
@@ -70,6 +71,9 @@ class HallTDepPoint(BaseModel):
     # Residual (fit-quality) sigma — None unless >= 3 antisym points (zero-DOF: U4)
     slope_sigma_ohm_per_T: float | None = None
     r_h_sigma: float | None = None
+    # LINEARIZED symmetric propagation, n * sigma/|R_H|: valid only for sigma/|R_H| << 1.
+    # n is a reciprocal, so the true +-1 sigma excursion is asymmetric and the upper side
+    # exceeds this by 1/(1 - rel^2) -- see carrier_n_ci_low/high below for the exact one.
     carrier_n_sigma: float | None = None
     mobility_sigma: float | None = None
     # Instrument repeat-noise sigma (closed O4) — a WEAKER, DIFFERENT claim than the
@@ -100,6 +104,17 @@ class HallTDepPoint(BaseModel):
     # here the fit had residual DOF to spare and the residuals still vanished. Same field,
     # same meaning as HallTempPoint.sigma_degenerate.
     sigma_degenerate: bool = False
+    # 2026-09-14 (append-only): a sign claim and a reciprocal are not a symmetric error
+    # bar. carrier_sign_confidence = Phi(|R_H|/sigma), the normal CDF -- the probability
+    # the published carrier SIGN is right; published wherever carrier_type is, so the type
+    # is never again a bare unqualified string. carrier_n_ci_low/high are the EXACT
+    # +-1 sigma transform of n = 1/(e|R_H|): 1/(e(|R_H| +- sigma)) -- a transform, not a
+    # propagation; the linearized carrier_n_sigma above is valid only for sigma/|R_H| << 1
+    # (see annotate_carrier_uncertainty). All three use the SAME sigma the decline judges
+    # by (resolved_sigma), and are None on a declined point.
+    carrier_sign_confidence: float | None = None
+    carrier_n_ci_low: float | None = None            # 1/m^3
+    carrier_n_ci_high: float | None = None           # 1/m^3
 
 
 class HallTDepStage(BaseModel):
@@ -755,6 +770,7 @@ class HallTempDepAnalyzer:
         # helper as the field-sweep analyzer's field_sweep_points.
         for p in points:
             decline_unresolved(p)
+            annotate_carrier_uncertainty(p)      # same sigma the decline judged by
         width_m = (cfg.geometry.width_mm * 1e-3) if cfg.geometry.width_mm else None
         _fill_excitation_and_J(points, df, cmap, hc.hall_channel, hc.temp_interval,
                                width_m, thickness_m)
@@ -888,6 +904,9 @@ class HallTempDepAnalyzer:
                 f"{len(noisy)}/{len(rels)} R_H(T) points carry > 50% relative instrument "
                 f"sigma (median {float(np.median(rels)) * 100:.0f}%) — instrument noise, "
                 f"not fit quality; {verdict}")
+        sign_warn = sign_confidence_warning(points)
+        if sign_warn:
+            warns.append(sign_warn)
         if FIT_QUALITY_UNAVAILABLE in rflags:
             warns.append(fit_quality_unavailable_warning(points, len(published)))
         if two_point_only:
