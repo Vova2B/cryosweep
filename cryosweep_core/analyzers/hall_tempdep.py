@@ -156,6 +156,10 @@ class HallTempDepData(BaseModel):
     flags: list[str] = []
 
 
+#: Result-level flag: every published carrier density came from the 2point fallback.
+TWO_POINT_ONLY_PUBLISHED = "two_point_only_published"
+
+
 # ---- pure helpers ----------------------------------------------------------
 
 def _sha256(path):
@@ -816,19 +820,28 @@ class HallTempDepAnalyzer:
                                    ["no fittable T point (need >=2 antisym points)"],
                           data=data.model_dump(mode="json"), provenance=prov)
 
-        # D8: "antisym_fraction" = fraction of non-low_confidence fitted points, basis the
-        # TRUSTED antisym points only. The 2-point fallback (B) EXTENDS coverage with
-        # honestly-flagged low_confidence tail points; counting them in the denominator
-        # would let extra coverage deflate status (backwards). Antisym-only frac keeps
-        # "antisym_fraction" literally accurate. #18 (2026-09-02): single-pair points are
-        # labelled "antisym" (they are one) and so count in this basis — the fraction
-        # covers the points actually fitted. Kept as a reported diagnostic (spec §4.5
-        # still names it), but it no longer DRIVES confidence: it was 1.0 by construction
-        # whenever every fitted point simply met tdep_min_antisym_points (default 1), which
-        # says nothing about how many R_H are actually resolved from zero.
-        antisym_fitted = [p for p in fitted if p.r_h_method != "2point"]
-        frac = (sum(1 for p in antisym_fitted if not p.low_confidence) / len(antisym_fitted)
-                if antisym_fitted else 0.0)
+        # "antisym_fraction": of the carrier densities this result PUBLISHES, the fraction
+        # resting on a trusted antisym fit that met tdep_min_antisym_points. None -- never
+        # 0.0 or 1.0 asserted over nothing -- when no point published at all.
+        #
+        # History, because the basis moved twice: D8 first took it over the TRUSTED
+        # antisym points only, so that a 2-point tail EXTENDING coverage could not deflate
+        # a status it then drove (#18: single-pair points are labelled "antisym" and count).
+        # Spec §4.5 later stopped it driving confidence at all -- it was 1.0 by construction
+        # whenever every fitted point met the default threshold of 1. 2026-09-14: as a
+        # diagnostic of the published result its denominator must be the published points.
+        # Measured on the real Hall file, channel 2: the sigma >= |R_H| decline withholds
+        # all 137 antisym carrier densities and publishes exactly ONE, from the 2point
+        # fallback, and the old basis reported antisym_fraction = 1.0 beside it -- the
+        # headline diagnostic contradicting the envelope, because the 2point points were
+        # exactly the ones its denominator excluded. On the published basis that reads 0.0.
+        published = [p for p in points if p.carrier_n is not None]
+        frac = (sum(1 for p in published if p.r_h_method != "2point" and not p.low_confidence)
+                / len(published) if published else None)
+        # Say when the ONLY published values came from the estimator this analyzer trusts
+        # least: a reader of the real file's channel 2 would otherwise see one clean carrier
+        # density and nothing marking it as the sparse fallback's survivor.
+        two_point_only = bool(published) and all(p.r_h_method == "2point" for p in published)
         # Spec §4.5: confidence = min(fit quality, resolved fraction), same rule as `hall`.
         # 2026-09-14: fit_quality is the mean r2 over the points that PUBLISHED a carrier
         # density (published_r2s -- a declined point's r2 stays on the point but does not
@@ -876,8 +889,21 @@ class HallTempDepAnalyzer:
                 f"sigma (median {float(np.median(rels)) * 100:.0f}%) — instrument noise, "
                 f"not fit quality; {verdict}")
         if FIT_QUALITY_UNAVAILABLE in rflags:
-            n_pub = sum(1 for p in points if p.carrier_n is not None)
-            warns.append(fit_quality_unavailable_warning(points, n_pub))
+            warns.append(fit_quality_unavailable_warning(points, len(published)))
+        if two_point_only:
+            n_anti_withheld = sum(1 for p in points
+                                  if p.r_h_method == "antisym" and p.carrier_n is None)
+            n_anti = sum(1 for p in points if p.r_h_method == "antisym")
+            basis = (f"all {n_anti_withheld} antisym-fitted points were withheld "
+                     f"(r_h_unresolved)" if n_anti
+                     else "no temperature has a +/-B pair to antisymmetrize")
+            plural = "y" if len(published) == 1 else "ies"
+            warns.append(
+                f"the only {len(published)} published carrier densit{plural} come{'s' if len(published) == 1 else ''} "
+                f"from the 2point zero-field-subtracted fallback estimator, not from an "
+                f"antisymmetrized fit: {basis} — interpret {'it' if len(published) == 1 else 'them'} "
+                f"as the sparse fallback's estimate, not as a trusted Hall coefficient")
+            rflags = [*rflags, TWO_POINT_ONLY_PUBLISHED]
         data.flags = [*data.flags, *rflags]
         return Result(
             status=status,
@@ -886,7 +912,7 @@ class HallTempDepAnalyzer:
             confidence_parts={
                 "detector": 1.0,
                 "segmentation": 1.0,
-                "antisym_fraction": float(frac),
+                "antisym_fraction": (float(frac) if frac is not None else None),
                 "fit": fit_quality,
                 "resolved": float(resolved_fraction),
                 "fit_n": float(len(pub_r2s)),
