@@ -29,11 +29,23 @@ where the old behaviour degraded silently instead of saying so.
   written before the measurement bridge settled. `data.skipped_rows` always reports the count;
   a reversal warning fires (naming `--skip-rows 0`) when the row the default actually dropped
   looks physical rather than corrupted.
-- **A default-off inspection series draws the points a decline rule withheld.** All four Hall
-  carrier-density and mobility panels — on the field-sweep probe as well as the
-  temperature-dependent one — can plot the withheld points as a hollow, non-default series,
-  reachable from the GUI curve checklist or `PlotSpec.curves`.
-  Absent by default, so every existing figure renders byte-identically.
+  **This default changes published numbers on existing files, and it is the only change in
+  this release that does so for the field-sweep `hall` probe.** Dropping one leading row
+  re-fits the loop that row belonged to: on `hall_field_sweeps.dat` R_H moves by 0.001 %
+  (still `-2.500e-07 m³/C` as quoted in the README), on `hall_mixed_sweeps.dat` the 300 K
+  loop's R_H moves by 9.6 %, and on the real reference file by 3.3 %; each file's confidence
+  moves with it, none changes status. Passing `--skip-rows 0` reproduces the previous
+  release's field-sweep output exactly, to the last digit. Note also that the reversal
+  warning fires on **every** Hall file we have — the default drops a row that looks physical
+  in all six — so treat it as a prompt to check your own file, not as a rare edge case.
+- **A default-off inspection series draws the points a decline rule withheld.** Every Hall
+  panel carrying a carrier density or a mobility — on the field-sweep probe as well as the
+  temperature-dependent one, the combined `R_H + carrier n` twin included — can plot the
+  withheld points as a hollow, non-default series, reachable from the GUI curve checklist or
+  `PlotSpec.curves`. Absent by default, so every existing figure renders byte-identically.
+  On that twin panel the two curves are filtered independently, so a declined carrier density
+  never removes a measured R_H point: its R_H curve is the same curve `hall_rh_t` draws from
+  the same result, point for point.
 
 ### Changed
 
@@ -57,8 +69,10 @@ where the old behaviour degraded silently instead of saying so.
   code of a shipped example to change: `hall_temperature_dependence.dat` goes from confidence
   1.0 to 0.605263 (23 of 38 points resolved), and `hall_mixed_sweeps.dat` from 1.0 to 0.561538
   (73 of 130) — both stay `status: "ok"`. Only the real reference file crosses the threshold,
-  to confidence 0.478261 and exit 11. Field-sweep `hall` confidence is unchanged on every file
-  we have.
+  to confidence 0.478261 and exit 11. On the field-sweep `hall` probe the new `resolved` term
+  is 1.0 on every file we have, so this formula never lowers its confidence — but that
+  probe's reported confidence does still move slightly, because the `--skip-rows` default
+  below changes the fit it is computed from.
 - **`carrier_n`, `carrier_type` and `mobility` are `null` wherever R_H's own uncertainty does
   not resolve it** — σ ≥ |R_H|, checked against the instrument sigma where the file supports it
   and the residual sigma otherwise — under a machine-readable `r_h_unresolved` flag; the
