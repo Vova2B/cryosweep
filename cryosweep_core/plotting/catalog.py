@@ -1018,17 +1018,34 @@ def series_hall_tdep_summary(result, field_unit="Oe"):
 
 def series_hall_rh_n_twin(result, field_unit="Oe"):
     """R_H + carrier n vs T (shared by 'hall' and 'hall_tdep' -- both point schemas carry
-    temperature/R_H/carrier_n under the same field names). Gate: [] unless >=2 points carry
-    both R_H and carrier_n."""
-    pts = [p for p in (result.data or {}).get("points", [])
-           if p.get("R_H") is not None and p.get("carrier_n") is not None]
-    if len(pts) < 2:
+    temperature/R_H/carrier_n under the same field names).
+
+    The two curves are filtered SEPARATELY. They decline separately: R_H is measured and is
+    never withheld, while carrier n is derived from it and declines wherever R_H's own
+    uncertainty does not resolve it (spec Sec 4.1). A single shared "has both" mask would let
+    a declined n delete a measured R_H from the figure, so this panel would contradict
+    `hall_rh_t` on the same result.
+
+    Gate: [] unless >=2 points carry R_H AND >=2 carry a published carrier n -- with no
+    second curve to twin, a lone R_H is what `hall_rh_t` already draws."""
+    pts = (result.data or {}).get("points", [])
+    rh_pts = sorted((p for p in pts if p.get("R_H") is not None),
+                    key=lambda p: p["temperature"])
+    n_pts = sorted((p for p in pts if p.get("carrier_n") is not None),
+                   key=lambda p: p["temperature"])
+    if len(rh_pts) < 2 or len(n_pts) < 2:
         return []
-    pts = sorted(pts, key=lambda p: p["temperature"])
-    return [Series(key="rh", label="R_H", x=[p["temperature"] for p in pts],
-                   y=[p["R_H"] for p in pts], default_on=True),
-            Series(key="n", label="n", x=[p["temperature"] for p in pts],
-                   y=[p["carrier_n"] for p in pts], default_on=True)]
+    out = [Series(key="rh", label="R_H", x=[p["temperature"] for p in rh_pts],
+                  y=[p["R_H"] for p in rh_pts], default_on=True),
+           Series(key="n", label="n", x=[p["temperature"] for p in n_pts],
+                  y=[p["carrier_n"] for p in n_pts], default_on=True)]
+    wpts = _hall_withheld(result, "carrier_n")
+    if wpts:
+        out.append(Series(key="n_withheld", label="n (declined)",
+                          x=[p["temperature"] for p in wpts],
+                          y=[p["carrier_n"] for p in wpts],
+                          default_on=False, role="two_point"))
+    return out
 
 
 def series_hall_tdep_j_t(result, field_unit="Oe"):
