@@ -246,7 +246,13 @@ Propagation (through-the-estimator, exact linear):
 - The instrument columns arrive in resistivity units; the per-row `Resistance/Resistivity`
   ratio of the file itself bridges them to Ω — internally self-consistent whatever the
   header geometry setting was (it is not a claim about absolute resistivity).
-- A ≥ 50 % relative σ on R_H produces an explicit noise warning rather than a silent number.
+- A ≥ 50 % relative σ on R_H produces an explicit noise warning rather than a silent number,
+  and the warning's verdict is **graduated to match what was actually published**. The Sec 4.1
+  decline withholds the carrier density only at σ ≥ |R_H| (100 %), so a point between 50 % and
+  100 % keeps its number: it is told its uncertainty is elevated. A point the decline has
+  already emptied is told its R_H is not a carrier density. The two thresholds are not merged —
+  the wording keys on whether a carrier density is present, so the warning can never contradict
+  the value printed beside it.
 
 The same discipline holds outside Hall: window-sensitivity spreads (Curie-Weiss θ ladder,
 resistivity power-law n ladder, TTO κ_ph ladder) are **not error bars** and are never written

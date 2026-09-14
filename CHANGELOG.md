@@ -85,6 +85,15 @@ where the old behaviour degraded silently instead of saying so.
   file, 72 of 138. A withheld value is not missing data and not an error, and seeing it on
   real, noisy measurements — including two of the shipped examples — is the tool working, not
   breaking.
+- **The >50 % noise warning no longer contradicts the value printed beside it.** It fired above
+  50 % relative σ while the decline above withholds only at σ ≥ |R_H| (100 %), so every point in
+  between was handed a carrier density *and* told to "treat as noise, not a carrier density".
+  The verdict is now graduated, and keyed on whether a carrier density was actually published
+  rather than on a second threshold: a published point reads `elevated uncertainty; interpret
+  the carrier density with care`, and only a point the decline emptied keeps the strong reading.
+  `hall-tdep`'s aggregate warning splits the same way, counting the two bands separately
+  (`… 72 of them carry no carrier density at all …; interpret the other 66 with care`). **Warning
+  text only — no threshold, value, status or exit code moves.**
 - **Hall CSV exports (`hall`/`hall-tdep`) carry a leading `#` comment block** whenever the run
   has warnings — a parse-contract change for any external reader:
 

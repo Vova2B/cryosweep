@@ -822,14 +822,33 @@ class HallTempDepAnalyzer:
         # the R_H(T) points are noise-dominated (> 50 % relative). EXPECTED to fire on the
         # real Hall file's channel (nV-level signal, median std/rho 61 %) — flag, never drop.
         warns: list[str] = [skip_warn] if skip_warn else []
-        rels = [p.r_h_sigma_instrument / abs(p.R_H) for p in fitted
-                if p.r_h_sigma_instrument is not None and p.R_H]
-        noisy = [x for x in rels if x > 0.5]
+        scored = [(p, p.r_h_sigma_instrument / abs(p.R_H)) for p in fitted
+                  if p.r_h_sigma_instrument is not None and p.R_H]
+        rels = [rel for _, rel in scored]
+        noisy = [(p, rel) for p, rel in scored if rel > 0.5]
         if noisy:
+            # Graduated verdict (2026-09-14): this warning fires above 50 % relative sigma
+            # while the §4.1 decline withholds the carrier density at 100 %, so a single
+            # "treat these R_H as noise, not a carrier density" was addressed to points
+            # that still published one — measured on the real file's channel 1 as 138/138
+            # warned against 66 carrier densities reported in the same envelope. Split the
+            # verdict by what was actually PUBLISHED (carrier_n is None), not by a second
+            # threshold, so the sentence cannot disagree with the numbers beside it.
+            n_withheld = sum(1 for p, _ in noisy if p.carrier_n is None)
+            n_kept = len(noisy) - n_withheld
+            if n_kept and n_withheld:
+                verdict = (f"{n_withheld} of them carry no carrier density at all (withheld "
+                           f"as noise, not a carrier density); interpret the other "
+                           f"{n_kept} with care")
+            elif n_kept:
+                verdict = ("elevated uncertainty; interpret these carrier densities "
+                           "with care")
+            else:
+                verdict = "treat these R_H as noise, not a carrier density"
             warns.append(
                 f"{len(noisy)}/{len(rels)} R_H(T) points carry > 50% relative instrument "
                 f"sigma (median {float(np.median(rels)) * 100:.0f}%) — instrument noise, "
-                f"not fit quality; treat these R_H as noise, not a carrier density")
+                f"not fit quality; {verdict}")
         return Result(
             status=status,
             confidence=conf,

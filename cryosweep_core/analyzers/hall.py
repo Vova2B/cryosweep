@@ -755,7 +755,17 @@ def sigma_noise_warnings(points) -> list[str]:
     (Stage B) stage — Stage A has no instrument family here. Where present, the instrument
     sigma is the one tested (it is a weaker, different claim than fit scatter and the one
     hall_tempdep already prefers for this same warning); the message always names which
-    family it tested so the two are never confused."""
+    family it tested so the two are never confused.
+
+    2026-09-14: the verdict is GRADUATED, because a single sentence was being told to two
+    different populations. This warning fires above 50 % relative sigma; the Sec 4.1 decline
+    withholds the carrier density at 100 % (sigma >= |R_H|). Points in between were
+    therefore handed a carrier density AND an instruction to treat their R_H as "not a
+    carrier density" — the output contradicting itself about the same value (measured: 5 of
+    9 points on the real file's channel 2). The wording now keys on whether a carrier
+    density was actually PUBLISHED for the point rather than on a second threshold, so the
+    two can never disagree: a published point is told its uncertainty is elevated, and only
+    a point the decline already emptied is told the number is not a carrier density."""
     out = []
     for p in points:
         inst = p.r_h_sigma_instrument
@@ -781,9 +791,15 @@ def sigma_noise_warnings(points) -> list[str]:
                     r2txt = "n/a" if r2 is None else f"{r2:.3f}"
                     label = "residual sigma"
                     detail = f"({stage} fit scatter, r² = {r2txt})"
+                # Graduated verdict (2026-09-14): `carrier_n is not None` is exactly
+                # "Stage C published a number for this point" — it survives both the
+                # Sec 4.1 decline and the no-R_H branch, so the sentence can never deny a
+                # value the same result is reporting.
+                verdict = ("treat as noise, not a carrier density"
+                           if p.carrier_n is None else
+                           "elevated uncertainty; interpret the carrier density with care")
                 out.append(f"R_H at T = {p.temperature:.1f} K carries {rel * 100:.0f}% "
-                           f"relative {label} {detail} — "
-                           f"treat as noise, not a carrier density")
+                           f"relative {label} {detail} — {verdict}")
     return out
 
 

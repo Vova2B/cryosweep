@@ -315,3 +315,92 @@ def test_real_hall_file_oracles(hall_real_path):
 # physics reference. The verdict is UNCHANGED: all 138 points still exceed 50 %.
 REAL_HALL_SPOT_T = 74.0
 REAL_HALL_SPOT_RH_SIG_INST = 1.0617e-11
+
+
+# --- graduated noise wording: the warning must not contradict what was published ---
+
+_NOT_A_CARRIER = "not a carrier density"
+_ELEVATED = "interpret the carrier density with care"
+
+
+def _pt(T, R_H, sigma, *, carrier_n=None, instrument=True, antisym=True):
+    """A HallTempPoint carrying just the fields `sigma_noise_warnings` reads."""
+    from cryosweep_core.analyzers.hall import HallTempPoint
+    kw = dict(temperature=T, R_H=R_H, r2=0.9, antisymmetrized=antisym, carrier_n=carrier_n)
+    kw["r_h_sigma_instrument" if instrument else "r_h_sigma"] = sigma
+    return HallTempPoint(**kw)
+
+
+def test_noise_warning_never_contradicts_a_published_carrier_density():
+    """Both adversarial reviews, convergently: the >50 % noise warning ordered the reader to
+    "treat as noise, not a carrier density" while the same point PUBLISHED one. The decline
+    withholds at sigma >= |R_H| (100 %), so the 50-100 % band got both the instruction and
+    the number, and the two say opposite things about the same value.
+
+    The wording is keyed on what was actually published, not on a second threshold, so the
+    contradiction is structurally impossible rather than merely unlikely."""
+    from cryosweep_core.analyzers.hall import sigma_noise_warnings
+    # 70 % relative sigma: over the warning threshold, under the decline threshold, so the
+    # point keeps its carrier density.
+    published = _pt(10.0, -2.0e-10, 1.4e-10, carrier_n=3.1e28)
+    # 150 %: the decline already withheld this one (carrier_n is None).
+    withheld = _pt(20.0, -2.0e-10, 3.0e-10, carrier_n=None)
+    w = sigma_noise_warnings([published, withheld])
+    assert len(w) == 2
+    w_pub = next(x for x in w if "T = 10.0 K" in x)
+    w_wit = next(x for x in w if "T = 20.0 K" in x)
+    assert _NOT_A_CARRIER not in w_pub          # it published one; do not deny it
+    assert _ELEVATED in w_pub
+    assert "70%" in w_pub and "instrument sigma" in w_pub
+    assert _NOT_A_CARRIER in w_wit              # nothing published: the strong reading stands
+    assert "150%" in w_wit
+
+
+def test_noise_warning_wording_tracks_the_decline_not_a_second_threshold():
+    """A point may publish nothing for a reason other than its own sigma (no R_H at all, so
+    Stage C never ran). The strong wording follows the ABSENCE of a published value, so such
+    a point still reads "not a carrier density" even at a modest relative sigma."""
+    from cryosweep_core.analyzers.hall import sigma_noise_warnings
+    stage_a_only = _pt(30.0, None, None, carrier_n=None, antisym=False)
+    stage_a_only.R_H_raw = -1.0e-10
+    stage_a_only.r_h_sigma_raw = 6.0e-11
+    stage_a_only.r2_raw = 0.4
+    w = sigma_noise_warnings([stage_a_only])
+    assert len(w) == 1
+    assert _NOT_A_CARRIER in w[0] and "Stage A raw" in w[0]
+
+
+def test_real_hall_ch2_no_point_is_both_warned_and_published(hall_real_path):
+    """Measured on the real Hall file, channel 2 (2026-09-14): 9 points, 5 of which
+    published a carrier density while the per-point warning told the reader it was not one.
+    After the graduated wording, zero points carry both."""
+    r = _analyze_hall(hall_real_path, hall_channel=2, thickness_mm=0.1)
+    pts = r.data["points"]
+    assert len(pts) == 9
+    published = [p for p in pts if p["carrier_n"] is not None]
+    assert len(published) == 5                       # unchanged: no number moved
+    denied = {w.split("T = ")[1].split(" K")[0] for w in r.warnings if _NOT_A_CARRIER in w}
+    assert not [p for p in published if f"{p['temperature']:.1f}" in denied]
+    # the five published points are still warned -- softened, never silenced
+    soft = {w.split("T = ")[1].split(" K")[0] for w in r.warnings if _ELEVATED in w}
+    assert {f"{p['temperature']:.1f}" for p in published} == soft
+
+
+def test_shipped_example_shows_the_graduated_band():
+    """The contradiction is reproducible without any local-only file: channel 2 of
+    `hall_mixed_sweeps.dat` warns on all nine temperatures, and the 200 K point sits at 94 %
+    relative instrument sigma — over the warning threshold, under the decline's — so it
+    publishes a carrier density. Every other point is over 100 % and publishes none."""
+    r = _analyze_hall(pathlib.Path("examples/hall_mixed_sweeps.dat"),
+                      hall_channel=2, thickness_mm=0.1)
+    pts = r.data["points"]
+    p200 = next(p for p in pts if p["temperature"] == 200.0)
+    assert p200["carrier_n"] is not None
+    w200 = next(w for w in r.warnings if "T = 200.0 K" in w)
+    assert "94%" in w200 and _ELEVATED in w200 and _NOT_A_CARRIER not in w200
+    # the eight others are withheld and keep the strong reading
+    others = [p for p in pts if p["temperature"] != 200.0]
+    assert len(others) == 8 and all(p["carrier_n"] is None for p in others)
+    for p in others:
+        w = next(x for x in r.warnings if f"T = {p['temperature']:.1f} K" in x)
+        assert _NOT_A_CARRIER in w

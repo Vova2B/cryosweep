@@ -478,3 +478,33 @@ def test_single_pair_file_fits_cleanly_but_is_unresolved_without_a_sigma_column(
     assert pts[0]["carrier_type"] is None
     assert pts[0]["derived_flags"] == ["r_h_unresolved"]
     assert pts[0]["withheld"]["carrier_type"] == "holes"
+
+
+# ---- graduated noise wording (2026-09-14) -----------------------------------
+
+def test_aggregate_noise_warning_splits_published_from_withheld(hall_real_path):
+    """Both adversarial reviews, convergently: the aggregate warning read "138/138 R_H(T)
+    points carry > 50% relative instrument sigma ... treat these R_H as noise, not a
+    carrier density" on a result that published 66 carrier densities. The warning threshold
+    is 50 %; the decline withholds at 100 %. Everything in between was told it was not a
+    carrier density while being handed one.
+
+    The aggregate now counts the two bands separately and says the strong thing only about
+    the points the decline actually withheld. No published number moves -- the same 66
+    carrier densities are reported before and after.
+
+    Measured on the real Hall file, channel 1 (2026-09-14)."""
+    rt = load_dat(str(hall_real_path))
+    cfg = RunConfig.load(hall={"hall_channel": 1, "thickness_mm": 0.1})
+    r = HallTempDepAnalyzer().analyze(rt, cfg)
+    pts = r.data["points"]
+    published = [p for p in pts if p["carrier_n"] is not None]
+    assert len(pts) == 138 and len(published) == 66        # unchanged: no number moved
+    noise = [w for w in r.warnings if "relative instrument sigma" in w]
+    assert len(noise) == 1
+    w = noise[0]
+    assert "138/138" in w and "median 101%" in w           # the measurement is unchanged
+    # the strong reading is confined to the points that published nothing
+    assert "not a carrier density" in w
+    assert "72 of them" in w                               # 138 - 66 withheld by the decline
+    assert "the other 66" in w and "interpret" in w
