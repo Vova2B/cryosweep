@@ -324,3 +324,28 @@ def test_skip_rows_rejects_a_negative_count():
     import pydantic
     with pytest.raises(pydantic.ValidationError):
         RunConfig(hall={"skip_rows": -1})
+
+
+# ------------------------------------ a truncated scan is not a completed one ----------
+def test_a_scan_that_hits_the_cap_says_so():
+    """`corrupt_leading_rows` stops at `max_scan` and cannot tell "row N was clean" from
+    "I ran out of scan budget". When the scan hits the cap the auto warning must say that
+    rows beyond it were not judged, so the count reads as a lower bound -- not as the
+    verdict of a completed scan."""
+    rows = [_row(_T, _FIELDS_OE[0], _BAD_R, _BAD_SD) for _ in range(AUTO_SCAN_CAP + 10)]
+    rows += [_row(_T, b, _rxy(b), _SD_TYPICAL) for b in _FIELDS_OE] * 7
+    with tempfile.TemporaryDirectory() as d:
+        p = _write(d, "auto_capped.dat", _HDR + "\n".join(rows) + "\n")
+        r = _analyze(p)
+    assert r.data["skipped_rows"] == AUTO_SCAN_CAP
+    w = [w for w in r.warnings if "dropped" in w]
+    assert w, r.warnings
+    assert "cap" in w[0] and "not judged" in w[0], w[0]
+
+
+def test_a_scan_that_stops_short_of_the_cap_does_not_claim_truncation():
+    with tempfile.TemporaryDirectory() as d:
+        p = _write(d, "auto_one.dat", _build(_BAD_R, _BAD_SD))
+        r = _analyze(p)
+    assert r.data["skipped_rows"] == 1
+    assert not any("not judged" in w for w in r.warnings)

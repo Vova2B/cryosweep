@@ -190,10 +190,18 @@ def auto_skip_warning(df, cmap, n_skip: int) -> str | None:
         return None
     ratio, ch, value, median, what, unit = worst
     plural = "" if n_skip == 1 else "s"
-    return (f"dropped {n_skip} leading data row{plural} as unphysical: channel {ch} "
-            f"{what} = {value:.2e} {unit} is {ratio:.1e} times the file median "
-            f"({median:.2e} {unit}). Re-run with --skip-rows 0 to keep "
-            f"{'it' if n_skip == 1 else 'them'}.")
+    msg = (f"dropped {n_skip} leading data row{plural} as unphysical: channel {ch} "
+           f"{what} = {value:.2e} {unit} is {ratio:.1e} times the file median "
+           f"({median:.2e} {unit}). Re-run with --skip-rows 0 to keep "
+           f"{'it' if n_skip == 1 else 'them'}.")
+    if n_skip >= AUTO_SCAN_CAP:
+        # corrupt_leading_rows stops at the cap and cannot tell "the next row was clean"
+        # from "the scan budget ran out": a truncated scan must not read as a completed
+        # one, so the count is reported as what it is -- a lower bound.
+        msg += (f" The scan stopped at its cap of {AUTO_SCAN_CAP} rows without reaching "
+                f"a clean one, so rows beyond it were not judged and the count is a lower "
+                f"bound — inspect the head of the file, or pass an explicit --skip-rows N.")
+    return msg
 
 
 def skip_row_warning(df, cmap, channel: int, skip_rows: int) -> str | None:

@@ -412,6 +412,26 @@ def sign_confidence_warning(points) -> str | None:
 FIT_QUALITY_UNAVAILABLE = "fit_quality_unavailable"
 
 
+def same_bridge_warning(hc) -> str | None:
+    """`--long-channel` equal to `--hall-channel`, in the SAME file, means rho_xx is read
+    from the transverse (Hall) wiring: mu = |R_H|/rho_xx then divides by the Hall
+    channel's own resistance, not by a longitudinal resistivity. Measured on the real
+    Hall file: median mobility 0.008734 against 0.0002382 m^2/Vs from the longitudinal
+    bridge -- a factor of 37 -- with `mobility applicable: true` and no warning at all.
+    Warn, do not decline: a user may have a genuine reason (a single-bridge arrangement,
+    a deliberate check), and a declined number cannot be inspected. A --long-file with the
+    same channel NUMBER is a different file and a different bridge, so it is not this."""
+    if (hc.longitudinal_channel is None or hc.longitudinal_file
+            or hc.longitudinal_channel != hc.hall_channel):
+        return None
+    ch = hc.hall_channel
+    return (f"--long-channel {ch} is the same bridge as --hall-channel {ch}: rho_xx is "
+            f"being read from the TRANSVERSE (Hall) wiring, so mobility = |R_H|/rho_xx "
+            f"divides by the Hall channel's own resistance, not by a longitudinal "
+            f"resistivity — supply the longitudinal bridge (or --long-file) unless this "
+            f"is intended")
+
+
 def published_r2s(points) -> list[float]:
     """The r2 values the `fit` ceiling averages: finite, and from points that actually
     PUBLISHED a carrier density. A declined point contributes nothing to the published
@@ -1052,12 +1072,14 @@ class HallAnalyzer:
         elif hc.longitudinal_channel is not None:
             long_source = f"same_file:ch{hc.longitudinal_channel}"
         rho_fn, rho_reason = _long_rho_xx(df, cmap, hc.longitudinal_channel, long_df, long_cmap, cfg)
+        # Both leading warnings ride on every branch below: neither depends on the result.
+        lead_warns = [w for w in (skip_warn, same_bridge_warning(hc)) if w]
 
         points = field_sweep_points(df, cmap, cfg, hc, thickness_m, rho_fn, rho_reason)
 
         if not points:
             return Result(status="low_confidence", confidence=0.2,
-                          warnings=([skip_warn] if skip_warn else []) + ["no field loops found to fit"],
+                          warnings=lead_warns + ["no field loops found to fit"],
                           data={"probe": "hall", "reason": "no field loops"}, provenance=prov)
         caps = _capabilities(points, thickness_m is not None, long_source, rho_reason)
         hd = HallData(probe="hall", hall_channel=hc.hall_channel, thickness_m=thickness_m,
@@ -1081,7 +1103,7 @@ class HallAnalyzer:
                                             "only the slope is measured",
                                      remedy={"flag": "--thickness",
                                              "example": "--thickness 0.07 --thickness-unit mm"})],
-                          warnings=[skip_warn] if skip_warn else [],
+                          warnings=lead_warns,
                           data=hd.model_dump(mode="json"), provenance=prov)
         # Spec §4.5: two ceilings, and confidence is the lower. `fit` says how well the
         # lines fit; `resolved` says how many R_H are distinguishable from zero. A result
@@ -1097,7 +1119,7 @@ class HallAnalyzer:
                              if points else 0.0)
         status, conf, rflags = hall_confidence(fit_quality, resolved_fraction,
                                                cfg.confidence_min)
-        warns = ([skip_warn] if skip_warn else []) + sigma_noise_warnings(points)
+        warns = lead_warns + sigma_noise_warnings(points)
         sign_warn = sign_confidence_warning(points)
         if sign_warn:
             warns.append(sign_warn)

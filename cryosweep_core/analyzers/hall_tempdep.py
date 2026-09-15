@@ -20,7 +20,7 @@ from cryosweep_core.analyzers.hall import (_carrier_n, _mobility,
                                       hall_confidence, degenerate_residual_sigma,
                                       published_r2s, fit_quality_unavailable_warning,
                                       FIT_QUALITY_UNAVAILABLE, annotate_carrier_uncertainty,
-                                      sign_confidence_warning)
+                                      sign_confidence_warning, same_bridge_warning)
 from cryosweep_core.fitting.transport import LinearFitModel
 from cryosweep_core.result import Result, Provenance, Gate
 from cryosweep_core.registry import Need
@@ -751,6 +751,8 @@ class HallTempDepAnalyzer:
         elif hc.longitudinal_channel is not None:
             long_source = f"same_file:ch{hc.longitudinal_channel}"
         rho_fn, rho_reason = _long_rho_xx(df, cmap, hc.longitudinal_channel, long_df, long_cmap, cfg)
+        # Both leading warnings ride on every branch below (same rule as hall.py).
+        lead_warns = [w for w in (skip_warn, same_bridge_warning(hc)) if w]
 
         # --- build fixed-field curves → reconstruct temp-dep Hall points ---
         curves = _interp_fixed_field_curves(df, cmap, cfg, hc.hall_channel, hc.temp_interval)
@@ -826,13 +828,13 @@ class HallTempDepAnalyzer:
                                             "only the slope is measured",
                                      remedy={"flag": "--thickness",
                                              "example": "--thickness 0.07 --thickness-unit mm"})],
-                          warnings=[skip_warn] if skip_warn else [],
+                          warnings=lead_warns,
                           data=data.model_dump(mode="json"), provenance=prov)
 
         fitted = [p for p in points if p.R_H is not None]
         if not fitted:
             return Result(status="low_confidence", confidence=0.2,
-                          warnings=([skip_warn] if skip_warn else []) +
+                          warnings=lead_warns +
                                    ["no fittable T point (need >=2 antisym points)"],
                           data=data.model_dump(mode="json"), provenance=prov)
 
@@ -876,7 +878,7 @@ class HallTempDepAnalyzer:
         # Closed O4 + hardening 2: honest aggregate warning when the instrument sigma says
         # the R_H(T) points are noise-dominated (> 50 % relative). EXPECTED to fire on the
         # real Hall file's channel (nV-level signal, median std/rho 61 %) — flag, never drop.
-        warns: list[str] = [skip_warn] if skip_warn else []
+        warns: list[str] = list(lead_warns)
         scored = [(p, p.r_h_sigma_instrument / abs(p.R_H)) for p in fitted
                   if p.r_h_sigma_instrument is not None and p.R_H]
         rels = [rel for _, rel in scored]
