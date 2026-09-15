@@ -101,6 +101,48 @@ where the old behaviour degraded silently instead of saying so.
   `hall-tdep`'s aggregate warning splits the same way, counting the two bands separately
   (`… 72 of them carry no carrier density at all …; interpret the other 66 with care`). **Warning
   text only — no threshold, value, status or exit code moves.**
+- **Absent evidence no longer certifies a Hall result.** Three places read "no evidence" as
+  "good evidence", and each is now consistent with the rule the decline already used for an
+  absent σ (*"an unquantified uncertainty is not evidence of a small one"*):
+  - **A residual σ that is float noise is not an uncertainty estimate.** A zero-residual fit
+    returns σ = 0.0 (or a σ so small it asserts R_H to eight significant digits), and
+    `is_resolved` read that as *maximally* resolved. A **relative** floor now declines it under
+    a `sigma_degenerate` flag — deliberately distinct from `sigma_zero_dof`, which means "fewer
+    than three points" rather than "the residuals vanished". The floor is not tuned: real data's
+    smallest relative σ sits more than three orders above it and the float-noise population more
+    than three orders below, and a test pins that insensitivity. Applied to **both** Hall probes,
+    though only the temperature-dependent one reaches it today.
+  - **No surviving r² no longer scores as a perfect fit.** It was `1.0` — while the envelope
+    separately reported `"fit": null`, so the JSON and the confidence disagreed about the same
+    quantity. The fit term is now **dropped** from the `min()` rather than given a number, the
+    status is capped at `low_confidence`, and a `fit_quality_unavailable` flag says why. It is
+    not scored `0.0`: r² is absent *by construction* for the one-±pair-per-temperature protocol,
+    and `min()` would make a zero absorbing, erasing the informative `resolved` term.
+  - **The fit ceiling now averages r² over points that actually published.** A point the decline
+    withheld no longer drags down the fit quality of the ones that stand.
+- **`carrier_type` is no longer a bare string, and `carrier_n` carries an exact bound.** One 1σ
+  bar was gating a *sign* claim and a *reciprocal*. Each point now carries
+  `carrier_sign_confidence` = Φ(|R_H|/σ), and `carrier_n_ci_low`/`carrier_n_ci_high` from the
+  exact 1/x transform beside the existing `carrier_n_sigma`, which is unchanged but is now
+  documented as the **linearized** symmetric propagation. A `carrier_n_sigma_linearized` flag
+  fires from a derived threshold, not a tuned one: the symmetric bound understates the exact one
+  by exactly 1/(1 − rel²), so it fires past rel > 0.302. On reference data the median relative σ
+  of published points is 0.905 — a 13.5 % chance of a wrong carrier sign per point, and a true
+  upper excursion of 10.5×n₀ against a reported σ_n/n of 0.91. **No new decline threshold**: the
+  existing σ ≥ |R_H| rule turns out to be exactly "the upper bound on n becomes unbounded".
+- **Two silent wrong answers now speak.** `--long-channel` equal to `--hall-channel` reads ρ_xx
+  off the transverse wiring (measured: a 37× shift in median mobility, capability still
+  `applicable`, no warning); it warns rather than declines, since a single-bridge arrangement is
+  a real thing to do. And the leading-row scan, which stops at its cap and cannot tell "the next
+  row was clean" from "the budget ran out", now reports its count as the lower bound it is.
+- **Measured impact, 20 Hall configurations across shipped examples and reference files:
+  6 moved, 14 byte-identical.** `hall_temperature_dependence.dat` publishes 0 carrier densities
+  instead of 23 and exits **0 → 11** — it is noiseless synthetic data whose entire relative-σ
+  population is float noise, so there is no scatter from which to estimate σ.
+  `hall_mixed_sweeps.dat` exits **0 → 11** with its confidence, parts and published counts
+  **unchanged** — only the status cap moved. Two reference confidences *rose* (0.248 → 0.372,
+  0.778 → 0.874) as the fit ceiling stopped averaging in declined points. And a pre-existing
+  `confidence: NaN` on `hall_field_sweeps.dat` channel 2 is now `0.0`.
 - **Hall CSV exports (`hall`/`hall-tdep`) carry a leading `#` comment block** whenever the run
   has warnings — a parse-contract change for any external reader:
 

@@ -246,6 +246,21 @@ Propagation (through-the-estimator, exact linear):
 - The instrument columns arrive in resistivity units; the per-row `Resistance/Resistivity`
   ratio of the file itself bridges them to Ω — internally self-consistent whatever the
   header geometry setting was (it is not a claim about absolute resistivity).
+- **Absent evidence never certifies.** An unquantified σ is not evidence of a small one, and
+  neither is a σ that is float noise: a zero-residual fit reports σ → 0, which asserts perfect
+  certainty, so a **relative** floor declines it (`sigma_degenerate`, distinct from
+  `sigma_zero_dof` = fewer than three points). Likewise a confidence ceiling with no surviving
+  r² is **dropped from the `min()`** and caps the status at `low_confidence`, rather than being
+  scored 1.0 (perfect) or 0.0 (absorbing) — r² is absent by construction for a one-±pair-per-
+  temperature protocol, so a zero would erase the informative resolved fraction.
+- **A sign claim and a reciprocal are not a symmetric error bar.** `carrier_type` = sign(R_H) is
+  a binary claim whose confidence is Φ(|R_H|/σ); at a relative σ of 0.905 — the median on real
+  data — that is a 13.5 % chance of the wrong carrier type. `carrier_n` = 1/(e|R_H|) is a
+  reciprocal, so the symmetric propagation σ_n/n = σ_RH/|R_H| is a **linearization** valid only
+  for σ ≪ |R_H|; it understates the upper bound by exactly **1/(1 − rel²)**. Both the exact
+  interval 1/(e(|R_H| ∓ σ)) and the sign confidence are reported alongside it, never merged with
+  it. The interval's upper end diverges precisely as σ → |R_H|, which is why the decline
+  threshold sits exactly there.
 - A ≥ 50 % relative σ on R_H produces an explicit noise warning rather than a silent number,
   and the warning's verdict is **graduated to match what was actually published**. The Sec 4.1
   decline withholds the carrier density only at σ ≥ |R_H| (100 %), so a point between 50 % and
