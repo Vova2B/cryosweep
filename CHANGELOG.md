@@ -87,11 +87,11 @@ where the old behaviour degraded silently instead of saying so.
   σ are never withheld** — only what would have been *derived* from it. The
   `carrier_concentration` capability itself now reads `applicable: false` once every point in a
   result declines it, instead of staying `true` because R_H happens to be present.
-  On the shipped `hall-tdep` examples this withholds 15 of 38 points
-  (`hall_temperature_dependence.dat`) and 57 of 130 (`hall_mixed_sweeps.dat`); on the real
-  file, 72 of 138. A withheld value is not missing data and not an error, and seeing it on
-  real, noisy measurements — including two of the shipped examples — is the tool working, not
-  breaking.
+  On the shipped `hall-tdep` examples this withholds 57 of 130 points (`hall_mixed_sweeps.dat`)
+  and all 38 of `hall_temperature_dependence.dat` — 15 by this rule on its own, the other 23
+  through the σ-floor change below; on the real file, 72 of 138. A withheld value is not
+  missing data and not an error, and seeing it on real, noisy measurements — including two of
+  the shipped examples — is the tool working, not breaking.
 - **The >50 % noise warning no longer contradicts the value printed beside it.** It fired above
   50 % relative σ while the decline above withholds only at σ ≥ |R_H| (100 %), so every point in
   between was handed a carrier density *and* told to "treat as noise, not a carrier density".
