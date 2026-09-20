@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## 0.7.0 — 2026-09-20
 
 Both Hall analyzers now ask whether a fit's own uncertainty makes its derived quantities
 meaningless, instead of only whether the fit ran. A Hall coefficient whose ±1σ interval
@@ -66,11 +66,12 @@ where the old behaviour degraded silently instead of saying so.
   resolved. A noise-dominated `hall-tdep` file that used to report `status: "ok"` can now report
   `status: "low_confidence"`, exit **0 → 11**. `--confidence-min` now moves both analyzers'
   status identically — it previously moved only `hall`'s.
-  **This move is real but does not occur on any shipped example**, so do not expect the exit
-  code of a shipped example to change: `hall_temperature_dependence.dat` goes from confidence
-  1.0 to 0.605263 (23 of 38 points resolved), and `hall_mixed_sweeps.dat` from 1.0 to 0.561538
-  (73 of 130) — both stay `status: "ok"`. Only the real reference file crosses the threshold,
-  to confidence 0.478261 and exit 11. **Field-sweep `hall` confidence moves too, but far less
+  **Both shipped `hall-tdep` examples move**, together with the σ-floor change below:
+  `hall_temperature_dependence.dat` goes from confidence 1.0 to **0.0** — it is noiseless, so no
+  point resolves at all — and `hall_mixed_sweeps.dat` from 1.0 to 0.561538 (73 of 130 resolved).
+  Both exit **0 → 11**, as does the real reference file at confidence 0.478261. The
+  temperature-dependent example therefore now demonstrates the decline rule rather than a
+  carrier density; `hall_mixed_sweeps.dat` is the one that publishes n(T) and mobility(T). **Field-sweep `hall` confidence moves too, but far less
   often:** across every shipped example on either channel, exactly one configuration changes —
   `hall_mixed_sweeps.dat` channel 2, 0.248483 → 0.111111, because its `resolved` term is
   0.111111. Every other shipped example is identical to the last digit on both channels. The
@@ -174,6 +175,16 @@ where the old behaviour degraded silently instead of saying so.
   its own label, separated by a semicolon.
 - The field-sweep Hall row displayed only the residual sigma; it now shows the instrument sigma
   too, matching the temperature-dependent row.
+
+### Known issues shipped open
+
+Four display defects found while checking this release's figures ship unfixed, recorded with
+what reproduces each and a workaround in [KNOWN-ISSUES.md](KNOWN-ISSUES.md) items 39–42: the
+robust y-view can hide a published mobility point; the carrier-density line is drawn across
+temperatures whose density was withheld, and without its uncertainty interval; past 56
+temperatures the stage figures' legend overflows the canvas and the GUI status header overprints
+the panel titles; and a panel whose every point was withheld reports that the file holds no data
+of that kind. None of them changes a number.
 
 ## 0.6.0 — 2026-09-07
 
