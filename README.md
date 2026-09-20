@@ -224,7 +224,7 @@ example file that reproduces it. The items that change a fitted number or an exp
 are listed at the top of that file — among them a temperature-setpoint binning bug in the Hall
 analyzer that could fabricate a carrier-density point, and the derived-quantity fallback that
 let it reach the CSV, both found on real data and now reproduced by
-`examples/hall_mixed_sweeps.dat` so the test suite can hold them closed. Items 39–41 are still
+`examples/hall_mixed_sweeps.dat` so the test suite can hold them closed. Items 39–42 are still
 open; all three concern what a Hall figure shows, not any number.
 
 ## Versioning
@@ -240,7 +240,7 @@ version — figures are expected to improve, and doing so is not a breaking chan
 
 - [CHANGELOG.md](https://github.com/Vova2B/cryosweep/blob/main/CHANGELOG.md) — what is in each release
 - [ROADMAP.md](https://github.com/Vova2B/cryosweep/blob/main/ROADMAP.md) — what is planned for 1.0, with measured costs where they were measured
-- [KNOWN-ISSUES.md](https://github.com/Vova2B/cryosweep/blob/main/KNOWN-ISSUES.md) — defects found, all fixed except items 39–41, each with what reproduces it and what caused it
+- [KNOWN-ISSUES.md](https://github.com/Vova2B/cryosweep/blob/main/KNOWN-ISSUES.md) — defects found, all fixed except items 39–42, each with what reproduces it and what caused it
 - [CONTRIBUTING.md](https://github.com/Vova2B/cryosweep/blob/main/CONTRIBUTING.md) and [CLA.md](https://github.com/Vova2B/cryosweep/blob/main/CLA.md) — how to contribute, and the one-time agreement
 - [SECURITY.md](https://github.com/Vova2B/cryosweep/blob/main/SECURITY.md) — reporting a vulnerability
 - [CODE_OF_CONDUCT.md](https://github.com/Vova2B/cryosweep/blob/main/CODE_OF_CONDUCT.md)

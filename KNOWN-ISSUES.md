@@ -9,7 +9,7 @@ left because the project's own rule is that a result you cannot trust is more us
 than hidden.
 
 Items 24 onwards were found later, most of them while making the Hall analyzers decline to
-publish quantities they cannot support; each names what reproduces it. **Items 39–41 are
+publish quantities they cannot support; each names what reproduces it. **Items 39–42 are
 open** — every other item is fixed.
 
 **Which items change a number.** Of items 1–23: only 19 and 20 change a fitted number or a
@@ -635,9 +635,9 @@ purpose) and remains open.
 
 ## Hall figures (open, found while checking the release figures, 2026-09-18)
 
-Items 39–41 are **open** and ship unfixed. Each names what reproduces it, a workaround, and the
+Items 39–42 are **open** and ship unfixed. Each names what reproduces it, a workaround, and the
 fix it points to. None changes a number: the JSON, the CSV and the confidence are unaffected —
-these are about what the figures show.
+they are about what a figure shows, and item 42 about what the GUI says when it shows nothing.
 
 **39. The temperature-dependent mobility figure can push a published point off the axis, with no
 marker saying so.** *OPEN.* The robust y-view (on by default) narrows a linear axis to the union
@@ -695,3 +695,17 @@ switched off, the layout is applied and the header clears both titles. On the re
 entries. **Workaround:** untick "show legend" (Styling → Journal frame). **Fix it points to:**
 past the legend's capacity, colour by temperature on a sequential colormap with a colorbar in
 place of the legend; figures with 56 temperatures or fewer would be unchanged.
+
+**42. A Hall panel whose points were all withheld reports that the file has no data of that
+kind.** *OPEN.* A plot card draws nothing when no series is switched on by default, and the GUI
+reports that as `not applicable — no data of this kind in this file`. On a result where every
+carrier density declined (item 26) that sentence is false: the published-density series is empty,
+but the file was analysed and each point carries the value that was withheld, under its
+`withheld` field with an `r_h_unresolved` flag saying why. Reproduces in the GUI on a shipped
+example: load `examples/hall_temperature_dependence.dat`, Temp-Dep Hall tab, Hall channel 1,
+thickness 0.5, longitudinal channel 2 — the "carrier n vs T" and "μ vs T" cards both show the
+message, and the R_H(T) card beside them draws all 38 points. **Workaround:** switch on "n
+(declined)" (or "μ (declined)") in that card's curve checklist — each draws all 38 withheld
+points. **Fix it points to:** separate "this kind has no series at all" from "no series is
+currently selected", and in the second case name the series that exist and say that every point
+was declined.
