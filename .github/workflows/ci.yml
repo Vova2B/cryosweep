@@ -47,8 +47,14 @@ jobs:
         run: pytest -p no:warnings --junitxml=pytest-results.xml
 
       # A green tick is not evidence on its own: it says nothing failed, not that anything ran.
+      # The ceiling carries ~6 of headroom over the skips a public checkout actually has, so a
+      # handful of tests silently ceasing to run still trips it. Raising it is a deliberate act
+      # and wants evidence that the rise is ADDED tests: 209 -> 225 for 0.7.0, verified by
+      # diffing the skipped-test names between main and the release branch in data-free clones —
+      # 0 tests skipped on main stopped being skipped, and every added skip was a test that does
+      # not exist on main (real-Hall-file tests plus the parametrised canvas-size headroom set).
       - name: Suite completeness
-        run: python tools/suite_report.py pytest-results.xml --max-skipped 215 --min-total 2000 --verify-block
+        run: python tools/suite_report.py pytest-results.xml --max-skipped 231 --min-total 2000 --verify-block
 
       - name: CLI smoke
         run: |
