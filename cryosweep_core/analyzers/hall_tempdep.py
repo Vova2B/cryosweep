@@ -14,13 +14,22 @@ import pandas as pd
 from pydantic import BaseModel, ConfigDict
 from cryosweep_core.detect.sweeps import segment_sweeps
 from cryosweep_core.analyzers.hall import (_carrier_n, _mobility,
-                                      _long_rho_xx, field_sweep_points)
+                                      _long_rho_xx, field_sweep_points,
+                                      _mobility_gap_reason, _RHO_XX_NO_ZERO_FIELD,
+                                      WithheldDerived, decline_unresolved, is_resolved,
+                                      hall_confidence, degenerate_residual_sigma,
+                                      published_r2s, fit_quality_unavailable_warning,
+                                      FIT_QUALITY_UNAVAILABLE, annotate_carrier_uncertainty,
+                                      sign_confidence_warning, same_bridge_warning)
 from cryosweep_core.fitting.transport import LinearFitModel
 from cryosweep_core.result import Result, Provenance, Gate
 from cryosweep_core.registry import Need
 from cryosweep_core.io.loader import load_dat
 from cryosweep_core.io.columns import canonicalize_columns
 from cryosweep_core.grouping import cluster_field_setpoints
+from cryosweep_core.analyzers.hall_sigma import (row_sigma_R, slope_sigma_ols,
+                                                 skip_row_warning, resolve_skip_rows,
+                                                 auto_skip_warning)
 
 from cryosweep_core.units import OE_PER_T as _OE_PER_T   # single-sourced
 
@@ -62,6 +71,9 @@ class HallTDepPoint(BaseModel):
     # Residual (fit-quality) sigma — None unless >= 3 antisym points (zero-DOF: U4)
     slope_sigma_ohm_per_T: float | None = None
     r_h_sigma: float | None = None
+    # LINEARIZED symmetric propagation, n * sigma/|R_H|: valid only for sigma/|R_H| << 1.
+    # n is a reciprocal, so the true +-1 sigma excursion is asymmetric and the upper side
+    # exceeds this by 1/(1 - rel^2) -- see carrier_n_ci_low/high below for the exact one.
     carrier_n_sigma: float | None = None
     mobility_sigma: float | None = None
     # Instrument repeat-noise sigma (closed O4) — a WEAKER, DIFFERENT claim than the
@@ -78,6 +90,31 @@ class HallTDepPoint(BaseModel):
     # requested drive. current_density_J above becomes I/(w*t) when sample width AND
     # thickness are both supplied; otherwise it stays None (gated, never guessed).
     excitation_uA: float | None = None
+    # 2026-09-10 (spec Sec 4.1, append-only): decline reasons for the derived quantities, and
+    # what was withheld. Mirrors HallTempPoint; ["r_h_unresolved"] means sigma >= |R_H|.
+    derived_flags: list[str] = []
+    withheld: WithheldDerived | None = None
+    # Carried over from Task 1: the field rho_xx came from, the temp-dep counterpart of
+    # HallTempPoint.rho_xx_field_oe. Task 1 could not add it here because this model had no
+    # per-point decline vocabulary; it does now.
+    rho_xx_field_oe: float | None = None
+    # 2026-09-14 (append-only): the antisym fit's residual sigma was float noise from a
+    # zero-residual fit (relative sigma < hall.SIGMA_REL_FLOOR) or non-finite, and was set
+    # to None with this as the reason. DISTINCT from sigma_zero_dof (< 3 antisym points):
+    # here the fit had residual DOF to spare and the residuals still vanished. Same field,
+    # same meaning as HallTempPoint.sigma_degenerate.
+    sigma_degenerate: bool = False
+    # 2026-09-14 (append-only): a sign claim and a reciprocal are not a symmetric error
+    # bar. carrier_sign_confidence = Phi(|R_H|/sigma), the normal CDF -- the probability
+    # the published carrier SIGN is right; published wherever carrier_type is, so the type
+    # is never again a bare unqualified string. carrier_n_ci_low/high are the EXACT
+    # +-1 sigma transform of n = 1/(e|R_H|): 1/(e(|R_H| +- sigma)) -- a transform, not a
+    # propagation; the linearized carrier_n_sigma above is valid only for sigma/|R_H| << 1
+    # (see annotate_carrier_uncertainty). All three use the SAME sigma the decline judges
+    # by (resolved_sigma), and are None on a declined point.
+    carrier_sign_confidence: float | None = None
+    carrier_n_ci_low: float | None = None            # 1/m^3
+    carrier_n_ci_high: float | None = None           # 1/m^3
 
 
 class HallTDepStage(BaseModel):
@@ -125,6 +162,17 @@ class HallTempDepData(BaseModel):
     dual_method: list[DualMethodPoint] = []
     capabilities: list[Capability] = []
     sample_width_m: float | None = None     # provenance of J = I/(w*t); None -> J gated off
+    # 2026-09-10 (task 4b, append-only): how many leading rows HallCfg.skip_rows dropped
+    # before this analysis ran. Same field as HallData.skipped_rows -- one flag, one
+    # meaning, across both Hall analyzers.
+    skipped_rows: int = 0
+    # 2026-09-14 (append-only): result-level machine-readable flags, same field and meaning
+    # as HallData.flags (e.g. fit_quality_unavailable).
+    flags: list[str] = []
+
+
+#: Result-level flag: every published carrier density came from the 2point fallback.
+TWO_POINT_ONLY_PUBLISHED = "two_point_only_published"
 
 
 # ---- pure helpers ----------------------------------------------------------
@@ -201,9 +249,6 @@ def _interp_fixed_field_curves(
     return curves
 
 
-_RATIO_CONSTANCY_TOL = 1e-6   # hardening 1 (2026-08-10): required rel spread of R/rho
-
-
 def _interp_fixed_field_sigma_curves(df, cmap, cfg, hall_channel: int, temp_interval: float):
     """Instrument sigma_R curves per held field, aligned with _interp_fixed_field_curves.
 
@@ -216,28 +261,9 @@ def _interp_fixed_field_sigma_curves(df, cmap, cfg, hall_channel: int, temp_inte
     DECLINES (returns None) and every *_sigma_instrument field stays None — the measured
     constancy is a runtime gate, not an assumption. Also None when any needed column is
     absent. Collapse of duplicate T rows uses the mean (conservative vs mean/sqrt(k))."""
-    std_key = (f"rho_std_bridge{hall_channel}"
-               if f"rho_std_bridge{hall_channel}" in cmap.logical
-               else f"rho_std_ch{hall_channel}")
-    res_key = f"resistance_ch{hall_channel}"
-    rty_key = f"resistivity_ch{hall_channel}"
-    if (std_key not in cmap.logical or res_key not in cmap.logical
-            or rty_key not in cmap.logical):
+    sigma_R = row_sigma_R(df, cmap, hall_channel)
+    if sigma_R is None:
         return None
-    Rr = pd.to_numeric(df[cmap.logical[res_key]], errors="coerce").to_numpy(float)
-    Rh = pd.to_numeric(df[cmap.logical[rty_key]], errors="coerce").to_numpy(float)
-    SD = pd.to_numeric(df[cmap.logical[std_key]], errors="coerce").to_numpy(float)
-    mr = np.isfinite(Rr) & np.isfinite(Rh) & (Rh != 0.0)
-    if not mr.any():
-        return None
-    ratios = Rr[mr] / Rh[mr]
-    med = float(np.median(ratios))
-    if med == 0.0 or not np.isfinite(med):
-        return None
-    spread = float((np.max(ratios) - np.min(ratios)) / abs(med))
-    if not (spread < _RATIO_CONSTANCY_TOL):
-        return None                                # DECLINE, never emit a shaky sigma
-    sigma_R = SD * med                             # per-row; med == per-row ratio (gated)
 
     T = pd.to_numeric(df[cmap.logical["temperature"]], errors="coerce").to_numpy(float)
     tsegs = [s for s in segment_sweeps(df, cmap, cfg) if s.swept.name == "temperature"]
@@ -415,28 +441,37 @@ def _reconstruct_points(
             pt.slope_ohm_per_T = slope
             pt.slope_pos_ohm_per_T = slope    # by antisym construction pos==neg==avg
             pt.slope_neg_ohm_per_T = slope
-            pt.r2 = float(fit.r2)
             pt.R_H = (slope * thickness_m * geometry_sign) if thickness_m is not None else None
             pt.carrier_n, pt.carrier_type = _carrier_n(pt.R_H)
             pt.r_h_method = "antisym"
             # Residual sigma (spec §2.2): >= 3 antisym points -> linregress stderr; exactly
-            # 2 -> zero residual DOF, stderr is 0.0 -> None + sigma_zero_dof (U4).
+            # 2 -> zero residual DOF, stderr is 0.0 -> None + sigma_zero_dof (U4). Spec
+            # §4.5(a): r2 at exactly 2 points is the same tautology -- a line through two
+            # points fits them exactly regardless of how linear the underlying data really
+            # is -- so it stays None there too, not `fit.r2` (measured: this is the ONLY
+            # source of a non-None r2 hall-tdep ever reports, and every one of them was
+            # exactly 1.0).
             if antisym_points >= 3:
                 ssig = float(fit.sigma["slope"])
-                pt.slope_sigma_ohm_per_T = ssig if np.isfinite(ssig) else None
+                # Same rule as hall._stage_fit, via the same helper: a residual sigma the
+                # residuals could not support (float noise from an exactly linear fit, or
+                # non-finite) is None with `sigma_degenerate` as its reason -- is_resolved
+                # would otherwise read a sigma of exactly 0.0 as maximally resolved and
+                # certify a carrier density from the ABSENCE of scatter. Measured on the
+                # noiseless shipped example: the whole relative-sigma population is
+                # {0.0, 1.49e-8}. Distinct from sigma_zero_dof below (< 3 points).
+                if degenerate_residual_sigma(ssig, slope):
+                    pt.sigma_degenerate = True
+                else:
+                    pt.slope_sigma_ohm_per_T = ssig
+                pt.r2 = float(fit.r2)
             else:
                 pt.sigma_zero_dof = True
             # Instrument sigma (closed O4): exact linear propagation through the same
-            # OLS-with-intercept estimator: w_i = (B_i - Bbar)/sum((B - Bbar)^2),
-            # var_slope = sum(w_i^2 sigma_asym_i^2).
+            # OLS-with-intercept estimator as the residual sigma above -- shared with the
+            # field-sweep analyzer via slope_sigma_ols (hall_sigma.py).
             if all(s is not None for s in Sasym):
-                Ba = np.array(B)
-                dev = Ba - float(Ba.mean())
-                denom = float(np.sum(dev ** 2))
-                if denom > 0:
-                    var = float(np.sum((dev / denom) ** 2 * np.array(Sasym, float) ** 2))
-                    if np.isfinite(var):
-                        pt.slope_sigma_instrument_ohm_per_T = math.sqrt(var)
+                pt.slope_sigma_instrument_ohm_per_T = slope_sigma_ols(B, Sasym)
 
         elif antisym_points == 1:
             # KNOWN-ISSUES #18 (2026-09-02): a single symmetric ± pair IS an
@@ -537,12 +572,23 @@ def _reconstruct_points(
 
 # ---- derived quantities helper --------------------------------------------
 
-def _sigma_mu_J(pt, rho_fn):
-    """Fill sigma / mobility in-place on a HallTDepPoint from a rho_fn(T) callable.
-    Returns pt for convenience (mutation is the primary effect)."""
+def _sigma_mu_J(pt, rho_fn, rho_reason=None, long_channel=None):
+    """Fill sigma / mobility in-place on a HallTDepPoint from a rho_fn(T) -> (rho_xx,
+    field_oe) callable (review round 1: rho_fn now also declines PER TEMPERATURE, not
+    just file-wide -- see _long_rho_xx). Returns pt for convenience (mutation is the
+    primary effect).
+
+    2026-09-10 (Task 5 follow-on): HallTDepPoint now carries the same rho_xx_field_oe /
+    derived_flags provenance HallTempPoint already has, so a per-setpoint decline is
+    stamped here exactly as field_sweep_points stamps it -- rho_xx_field_oe on success,
+    _RHO_XX_NO_ZERO_FIELD when this setpoint's own zero-field row is missing (a per-point
+    decline within an otherwise-covered file), or the file-level rho_reason (channel
+    missing vs. no zero-field row anywhere) when no rho_fn could be built at all."""
     if rho_fn is not None:
-        pt.rho_xx = rho_fn(pt.temperature)
+        rho_val, field_oe = rho_fn(pt.temperature)
+        pt.rho_xx = rho_val
         if pt.rho_xx and pt.rho_xx > 0:
+            pt.rho_xx_field_oe = field_oe
             pt.sigma = 1.0 / pt.rho_xx
             pt.mobility = _mobility(pt.R_H, pt.rho_xx)
             # sigma companions (each family; rho_xx sigma NOT folded — deferred §10)
@@ -552,6 +598,10 @@ def _sigma_mu_J(pt, rho_fn):
                 if pt.r_h_sigma_instrument is not None:
                     pt.mobility_sigma_instrument = float(
                         pt.mobility * pt.r_h_sigma_instrument / abs(pt.R_H))
+        elif long_channel is not None:
+            pt.derived_flags = [*pt.derived_flags, _RHO_XX_NO_ZERO_FIELD]
+    elif long_channel is not None:
+        pt.derived_flags = [*pt.derived_flags, rho_reason or _RHO_XX_NO_ZERO_FIELD]
     return pt
 
 
@@ -590,10 +640,17 @@ def _fill_excitation_and_J(points, df, cmap, hall_channel, temp_interval,
 
 # ---- capabilities assembler -----------------------------------------------
 
-def _capabilities(points, has_thickness, long_source, has_dual, min_antisym_pts=3):
+def _capabilities(points, has_thickness, long_source, has_dual, min_antisym_pts=3,
+                  rho_reason=None):
     """Assemble a list of Capability objects describing what this analysis can offer."""
     any_RH = any(p.R_H is not None for p in points)
     any_anti = any(p.antisym_points >= 1 for p in points)
+    # 2026-09-10 (fix round 1): any_RH used to be an accurate proxy for "carrier_n is
+    # published somewhere" -- decline_unresolved() broke that equivalence on purpose (R_H
+    # stays; carrier_n does not), which left carrier_concentration's `applicable` stale: a
+    # fully noise-dominated file could report applicable=True while publishing carrier_n
+    # on ZERO points. Key it on the live field instead, same as `mobility` already does.
+    any_n = any(p.carrier_n is not None for p in points)
     any_mu = any(p.mobility is not None for p in points)
     enough = any(p.antisym_points >= 2 and not p.low_confidence for p in points)
     caps = [
@@ -602,11 +659,17 @@ def _capabilities(points, has_thickness, long_source, has_dual, min_antisym_pts=
                    else ("thickness required" if not has_thickness else "no fittable T point")),
         Capability(name="antisymmetrization", applicable=any_anti,
                    reason="fixed-field family spans +/-B" if any_anti else "no +/-B pairs"),
-        Capability(name="carrier_concentration", applicable=any_RH,
-                   reason="n=1/(e|R_H|)" if any_RH else "needs R_H"),
+        Capability(name="carrier_concentration", applicable=any_n,
+                   reason="n=1/(e|R_H|)" if any_n
+                   else ("needs R_H" if not any_RH
+                         else "R_H resolved, but every point's sigma >= |R_H| "
+                              "(r_h_unresolved) -- see point.withheld")),
         Capability(name="mobility", applicable=any_mu,
                    reason=f"mu=|R_H|/rho_xx ({long_source})" if any_mu
-                   else "no longitudinal channel/file"),
+                   # 2026-09-10 (Task 5 follow-on): HallTDepPoint now carries derived_flags,
+                   # so this call site can climb the same evidence ladder field_sweep_points
+                   # already does instead of staying on its "no per-point evidence" rung.
+                   else _mobility_gap_reason(long_source, rho_reason, points)),
         Capability(name="dual_method", applicable=has_dual,
                    reason="field-sweep loops also present" if has_dual
                    else "no field sweeps in file"),
@@ -664,6 +727,18 @@ class HallTempDepAnalyzer:
                           errors=[f"hall channel {hc.hall_channel} resistance / T / H not found"],
                           data={"probe": "hall_tdep"}, provenance=prov)
 
+        # The leading-row skip -- see hall.py's HallAnalyzer.analyze for the full
+        # rationale. Same resolver, same flag, applied here too so one config field means
+        # one thing across both Hall analyzers (the real file's bad row was measured to
+        # leave this analyzer byte-identical either way, but it still honours the flag for
+        # consistency rather than because it needs it).
+        n_skip, from_auto = resolve_skip_rows(hc.skip_rows, df, cmap)
+        skip_warn = (auto_skip_warning(df, cmap, n_skip) if from_auto
+                     else (skip_row_warning(df, cmap, hc.hall_channel, n_skip) if n_skip
+                           else None))
+        if n_skip:
+            df = df.iloc[n_skip:].reset_index(drop=True)
+
         thickness_m = (hc.thickness_mm * 1e-3) if hc.thickness_mm else None
 
         # --- longitudinal source for sigma / mobility ---
@@ -675,7 +750,9 @@ class HallTempDepAnalyzer:
             long_source = f"file:{pathlib.Path(hc.longitudinal_file).name}:ch{hc.longitudinal_channel}"
         elif hc.longitudinal_channel is not None:
             long_source = f"same_file:ch{hc.longitudinal_channel}"
-        rho_fn = _long_rho_xx(df, cmap, hc.longitudinal_channel, long_df, long_cmap)
+        rho_fn, rho_reason = _long_rho_xx(df, cmap, hc.longitudinal_channel, long_df, long_cmap, cfg)
+        # Both leading warnings ride on every branch below (same rule as hall.py).
+        lead_warns = [w for w in (skip_warn, same_bridge_warning(hc)) if w]
 
         # --- build fixed-field curves → reconstruct temp-dep Hall points ---
         curves = _interp_fixed_field_curves(df, cmap, cfg, hc.hall_channel, hc.temp_interval)
@@ -688,7 +765,14 @@ class HallTempDepAnalyzer:
                                              two_point_fallback=hc.tdep_two_point_fallback,
                                              sd_curves=sd_curves)
         for p in points:
-            _sigma_mu_J(p, rho_fn)
+            _sigma_mu_J(p, rho_fn, rho_reason, hc.longitudinal_channel)
+        # Spec Sec 4.1: sigma >= |R_H| means the +-1 sigma interval contains zero, so n is
+        # unbounded above and the carrier sign is undetermined. Applied AFTER _sigma_mu_J
+        # so nothing above repopulates a withheld field afterwards -- same rule and shared
+        # helper as the field-sweep analyzer's field_sweep_points.
+        for p in points:
+            decline_unresolved(p)
+            annotate_carrier_uncertainty(p)      # same sigma the decline judged by
         width_m = (cfg.geometry.width_mm * 1e-3) if cfg.geometry.width_mm else None
         _fill_excitation_and_J(points, df, cmap, hc.hall_channel, hc.temp_interval,
                                width_m, thickness_m)
@@ -697,7 +781,7 @@ class HallTempDepAnalyzer:
         fsegs = [s for s in segment_sweeps(df, cmap, cfg) if s.swept.name == "field"]
         dual = []
         if fsegs and thickness_m is not None:
-            fs_pts = field_sweep_points(df, cmap, cfg, hc, thickness_m, rho_fn)
+            fs_pts = field_sweep_points(df, cmap, cfg, hc, thickness_m, rho_fn, rho_reason)
             fs_by_T = {round(p.temperature, 1): p.R_H for p in fs_pts if p.R_H is not None}
             for p in points:
                 rf = fs_by_T.get(round(p.temperature, 1))
@@ -715,7 +799,7 @@ class HallTempDepAnalyzer:
 
         has_dual = len(dual) > 0
         caps = _capabilities(points, thickness_m is not None, long_source, has_dual,
-                             hc.tdep_min_antisym_points)
+                             hc.tdep_min_antisym_points, rho_reason)
         interp = [InterpCurve(field_oe=float(f), temperature=Tg.tolist(), R=Rg.tolist())
                   for f, (Tg, Rg) in sorted(curves.items())]
         data = HallTempDepData(
@@ -731,45 +815,117 @@ class HallTempDepAnalyzer:
             dual_method=dual,
             capabilities=caps,
             sample_width_m=width_m,
+            skipped_rows=n_skip,
         )
 
-        # thickness omitted -> R_H is unscaled (all None); report the true cause, not "no fit"
+        # thickness omitted -> R_H is unscaled (all None); a missing thickness is a missing
+        # USER INPUT (same rule as hall_channel above): gate with a remedy, and keep the
+        # slope-only points in data so the reconstruction work is not discarded.
         if thickness_m is None:
-            return Result(status="low_confidence", confidence=0.4,
-                          warnings=["thickness required for R_H (slope-only reconstruction)"],
+            return Result(status="gated", confidence=0.4,
+                          gate=[Gate(need="thickness_mm",
+                                     reason="R_H = slope x thickness; without a thickness "
+                                            "only the slope is measured",
+                                     remedy={"flag": "--thickness",
+                                             "example": "--thickness 0.07 --thickness-unit mm"})],
+                          warnings=lead_warns,
                           data=data.model_dump(mode="json"), provenance=prov)
 
         fitted = [p for p in points if p.R_H is not None]
         if not fitted:
             return Result(status="low_confidence", confidence=0.2,
-                          warnings=["no fittable T point (need >=2 antisym points)"],
+                          warnings=lead_warns +
+                                   ["no fittable T point (need >=2 antisym points)"],
                           data=data.model_dump(mode="json"), provenance=prov)
 
-        # D8: confidence = fraction of non-low_confidence fitted points; NEVER mean r².
-        # Basis = the TRUSTED antisym points only. The 2-point fallback (B) EXTENDS coverage
-        # with honestly-flagged low_confidence tail points; counting them in the denominator
-        # would let extra coverage deflate status (backwards). Antisym-only frac keeps
-        # "antisym_fraction" literally accurate. If there are no antisym points at all
-        # (2-point coverage only), the result is genuinely low_confidence (frac 0).
-        # #18 (2026-09-02): single-pair points are labelled "antisym" (they are one) and
-        # so now count in this basis — the fraction covers the points actually fitted.
-        antisym_fitted = [p for p in fitted if p.r_h_method != "2point"]
-        frac = (sum(1 for p in antisym_fitted if not p.low_confidence) / len(antisym_fitted)
-                if antisym_fitted else 0.0)
-        conf = float(frac)
-        status = "ok" if frac >= 0.5 else "low_confidence"
+        # "antisym_fraction": of the carrier densities this result PUBLISHES, the fraction
+        # resting on a trusted antisym fit that met tdep_min_antisym_points. None -- never
+        # 0.0 or 1.0 asserted over nothing -- when no point published at all.
+        #
+        # History, because the basis moved twice: D8 first took it over the TRUSTED
+        # antisym points only, so that a 2-point tail EXTENDING coverage could not deflate
+        # a status it then drove (#18: single-pair points are labelled "antisym" and count).
+        # Spec §4.5 later stopped it driving confidence at all -- it was 1.0 by construction
+        # whenever every fitted point met the default threshold of 1. 2026-09-14: as a
+        # diagnostic of the published result its denominator must be the published points.
+        # Measured on the real Hall file, channel 2: the sigma >= |R_H| decline withholds
+        # all 137 antisym carrier densities and publishes exactly ONE, from the 2point
+        # fallback, and the old basis reported antisym_fraction = 1.0 beside it -- the
+        # headline diagnostic contradicting the envelope, because the 2point points were
+        # exactly the ones its denominator excluded. On the published basis that reads 0.0.
+        published = [p for p in points if p.carrier_n is not None]
+        frac = (sum(1 for p in published if p.r_h_method != "2point" and not p.low_confidence)
+                / len(published) if published else None)
+        # Say when the ONLY published values came from the estimator this analyzer trusts
+        # least: a reader of the real file's channel 2 would otherwise see one clean carrier
+        # density and nothing marking it as the sparse fallback's survivor.
+        two_point_only = bool(published) and all(p.r_h_method == "2point" for p in published)
+        # Spec §4.5: confidence = min(fit quality, resolved fraction), same rule as `hall`.
+        # 2026-09-14: fit_quality is the mean r2 over the points that PUBLISHED a carrier
+        # density (published_r2s -- a declined point's r2 stays on the point but does not
+        # move the published result's ceiling), with `fit_n` saying how many went in. When
+        # none did, hall_confidence drops the term, caps the status and returns the flag:
+        # the old `else 1.0` scored the absence of fit evidence as a perfect fit beside a
+        # `fit: None` that said otherwise. `resolved` is computed over ALL points (not
+        # `fitted`): a point with no R_H at all counts as unresolved, never silently
+        # excluded (§4.1).
+        pub_r2s = published_r2s(points)
+        fit_quality = float(np.mean(pub_r2s)) if pub_r2s else None
+        resolved_fraction = (sum(1 for p in points if is_resolved(p)) / len(points)
+                             if points else 0.0)
+        status, conf, rflags = hall_confidence(fit_quality, resolved_fraction,
+                                               cfg.confidence_min)
         # Closed O4 + hardening 2: honest aggregate warning when the instrument sigma says
         # the R_H(T) points are noise-dominated (> 50 % relative). EXPECTED to fire on the
         # real Hall file's channel (nV-level signal, median std/rho 61 %) — flag, never drop.
-        warns: list[str] = []
-        rels = [p.r_h_sigma_instrument / abs(p.R_H) for p in fitted
-                if p.r_h_sigma_instrument is not None and p.R_H]
-        noisy = [x for x in rels if x > 0.5]
+        warns: list[str] = list(lead_warns)
+        scored = [(p, p.r_h_sigma_instrument / abs(p.R_H)) for p in fitted
+                  if p.r_h_sigma_instrument is not None and p.R_H]
+        rels = [rel for _, rel in scored]
+        noisy = [(p, rel) for p, rel in scored if rel > 0.5]
         if noisy:
+            # Graduated verdict (2026-09-14): this warning fires above 50 % relative sigma
+            # while the §4.1 decline withholds the carrier density at 100 %, so a single
+            # "treat these R_H as noise, not a carrier density" was addressed to points
+            # that still published one — measured on the real file's channel 1 as 138/138
+            # warned against 66 carrier densities reported in the same envelope. Split the
+            # verdict by what was actually PUBLISHED (carrier_n is None), not by a second
+            # threshold, so the sentence cannot disagree with the numbers beside it.
+            n_withheld = sum(1 for p, _ in noisy if p.carrier_n is None)
+            n_kept = len(noisy) - n_withheld
+            if n_kept and n_withheld:
+                verdict = (f"{n_withheld} of them carry no carrier density at all (withheld "
+                           f"as noise, not a carrier density); interpret the other "
+                           f"{n_kept} with care")
+            elif n_kept:
+                verdict = ("elevated uncertainty; interpret these carrier densities "
+                           "with care")
+            else:
+                verdict = "treat these R_H as noise, not a carrier density"
             warns.append(
                 f"{len(noisy)}/{len(rels)} R_H(T) points carry > 50% relative instrument "
                 f"sigma (median {float(np.median(rels)) * 100:.0f}%) — instrument noise, "
-                f"not fit quality; treat these R_H as noise, not a carrier density")
+                f"not fit quality; {verdict}")
+        sign_warn = sign_confidence_warning(points)
+        if sign_warn:
+            warns.append(sign_warn)
+        if FIT_QUALITY_UNAVAILABLE in rflags:
+            warns.append(fit_quality_unavailable_warning(points, len(published)))
+        if two_point_only:
+            n_anti_withheld = sum(1 for p in points
+                                  if p.r_h_method == "antisym" and p.carrier_n is None)
+            n_anti = sum(1 for p in points if p.r_h_method == "antisym")
+            basis = (f"all {n_anti_withheld} antisym-fitted points were withheld "
+                     f"(r_h_unresolved)" if n_anti
+                     else "no temperature has a +/-B pair to antisymmetrize")
+            plural = "y" if len(published) == 1 else "ies"
+            warns.append(
+                f"the only {len(published)} published carrier densit{plural} come{'s' if len(published) == 1 else ''} "
+                f"from the 2point zero-field-subtracted fallback estimator, not from an "
+                f"antisymmetrized fit: {basis} — interpret {'it' if len(published) == 1 else 'them'} "
+                f"as the sparse fallback's estimate, not as a trusted Hall coefficient")
+            rflags = [*rflags, TWO_POINT_ONLY_PUBLISHED]
+        data.flags = [*data.flags, *rflags]
         return Result(
             status=status,
             confidence=conf,
@@ -777,7 +933,10 @@ class HallTempDepAnalyzer:
             confidence_parts={
                 "detector": 1.0,
                 "segmentation": 1.0,
-                "antisym_fraction": float(frac),
+                "antisym_fraction": (float(frac) if frac is not None else None),
+                "fit": fit_quality,
+                "resolved": float(resolved_fraction),
+                "fit_n": float(len(pub_r2s)),
             },
             data=data.model_dump(mode="json"),
             provenance=prov,

@@ -26,6 +26,9 @@ def _res_with_long(hall_synth_path):
         hall={"hall_channel": 1, "thickness_mm": 0.1, "longitudinal_channel": 2}))
 
 
+# Composite kinds that draw a carrier-density axis take the std fixture: the noiseless
+# one publishes no carrier density since the residual-sigma floor (float-noise sigma is
+# not an uncertainty estimate). Same geometry, plus the instrument sigma that resolves it.
 def _tdep_res(hall_tdep_synth_path):
     return HallTempDepAnalyzer().analyze(
         load_dat(hall_tdep_synth_path),
@@ -448,14 +451,14 @@ def test_hall_two_panel_registered_for_hall_probe():
 
 # ---- hall_tdep_summary ----------------------------------------------------
 
-def test_hall_tdep_summary_j_absent_gives_two_axes(hall_tdep_synth_path):
-    res = _tdep_res(hall_tdep_synth_path)               # no current_density_J on real fixture
+def test_hall_tdep_summary_j_absent_gives_two_axes(hall_tdep_std_synth_path):
+    res = _tdep_res(hall_tdep_std_synth_path)               # no current_density_J on real fixture
     fig = render_kind(res, "hall_tdep_summary")
     assert len(fig.axes) == 2
 
 
-def test_hall_tdep_summary_j_present_gives_three_color_matched_axes(hall_tdep_synth_path):
-    res = _tdep_res(hall_tdep_synth_path)
+def test_hall_tdep_summary_j_present_gives_three_color_matched_axes(hall_tdep_std_synth_path):
+    res = _tdep_res(hall_tdep_std_synth_path)
     for i, p in enumerate(res.data["points"]):
         p["current_density_J"] = 1.0e4 + i              # hand-add J (analyzer needs width+thickness)
     fig = render_kind(res, "hall_tdep_summary")
@@ -476,8 +479,8 @@ def test_hall_tdep_summary_j_present_gives_three_color_matched_axes(hall_tdep_sy
     assert spine_x0 >= tax.yaxis.label.get_window_extent(rend).x1
 
 
-def test_hall_tdep_summary_merged_legend_three_entries(hall_tdep_synth_path):
-    res = _tdep_res(hall_tdep_synth_path)
+def test_hall_tdep_summary_merged_legend_three_entries(hall_tdep_std_synth_path):
+    res = _tdep_res(hall_tdep_std_synth_path)
     for i, p in enumerate(res.data["points"]):
         p["current_density_J"] = 1.0e4 + i
     fig = render_kind(res, "hall_tdep_summary")
@@ -507,9 +510,9 @@ def test_hall_tdep_summary_gated_when_fewer_than_two_rh_points():
     assert get_kind("hall_tdep_summary").series(res) == []
 
 
-def test_hall_tdep_summary_exact_mm_png_dims(tmp_path, hall_tdep_synth_path):
+def test_hall_tdep_summary_exact_mm_png_dims(tmp_path, hall_tdep_std_synth_path):
     from PIL import Image
-    res = _tdep_res(hall_tdep_synth_path)
+    res = _tdep_res(hall_tdep_std_synth_path)
     style = GlobalStyle()
     fig = render_kind(res, "hall_tdep_summary", style=style)
     p = save_figure(fig, tmp_path / "a.png", style)
@@ -518,8 +521,8 @@ def test_hall_tdep_summary_exact_mm_png_dims(tmp_path, hall_tdep_synth_path):
                             round(style.height_mm / 25.4 * style.dpi))
 
 
-def test_hall_tdep_summary_double_save_byte_identical(tmp_path, hall_tdep_synth_path):
-    res = _tdep_res(hall_tdep_synth_path)
+def test_hall_tdep_summary_double_save_byte_identical(tmp_path, hall_tdep_std_synth_path):
+    res = _tdep_res(hall_tdep_std_synth_path)
     style = GlobalStyle()
     outs = []
     for i in range(2):
@@ -542,8 +545,8 @@ def test_hall_rh_n_twin_hall_probe_twinx_log_and_marker_s(hall_synth_path):
     assert n_line.get_marker() == "s"
 
 
-def test_hall_tdep_rh_n_twin_marker_o(hall_tdep_synth_path):
-    res = _tdep_res(hall_tdep_synth_path)
+def test_hall_tdep_rh_n_twin_marker_o(hall_tdep_std_synth_path):
+    res = _tdep_res(hall_tdep_std_synth_path)
     fig = render_kind(res, "hall_tdep_rh_n_twin")
     assert len(fig.axes) == 2
     host, tax = fig.axes

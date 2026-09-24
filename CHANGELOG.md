@@ -1,5 +1,191 @@
 # Changelog
 
+## 0.7.0 — 2026-09-20
+
+Both Hall analyzers now ask whether a fit's own uncertainty makes its derived quantities
+meaningless, instead of only whether the fit ran. A Hall coefficient whose ±1σ interval
+contains zero still has an undetermined carrier sign — the thing a Hall measurement exists to
+determine — so carrier density, carrier type and mobility are withheld in that case, R_H itself
+never is, and the exit code changes for the two cases (missing thickness, noise-dominated data)
+where the old behaviour degraded silently instead of saying so.
+
+### Added
+
+- **A second σ family, `r_h_sigma_instrument`, on the field-sweep analyzer** — the file's own
+  repeat-noise propagated through the same slope estimator as the existing residual σ, matching
+  what the temperature-dependent analyzer already reported. The two are never conflated: one
+  measures fit quality, the other instrument noise, and every surface labels them apart.
+- **A field-window ladder for R_H.** `hall`'s R_asym-vs-B fit is re-run at |B| ≤ f·B_max for
+  f = 1.00/0.75/0.50/0.25; each point's `r_h_ladder` carries per-rung R_H/σ/r²/n_points, and
+  `r_h_spread` is the max−min across the resolved rungs (`null`, never `0.0`, when fewer than
+  two resolve). Three new flags: `window_sensitive` (the fit window moves R_H by more than
+  max(3σ, 5% of the full-window value) — a real spread, not an error bar), `ladder_incomplete`
+  (fewer than two rungs resolved — no spread is reported at all) and `ladder_thin` (exactly two
+  rungs resolved — a spread IS reported, but only between the two widest windows). A new
+  sibling `<stem>.hall_ladder.csv` carries the rungs themselves, one row per
+  (temperature, rung).
+- **`--skip-rows auto|N`** (`HallCfg.skip_rows`; CLI flag; GUI field; default **`auto`**)
+  drops leading rows before either Hall analyzer runs, for PPMS runs whose first data row was
+  written before the measurement bridge settled — a row that is not a noisy reading but not a
+  reading at all. `auto` drops a row **only where it is provably corrupt**: more than 10⁶×
+  the file's own median on `|R|` or on the instrument's reported σ, on any channel. An
+  explicit integer drops exactly that many and turns detection off, because the operator has
+  already decided; `0` drops none. `data.skipped_rows` always reports the count, `auto` names
+  the evidence and the reversal when it acts, and an explicit count still warns when a row it
+  dropped looked physical.
+  The threshold acts rather than merely warning because the two populations do not overlap:
+  across every resistivity-format file available to us, row 0 sits between 0.26× and 14.7× the
+  file median — except on one corrupted file, where it sits at 1.16×10¹² and 1.32×10¹¹. Ten
+  empty orders of magnitude separate them. `auto` scans at most 10 leading rows, so its reach
+  is bounded, and a row it cannot judge at all (no usable R, no reported σ) is kept: absence
+  of evidence is not evidence.
+- **A default-off inspection series draws the points a decline rule withheld.** Every Hall
+  panel carrying a carrier density or a mobility — on the field-sweep probe as well as the
+  temperature-dependent one, the combined `R_H + carrier n` twin included — can plot the
+  withheld points as a hollow, non-default series, reachable from the GUI curve checklist or
+  `PlotSpec.curves`. Absent by default, so every existing figure renders byte-identically.
+  On that twin panel the two curves are filtered independently, so a declined carrier density
+  never removes a measured R_H point: its R_H curve is the same curve `hall_rh_t` draws from
+  the same result, point for point.
+
+### Changed
+
+- **Mobility's ρ_xx is now taken at zero field, per temperature setpoint** — not averaged over
+  the field loop, and not borrowed from a nearby temperature's zero-field row.
+  **This changes reported mobility numbers on real data**: re-measured on the real Hall file,
+  mobility rises 49% / 3% / 27% at 2 / 5 / 10 K. A setpoint with no zero-field row of its own
+  within `temp_interval` now declines mobility (`rho_xx_no_zero_field`) rather than silently
+  borrowing an unrelated temperature's value. A user comparing new output against old output on
+  the same file should expect this — it is a fix, not a regression.
+- **Missing `--thickness` now gates instead of degrading silently.** `status` moves from
+  `low_confidence` to `gated`, and the CLI exit code for `hall`/`hall-tdep` moves **11 → 10**.
+  R_H = slope × thickness, so without a thickness the analyzers have only a slope, and the
+  `gate[]` entry now names `--thickness` as the remedy.
+- **Confidence is `min(fit_quality, resolved_fraction)` on both Hall analyzers**, replacing a
+  formula that could read 1.0 by construction regardless of how much of the result was actually
+  resolved. A noise-dominated `hall-tdep` file that used to report `status: "ok"` can now report
+  `status: "low_confidence"`, exit **0 → 11**. `--confidence-min` now moves both analyzers'
+  status identically — it previously moved only `hall`'s.
+  **Both shipped `hall-tdep` examples move**, together with the σ-floor change below:
+  `hall_temperature_dependence.dat` goes from confidence 1.0 to **0.0** — it is noiseless, so no
+  point resolves at all — and `hall_mixed_sweeps.dat` from 1.0 to 0.561538 (73 of 130 resolved).
+  Both exit **0 → 11**, as does the real reference file at confidence 0.478261. The
+  temperature-dependent example therefore now demonstrates the decline rule rather than a
+  carrier density; `hall_mixed_sweeps.dat` is the one that publishes n(T) and mobility(T). **Field-sweep `hall` confidence moves too, but far less
+  often:** across every shipped example on either channel, exactly one configuration changes —
+  `hall_mixed_sweeps.dat` channel 2, 0.248483 → 0.111111, because its `resolved` term is
+  0.111111. Every other shipped example is identical to the last digit on both channels. The
+  `resolved` term is *not* 1.0 everywhere, though: on our reference measurement files it reads
+  1.0, 0.888889, 0.555556 and 0.0 on different channels, and where it is the smaller of the two
+  ceilings it sets the confidence. Separately, the `--skip-rows` default below moves two
+  reference-file confidences by changing the fit itself (one by 4×10⁻⁵, one from 0.887969 to
+  0.962119). **No field-sweep `hall` status or exit code changes in any of these cases** — only
+  the confidence number.
+- **`carrier_n`, `carrier_type` and `mobility` are `null` wherever R_H's own uncertainty does
+  not resolve it** — σ ≥ |R_H|, checked against the instrument sigma where the file supports it
+  and the residual sigma otherwise — under a machine-readable `r_h_unresolved` flag; the
+  withheld values are kept, inspectable, under each point's `withheld` field. **R_H and its own
+  σ are never withheld** — only what would have been *derived* from it. The
+  `carrier_concentration` capability itself now reads `applicable: false` once every point in a
+  result declines it, instead of staying `true` because R_H happens to be present.
+  On the shipped `hall-tdep` examples this withholds 57 of 130 points (`hall_mixed_sweeps.dat`)
+  and all 38 of `hall_temperature_dependence.dat` — 15 by this rule on its own, the other 23
+  through the σ-floor change below; on the real file, 72 of 138. A withheld value is not
+  missing data and not an error, and seeing it on real, noisy measurements — including two of
+  the shipped examples — is the tool working, not breaking.
+- **The >50 % noise warning no longer contradicts the value printed beside it.** It fired above
+  50 % relative σ while the decline above withholds only at σ ≥ |R_H| (100 %), so every point in
+  between was handed a carrier density *and* told to "treat as noise, not a carrier density".
+  The verdict is now graduated, and keyed on whether a carrier density was actually published
+  rather than on a second threshold: a published point reads `elevated uncertainty; interpret
+  the carrier density with care`, and only a point the decline emptied keeps the strong reading.
+  `hall-tdep`'s aggregate warning splits the same way, counting the two bands separately
+  (`… 72 of them carry no carrier density at all …; interpret the other 66 with care`). **Warning
+  text only — no threshold, value, status or exit code moves.**
+- **Absent evidence no longer certifies a Hall result.** Three places read "no evidence" as
+  "good evidence", and each is now consistent with the rule the decline already used for an
+  absent σ (*"an unquantified uncertainty is not evidence of a small one"*):
+  - **A residual σ that is float noise is not an uncertainty estimate.** A zero-residual fit
+    returns σ = 0.0 (or a σ so small it asserts R_H to eight significant digits), and
+    `is_resolved` read that as *maximally* resolved. A **relative** floor now declines it under
+    a `sigma_degenerate` flag — deliberately distinct from `sigma_zero_dof`, which means "fewer
+    than three points" rather than "the residuals vanished". The floor is not tuned: real data's
+    smallest relative σ sits more than three orders above it and the float-noise population more
+    than three orders below, and a test pins that insensitivity. Applied to **both** Hall probes,
+    though only the temperature-dependent one reaches it today.
+  - **No surviving r² no longer scores as a perfect fit.** It was `1.0` — while the envelope
+    separately reported `"fit": null`, so the JSON and the confidence disagreed about the same
+    quantity. The fit term is now **dropped** from the `min()` rather than given a number, the
+    status is capped at `low_confidence`, and a `fit_quality_unavailable` flag says why. It is
+    not scored `0.0`: r² is absent *by construction* for the one-±pair-per-temperature protocol,
+    and `min()` would make a zero absorbing, erasing the informative `resolved` term.
+  - **The fit ceiling now averages r² over points that actually published.** A point the decline
+    withheld no longer drags down the fit quality of the ones that stand.
+- **`carrier_type` is no longer a bare string, and `carrier_n` carries an exact bound.** One 1σ
+  bar was gating a *sign* claim and a *reciprocal*. Each point now carries
+  `carrier_sign_confidence` = Φ(|R_H|/σ), and `carrier_n_ci_low`/`carrier_n_ci_high` from the
+  exact 1/x transform beside the existing `carrier_n_sigma`, which is unchanged but is now
+  documented as the **linearized** symmetric propagation. A `carrier_n_sigma_linearized` flag
+  fires from a derived threshold, not a tuned one: the symmetric bound understates the exact one
+  by exactly 1/(1 − rel²), so it fires past rel > 0.302. On reference data the median relative σ
+  of published points is 0.905 — a 13.5 % chance of a wrong carrier sign per point, and a true
+  upper excursion of 10.5×n₀ against a reported σ_n/n of 0.91. **No new decline threshold**: the
+  existing σ ≥ |R_H| rule turns out to be exactly "the upper bound on n becomes unbounded".
+- **Two silent wrong answers now speak.** `--long-channel` equal to `--hall-channel` reads ρ_xx
+  off the transverse wiring (measured: a 37× shift in median mobility, capability still
+  `applicable`, no warning); it warns rather than declines, since a single-bridge arrangement is
+  a real thing to do. And the leading-row scan, which stops at its cap and cannot tell "the next
+  row was clean" from "the budget ran out", now reports its count as the lower bound it is.
+- **Measured impact, 20 Hall configurations across shipped examples and reference files:
+  6 moved, 14 byte-identical.** `hall_temperature_dependence.dat` publishes 0 carrier densities
+  instead of 23 and exits **0 → 11** — it is noiseless synthetic data whose entire relative-σ
+  population is float noise, so there is no scatter from which to estimate σ.
+  `hall_mixed_sweeps.dat` exits **0 → 11** with its confidence, parts and published counts
+  **unchanged** — only the status cap moved. Two reference confidences *rose* (0.248 → 0.372,
+  0.778 → 0.874) as the fit ceiling stopped averaging in declined points. And a pre-existing
+  `confidence: NaN` on `hall_field_sweeps.dat` channel 2 is now `0.0`.
+- **Hall CSV exports (`hall`/`hall-tdep`) carry a leading `#` comment block** whenever the run
+  has warnings — a parse-contract change for any external reader:
+
+  ```python
+  pandas.read_csv(path, comment="#")   # the one-line remedy
+  ```
+
+  Skip it and the failure is **silent, not an error**: the block opens with a short comma-free
+  marker line specifically so a naive reader cannot come back with a plausible-looking wrong
+  answer — it now either raises `ParserError` or returns a single column named by the remedy
+  sentence, never a plausible multi-column frame. (An earlier, comma-bearing version of this
+  same block was measured returning a 10×3 DataFrame of nonsense with no exception at all — the
+  marker line exists because of that measurement.) `numpy.loadtxt`, Origin and gnuplot already
+  honour `#` and need no change.
+
+### Fixed
+
+- **The method-boundary note on the Hall carrier-density panel no longer describes declined
+  points as the output of a fallback estimator.** It now fires only where a genuine 0-field+1
+  fallback series is plotted beside a trusted one, not merely whenever a hollow-marker series
+  of any kind shares the panel with a non-hollow one.
+- A `NaN` instrument-sigma value at an otherwise-good row could silently drop that row from the
+  antisymmetrized fit, moving R_asym/R_H/r² for the whole setpoint; sigma now gets its own
+  independent mask.
+- The mobility decline reason could overgeneralize a single point's cause — or misname it — to
+  the whole file; it is now an evidence ladder that reports a mix as a mix.
+- The Hall confidence banner named neither ceiling on a `low_confidence` result, and once
+  named, the two ceilings' text could read as though one qualified the other; each now carries
+  its own label, separated by a semicolon.
+- The field-sweep Hall row displayed only the residual sigma; it now shows the instrument sigma
+  too, matching the temperature-dependent row.
+
+### Known issues shipped open
+
+Four display defects found while checking this release's figures ship unfixed, recorded with
+what reproduces each and a workaround in [KNOWN-ISSUES.md](KNOWN-ISSUES.md) items 39–42: the
+robust y-view can hide a published mobility point; the carrier-density line is drawn across
+temperatures whose density was withheld, and without its uncertainty interval; past 56
+temperatures the stage figures' legend overflows the canvas and the GUI status header overprints
+the panel titles; and a panel whose every point was withheld reports that the file holds no data
+of that kind. None of them changes a number.
+
 ## 0.6.0 — 2026-09-07
 
 Measurement files that state their own sample mass and molar mass are now read, and every

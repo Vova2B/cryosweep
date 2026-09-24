@@ -17,8 +17,11 @@ def test_default_kind_for_hall_tdep():
     assert default_kind_for("hall_tdep") == "hall_tdep_RH_T"
 
 
-def test_render_hall_tdep_kinds(hall_tdep_synth_path):
-    res = _res(hall_tdep_synth_path)
+# The std fixture: the noiseless one publishes no carrier density since the residual-
+# sigma floor (its float-noise sigma is not an uncertainty estimate), so hall_tdep_n_T
+# would have nothing to plot. Same geometry, plus the instrument sigma that resolves it.
+def test_render_hall_tdep_kinds(hall_tdep_std_synth_path):
+    res = _res(hall_tdep_std_synth_path)
     for kind in [
         "hall_tdep_RH_T",
         "hall_tdep_n_T",

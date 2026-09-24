@@ -281,8 +281,27 @@ def flatten_rows(data: dict) -> list[tuple[str, str]]:
                 val = f"{rh:.4g} ± {sig:.2g} m³/C (σ residual — fit scatter)"
             elif p.get("sigma_zero_dof"):
                 val = f"{rh:.4g} m³/C (no σ — 2-point method)"
+            elif p.get("sigma_degenerate"):
+                # a zero-residual fit's sigma is float noise, not an uncertainty estimate
+                val = f"{rh:.4g} m³/C (no σ — residual σ degenerate: exact fit, no scatter to estimate from)"
             else:
                 val = f"{rh:.4g} m³/C"
+            # Carried from Task 4's review: this row showed only the residual sigma, though
+            # the hall_tdep row below already shows both families. Appended, not merged in,
+            # so the residual clause above stays untouched and the instrument one keeps the
+            # exact wording used everywhere else in this file.
+            inst = p.get("r_h_sigma_instrument")
+            if inst is not None:
+                val += f"; ± {inst:.2g} m³/C σ_inst (instrument noise, not fit quality)"
+            # 2026-09-14: a published carrier type is never a bare string -- it carries
+            # Phi(|R_H|/σ), and n carries its EXACT ±1σ interval (a reciprocal's interval
+            # is asymmetric; the linearized σ above understates the upper side).
+            sc = p.get("carrier_sign_confidence")
+            if p.get("carrier_type") is not None and sc is not None:
+                val += f"; {p['carrier_type']}, sign confidence {sc:.2f}"
+                lo, hi = p.get("carrier_n_ci_low"), p.get("carrier_n_ci_high")
+                if lo is not None and hi is not None:
+                    val += f"; n in [{lo:.3g}, {hi:.3g}] m⁻³ (exact ±1σ, not symmetric)"
             rows.append((f"R_H@{t:.1f}K", val))
     if data.get("probe") == "hall_tdep":
         # 138 points on real files — aggregate rows, not one per point.
@@ -291,9 +310,12 @@ def flatten_rows(data: dict) -> list[tuple[str, str]]:
         if pts:
             n_res = sum(1 for p in pts if p.get("r_h_sigma") is not None)
             n_2pt = sum(1 for p in pts if p.get("sigma_zero_dof"))
+            n_deg = sum(1 for p in pts if p.get("sigma_degenerate"))
+            deg_txt = (f"; {n_deg} have a degenerate residual σ (exact fit, no scatter to "
+                       f"estimate from — not an uncertainty)" if n_deg else "")
             rows.append(("R_H(T) σ (residual)",
                          f"{n_res}/{len(pts)} points carry a residual σ (fit scatter); "
-                         f"{n_2pt} are 2-point (no σ)"))
+                         f"{n_2pt} are 2-point (no σ){deg_txt}"))
             inst = sorted(p["r_h_sigma_instrument"] for p in pts
                           if p.get("r_h_sigma_instrument") is not None)
             if inst:
@@ -308,6 +330,18 @@ def flatten_rows(data: dict) -> list[tuple[str, str]]:
                 rows.append(("R_H(T) σ_inst",
                              f"median {med:.3g} m³/C{rel_txt} on {len(inst)}/{len(pts)} "
                              "points — σ_inst (instrument noise, not fit quality)"))
+            # 2026-09-14: the carrier SIGN's own confidence, aggregated like the rows above
+            # (138 points on real files). Phi(|R_H|/σ) with the σ the decline judges by.
+            sc = sorted(p["carrier_sign_confidence"] for p in pts
+                        if p.get("carrier_type") is not None
+                        and p.get("carrier_sign_confidence") is not None)
+            if sc:
+                med_sc = (sc[len(sc) // 2] if len(sc) % 2
+                          else 0.5 * (sc[len(sc) // 2 - 1] + sc[len(sc) // 2]))
+                n_low = sum(1 for c in sc if c < 0.95)
+                rows.append(("carrier sign confidence",
+                             f"median {med_sc:.2f} over {len(sc)} published points "
+                             f"(Φ(|R_H|/σ)); {n_low}/{len(sc)} below 0.95"))
     if data.get("probe") == "resistivity":
         for b in data.get("bridges") or []:
             ch = b.get("channel")

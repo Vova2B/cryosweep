@@ -42,12 +42,21 @@ def _isolate_preset_store(tmp_path, monkeypatch):
     yield
 
 _HALL_TDEP_SYNTH = FIX / "hall_tdep_synth.dat"
+# Same geometry plus the bridge-1 Std. Dev. column: the noiseless fixture publishes no
+# carrier density since the residual-sigma floor, so kinds that need an n series use this.
+_HALL_TDEP_STD_SYNTH = FIX / "hall_tdep_std_synth.dat"
 
 
 @pytest.fixture
 def hall_tdep_synth_path():
     assert _HALL_TDEP_SYNTH.exists(), _HALL_TDEP_SYNTH
     return _HALL_TDEP_SYNTH
+
+
+@pytest.fixture
+def hall_tdep_std_synth_path():
+    assert _HALL_TDEP_STD_SYNTH.exists(), _HALL_TDEP_STD_SYNTH
+    return _HALL_TDEP_STD_SYNTH
 
 
 # Same logical-key indirection as tests/core/conftest.py. Duplicated rather than imported:

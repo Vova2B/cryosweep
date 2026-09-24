@@ -27,6 +27,30 @@ Probes: `vsm`, `heatcapacity`, `resistivity`, `hall`, `hall_tdep`, `acms`, `tto`
 | `cryosweep schema <name>` | JSON Schema; names: `result`, `fit`, `config`, `analyze:vsm`, `analyze:hc`, `analyze:resistivity`, `analyze:hall`, `analyze:hall_tdep`. Bad/missing name → usage on stderr, exit 3 |
 | `cryosweep run pipeline.json` | `{"steps": [{"command": "analyze", "file": "a.dat"}, ...]}` → `{"results": [...], "exit": <worst step>}` — worst by SEVERITY (error > gated > low_confidence > ok), NOT by numeric code. ONLY `detect`/`analyze` are legal step commands (step `options`: `molar_mass`, `mass_mg`, `unit_system`); any other command fails validation and ABORTS the whole pipeline (`results: []`, exit 2). To batch export/plot, loop the shell over `cryosweep export`/`plot` instead |
 
+### Hall CSV exports carry a leading `#` comment block — read with `comment='#'`
+
+Whenever a Hall (`hall`/`hall_tdep`) export has run-level warnings, `<stem>.points.csv` opens
+with those warnings as `#`-prefixed lines before the header row (a sibling `<stem>.warnings.txt`
+carries the same text without the `#`). The one-line fix, always safe to apply:
+
+```python
+pandas.read_csv(path, comment="#")
+```
+
+Skip it and a naive `pandas.read_csv(path)` does NOT silently return a plausible-looking
+DataFrame with an extra row — it either raises `ParserError` (measured on a real export:
+`"Expected 3 fields in line 3, saw 26"`) or, on files where pandas' implicit-index heuristic
+takes the other branch, returns a single column whose NAME is the remedy sentence itself
+(`csv.DictReader` does the same: its first key is that sentence). **This is a deliberate fix** —
+before the comment block opened with a short comma-free marker line, a naive read was measured
+returning a 10×3 DataFrame of nonsense and raising nothing at all, because the warning prose
+contains commas and pandas split the header line into three plausible-looking columns. Either
+way — before or after — `numpy.loadtxt`, Origin and gnuplot already honour `#` and need no
+change; only a naive comma-splitting reader is at risk, and it is now loud rather than silently
+wrong. This matters most here because an agent parsing a Hall CSV unattended has no human
+looking at the DataFrame to notice a bad shape — check for a `#`-prefixed first line before
+trusting one.
+
 ## Result envelope + exit codes (branch on BOTH)
 
 Envelope keys: `{status, confidence, confidence_parts, data, diagnostics, warnings, gate, errors, provenance}`.
@@ -107,6 +131,13 @@ deliberate, not a parse error; the flags column carries the machine-readable rea
   superconductor: its ≤30 K window has no power-law regime) has all four cells blank with
   `power_law_flags = n_unresolved;ladder_incomplete`; channel 2 reports n with
   `window_sensitive`.
+- **Hall** (`hall`/`hall_tdep`): `carrier_n`, `carrier_type`, `mobility` and their own σ
+  companions decline to `null` whenever a point's `derived_flags` carries `r_h_unresolved`
+  (σ ≥ |R_H|, instrument sigma preferred, residual sigma otherwise, "no sigma at all" also
+  counting as unresolved). The withheld values are kept, inspectable, under the point's
+  `withheld` field — they are never re-published as measurements. R_H and its own σ are
+  NEVER withheld. Once every point in a result declines, the `carrier_concentration`
+  capability itself goes `applicable: false` — do not infer it ran because R_H is present.
 
 ## Window-sensitivity ladders — spread ≠ error bar
 
@@ -117,7 +148,44 @@ to the statistical σ and can dwarf it (channel 2 above: `power_law_n_spread` 0.
 - VSM Curie-Weiss: `cw_ladder` + `theta_spread_k` / `mu_eff_spread`
 - Resistivity: `power_law_ladder` + `power_law_n_spread` (bound-pinned rungs stay listed with `at_bound: true` but are excluded from the spread)
 - TTO κ_ph: `kappa_ph_fit.ladder` + `n_spread`, plus `n_loglog`/`n_method_delta` (second method)
+- Hall: per point, `r_h_ladder` (rungs at |B| ≤ f·B_max, f = 1.00/0.75/0.50/0.25, each
+  carrying `f`, `R_H`, `sigma`, `sigma_kind`, `r2`, `n_points`, `unresolved`) + `r_h_spread`
+  = max−min R_H over the RESOLVED rungs only (a rung judged by the same σ ≥ |R_H| rule as the
+  point itself — not a looser one).
 - Fewer than two resolved rungs ⇒ spread is `null` (never 0.0) + `ladder_incomplete` flag.
+
+## Hall: exit codes and derived_flags
+
+Hall has its own gate/decline vocabulary beyond the generic table above.
+
+- **Missing `--thickness` gates** (`status: "gated"`, **exit 10**) rather than degrading
+  silently — R_H = slope × thickness, so without it the analyzer has only a slope. The
+  `gate[]` entry names `--thickness` as the remedy; slope-only points still ship in `data`.
+- **Low resolved-fraction or fit-quality lowers `status` to `"low_confidence"` (exit 11)**
+  where it used to read `"ok"`: `confidence = min(fit_quality, resolved_fraction)`, so a
+  noise-dominated file that used to report a confidence of 1.0 by construction can now exit
+  11. `confidence_parts = {fit, resolved}` names which ceiling binds; `fit: null` means no
+  point had enough antisym pairs for r² to survive the zero-degrees-of-freedom rule (a
+  meaningful `null`, not a missing number).
+- **`carrier_n` / `carrier_type` / `mobility` reading `null` is not an error and not missing
+  data** — read `derived_flags` on the point before concluding the tool failed:
+
+  The first four flags say why something was WITHHELD; the last three describe a reported
+  R_H and withhold nothing. Both live in `derived_flags`, so check which kind you have
+  before concluding a value is missing.
+
+  | flag | withholds? | meaning | what to do |
+  |---|---|---|---|
+  | `antisym_r_h_missing` | yes | Stage B produced no R_H at all (Stage C has nothing to derive from) | check field coverage / `--hall-channel`; R_H_raw (Stage A) is still visible for transparency |
+  | `r_h_unresolved` | yes | R_H exists but σ ≥ \|R_H\| — the decline rule above | more/better field points, or accept the withheld quantities are not resolvable on this data |
+  | `rho_xx_no_zero_field` | yes | a longitudinal source was supplied but has no \|H\| < 50 Oe row within `temp_interval` of this Hall setpoint | widen `--temp-interval`, or accept mobility is not available at this T |
+  | `rho_xx_channel_missing` | yes | the longitudinal channel's resistivity column is absent from the file — a DIFFERENT problem from the row above, never conflated with it | check `--long-channel` / `--long-file` |
+  | `window_sensitive` | no | the field-window ladder's spread exceeds max(3σ, 5% of the full-window \|R_H\|) — the fit window moves R_H | report the spread alongside R_H; do not average it away |
+  | `ladder_incomplete` | no | fewer than TWO ladder rungs resolved — **no spread is reported at all** | treat R_H as unreplicated across windows; do not read a `null` spread as "stable" |
+  | `ladder_thin` | no | exactly two rungs resolved — a spread IS reported, but only between the two widest windows, not the full ladder | read the spread as a lower bound: two windows cannot show a trend, so quote it without implying the ladder converged |
+
+  `ladder_incomplete` and `ladder_thin` are mutually exclusive and say opposite things — "no
+  answer" vs "a weakly-based answer" — never read one as the other.
 
 ## capabilities[]
 
@@ -139,4 +207,7 @@ by design), `heat_capacity.dat` + `heat_capacity_multifield.dat`, `ac_susceptibi
 `resistivity_superconductor.dat` (Tc detector + decline demo), `resistivity_semiconductor.dat` (Arrhenius E_a = 60 meV; the gap column is named
 `e_g_assuming_intrinsic_mev` because E_g = 2·E_a only if intrinsic), `thermal_transport.dat`,
 and `hall_field_sweeps.dat` / `hall_temperature_dependence.dat` — run those two as
-`cryosweep hall|hall-tdep <file> --hall-channel 1 --thickness 0.5 --long-channel 2`.
+`cryosweep hall|hall-tdep <file> --hall-channel 1 --thickness 0.5 --long-channel 2` (`--thickness`
+is in mm by default — `--thickness-unit` defaults to `mm` if omitted — and **0.5 is this
+synthetic file's own thickness, NOT a number to reuse on real data**: a 0.07 mm real sample run
+with 0.5 mm is a silent ×7.14 error in R_H and every quantity derived from it).

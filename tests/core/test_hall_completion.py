@@ -103,9 +103,26 @@ def test_rxy_vs_b_uses_manifest_runconfig():
 
 
 def test_two_point_coverage_does_not_deflate_confidence():
-    """Regression (final-review): extending R_H(T) coverage with flagged 2-point points must NOT
-    lower status/confidence — `frac` is computed over the trusted antisym points only, so a file
-    with all-good antisym fits + a long 2-point tail stays confident, not blended down."""
+    """Regression (final-review): extending R_H(T) coverage with flagged 2-point points must
+    NOT lower `antisym_fraction` — it is computed over the trusted antisym points only, so a
+    file with all-good antisym fits + a long 2-point tail keeps that diagnostic at 1.0, not
+    blended down to antisym/(antisym+2point).
+
+    Repinned (spec §4.5, 2026-09): `res.confidence` itself is no longer antisym_fraction — it
+    is min(fit_quality, resolved_fraction), and resolved_fraction's denominator is ALL points,
+    2-point tail included (spec §4.1: an unresolved point counts against the fraction
+    whichever method produced it).
+
+    Repinned again (2026-09-14, residual-sigma floor): this fixture carries no instrument-
+    sigma column, and the residual sigma on its noise-free antisym fits is float noise
+    (0.0 or 1.49e-8 relative) -- an earlier pin called that "a real, if degenerate, resolved
+    number"; it is not, a sigma of 0.0 certifies from the ABSENCE of scatter. Nothing
+    resolves now, so confidence is 0.0 and the status is low_confidence; with no published
+    point there is no fit evidence either, so `fit` is None and `antisym_fraction` (now on
+    the PUBLISHED basis) is None rather than a 1.0 asserted over zero points. The property
+    this test guards -- extending coverage with a 2-point tail must not deflate the antisym
+    diagnostic -- is pinned on the std fixture below, where points do publish.
+    """
     from cryosweep_core.analyzers.hall_tempdep import HallTempDepAnalyzer
     e = _manifest_entry("hall_tdep_RH_T")
     dat = _dat(e["dat"])
@@ -117,9 +134,28 @@ def test_two_point_coverage_does_not_deflate_confidence():
     n_anti = sum(1 for p in pts if p.get("R_H") is not None and p.get("r_h_method") != "2point")
     n_2pt = sum(1 for p in pts if p.get("r_h_method") == "2point")
     assert n_anti > 0 and n_2pt > 0                       # both methods present (coverage extended)
-    # confidence reflects the antisym fraction (1.0 here), NOT antisym/(antisym+2point) ~0.6
-    assert res.confidence == 1.0 and res.status == "ok"
+    assert all(p.get("carrier_n") is None for p in pts)
+    assert res.confidence_parts["antisym_fraction"] is None
+    assert res.confidence_parts["fit"] is None
+    assert res.status == "low_confidence"
+    assert res.confidence == 0.0
+
+
+def test_two_point_tail_does_not_deflate_antisym_fraction_where_points_publish(hall_tdep_std_synth_path):
+    """The original guard, on a fixture that publishes: 23 antisym points resolve on their
+    instrument sigma, the 15-point 2-point tail is withheld (its instrument sigma exceeds
+    |R_H|), and the antisym diagnostic over the PUBLISHED points stays 1.0 -- the tail is
+    not blended in as antisym/(antisym+2point)."""
+    from cryosweep_core.analyzers.hall_tempdep import HallTempDepAnalyzer
+    res = HallTempDepAnalyzer().analyze(
+        load_dat(hall_tdep_std_synth_path),
+        RunConfig(hall={"hall_channel": 1, "thickness_mm": 0.05, "longitudinal_channel": 2}))
+    pts = res.data["points"]
+    assert sum(1 for p in pts if p.get("r_h_method") == "2point") > 0
+    assert sum(1 for p in pts if p.get("carrier_n") is not None) == 23
     assert res.confidence_parts["antisym_fraction"] == 1.0
+    assert res.status == "ok"
+    assert res.confidence == pytest.approx(23 / 38)
 
 
 def _two_panel_result_with_rxx():

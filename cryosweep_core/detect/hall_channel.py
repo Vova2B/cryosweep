@@ -47,7 +47,7 @@ def _odd_fraction(df, cmap, by_T, ch):
     for segs in by_T.values():
         idx = np.concatenate([s.idx for s in segs])
         Hh, Rr = H[idx], R[idx]
-        Hp, R_asym = _antisymmetrize(Hh, Rr)
+        Hp, R_asym, _ = _antisymmetrize(Hh, Rr)
         if Hp.size < 2:
             continue
         m = np.isfinite(Hh) & np.isfinite(Rr)

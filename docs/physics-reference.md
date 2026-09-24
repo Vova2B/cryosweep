@@ -127,6 +127,36 @@ source; the physics is reproducible from the formulas here.
   scale-arbitrary, the exact failure the resistivity geometry-unset warning names. A
   constant-drive file (the shipped real Hall example: 7999.997 µA throughout) draws flat
   I and J lines; that is the correct result.
+- **Leading-row skip** (2026-09-10): some PPMS runs write a first data row taken before the
+  measurement bridge has settled — not a noisy reading, not a reading at all. Measured on a
+  real resistivity-option file: row 0 carries Bridge 2 Resistance = -4.0e6 Ohm against a file
+  median of order 1e-4 Ohm (Bridge 1 is corrupted the same way: -1.24e8 Ohm against ~1e-4 Ohm),
+  10-11 orders of magnitude off. The field-sweep `hall` analyzer's fit masks on `np.isfinite`
+  alone, so the row enters the antisymmetrized fit; on that file it moves the published
+  R_H(300 K) from a sound -2.7424e-10 (r² = 0.669, on the trend set by the 200 K neighbour's
+  -2.8812e-10, r² = 0.999) to -1.4346e-04 (r² = 0.002) — one row in 5786 moving R_H by a
+  factor of 5e5. `HallCfg.skip_rows` (CLI `--skip-rows auto|N`, GUI field; default **"auto"**) controls
+  the drop, and applies to EITHER Hall analyzer (both take the flag so it means one thing
+  across the probe, though the temp-dep reconstruction was measured byte-identical with and
+  without the bad row — it interpolates onto fixed-field curves and the row never reaches a
+  reported point there). **"auto" drops leading rows only where they are provably corrupt**,
+  by the same 1e6 ratio the reversal warning uses; an explicit integer drops exactly that
+  many and turns detection off, because the operator has already decided. The count is
+  always reported (`data.skipped_rows`), auto names the evidence and the reversal when it
+  acts, and an explicit count still gets the reversal warning when a row it dropped looks
+  physical.
+  **Why the threshold acts rather than only warning** (2026-09-14): across every
+  resistivity-format file available here, row 0 sits between 0.26x and 14.7x the file median
+  EXCEPT on the one corrupted file, where it sits at 1.16e12x (channel 1) and 1.32e11x
+  (channel 2) — ten empty orders of magnitude between the two populations, with the
+  threshold in the middle of the gap. The earlier unconditional default of 1 therefore cost
+  a good leading row on every other file to catch a defect no good file comes near: it moved
+  R_H by 3.3% at 300 K on the real Hall file (whose own row 0 is ordinary, its reported sigma
+  sitting at 0.89x the median) and by 9.6% on `hall_mixed_sweeps.dat`. Under "auto" those
+  files are untouched and the corrupted one is still caught. Auto scans at most
+  `AUTO_SCAN_CAP` = 10 leading rows, so its blast radius is bounded however broken a file's
+  head is; a row that cannot be judged at all — no usable R, no reported sigma — is KEPT,
+  since absence of evidence is not evidence.
 
 ### Anomalous Hall effect (recognized, deferred)
 
@@ -216,11 +246,103 @@ Propagation (through-the-estimator, exact linear):
 - The instrument columns arrive in resistivity units; the per-row `Resistance/Resistivity`
   ratio of the file itself bridges them to Ω — internally self-consistent whatever the
   header geometry setting was (it is not a claim about absolute resistivity).
-- A ≥ 50 % relative σ on R_H produces an explicit noise warning rather than a silent number.
+- **Absent evidence never certifies.** An unquantified σ is not evidence of a small one, and
+  neither is a σ that is float noise: a zero-residual fit reports σ → 0, which asserts perfect
+  certainty, so a **relative** floor declines it (`sigma_degenerate`, distinct from
+  `sigma_zero_dof` = fewer than three points). Likewise a confidence ceiling with no surviving
+  r² is **dropped from the `min()`** and caps the status at `low_confidence`, rather than being
+  scored 1.0 (perfect) or 0.0 (absorbing) — r² is absent by construction for a one-±pair-per-
+  temperature protocol, so a zero would erase the informative resolved fraction.
+- **A sign claim and a reciprocal are not a symmetric error bar.** `carrier_type` = sign(R_H) is
+  a binary claim whose confidence is Φ(|R_H|/σ); at a relative σ of 0.905 — the median on real
+  data — that is a 13.5 % chance of the wrong carrier type. `carrier_n` = 1/(e|R_H|) is a
+  reciprocal, so the symmetric propagation σ_n/n = σ_RH/|R_H| is a **linearization** valid only
+  for σ ≪ |R_H|; it understates the upper bound by exactly **1/(1 − rel²)**. Both the exact
+  interval 1/(e(|R_H| ∓ σ)) and the sign confidence are reported alongside it, never merged with
+  it. The interval's upper end diverges precisely as σ → |R_H|, which is why the decline
+  threshold sits exactly there.
+- A ≥ 50 % relative σ on R_H produces an explicit noise warning rather than a silent number,
+  and the warning's verdict is **graduated to match what was actually published**. The Sec 4.1
+  decline withholds the carrier density only at σ ≥ |R_H| (100 %), so a point between 50 % and
+  100 % keeps its number: it is told its uncertainty is elevated. A point the decline has
+  already emptied is told its R_H is not a carrier density. The two thresholds are not merged —
+  the wording keys on whether a carrier density is present, so the warning can never contradict
+  the value printed beside it.
 
 The same discipline holds outside Hall: window-sensitivity spreads (Curie-Weiss θ ladder,
 resistivity power-law n ladder, TTO κ_ph ladder) are **not error bars** and are never written
 with `±`; the statistical σ is labeled `σ_stat (fit scatter only)` and listed last.
+
+### R_H resolution: the decline rule, zero-field ρ_xx, the field-window ladder, and confidence
+
+**Decline rule (`r_h_unresolved`):** carrier_n, carrier_type, mobility and their own σ
+companions are withheld whenever R_H's own uncertainty is not strictly smaller than R_H itself
+— **σ ≥ |R_H|**, σ being the instrument sigma where the file supports it, the residual sigma
+otherwise, and treated as unresolved when NEITHER family is available (an unquantified
+uncertainty is not evidence of a small one). The line is not a convention, it is the point at
+which the quantities stop meaning anything: at σ ≥ |R_H| the ±1σ interval on R_H contains zero,
+so n = 1/(e·|R_H|) has no finite upper bound, and the carrier sign — sign(R_H), the thing a Hall
+measurement exists to determine — is undetermined within that interval. R_H and its σ are always
+kept and reported; only the quantities *derived* from R_H are withheld, under a `withheld` field
+that keeps them inspectable without publishing them as measurements. A point that never produced
+an R_H at all keeps its own `antisym_r_h_missing` reason rather than gaining a second one.
+
+**Zero-field ρ_xx for mobility is per Hall setpoint, not per file and not per loop.** μ =
+|R_H|/ρ_xx needs ρ_xx at zero field, at the same temperature as the Hall point. The longitudinal
+source is queried at the NEAREST |H| < 50 Oe (`ZERO_FIELD_OE`, `cryosweep_core.units`) row to
+each Hall setpoint's own temperature; the query declines rather than interpolating or clamping
+across setpoints when the nearest zero-field node lies farther than `HallCfg.temp_interval`
+(default 1.0 K) away. Two distinct reasons never get conflated: `rho_xx_channel_missing` — the
+longitudinal channel's resistivity column is not in the file at all — versus
+`rho_xx_no_zero_field` — the column exists but has no |H| < 50 Oe row within `temp_interval` of
+this particular setpoint. A wrong `--long-channel` is a different problem from a channel that
+was never held at zero field near this temperature, and the two need different remedies.
+
+**Field-window ladder.** R_asym vs B is refit over |B| ≤ f·B_max for f ∈ {1.00, 0.75, 0.50,
+0.25}; a window is attempted only with ≥ 5 points spanning ≥ 2 distinct field magnitudes. A
+rung's own resolution is judged by the SAME `is_resolved()` precedence as the point-level decline
+rule above (not a separate, looser criterion) — on the real Hall file the two rules are not
+equivalent: an instrument-sigma rule excludes narrower rungs a residual-only rule would have
+called resolved. `r_h_spread` = max−min R_H over the resolved rungs, and is `None` (never `0.0`)
+whenever fewer than two rungs resolve (`ladder_incomplete` — no spread is reported at all).
+Exactly two resolved rungs still reports a spread, but flags it `ladder_thin`: the comparison
+rests on only the two widest windows, not the full f = 1.00→0.25 span every other point gets — a
+weakly-based answer, distinct from `ladder_incomplete`'s no answer. `window_sensitive` fires when
+
+**spread > max(3·σ_max, 0.05·|R_H(f=1.00)|)**
+
+— 3σ of the noisiest resolved rung, or 5% of the full-window R_H, whichever is larger. The floor
+is relative to |R_H| (R_H spans many decades across samples, unlike a dimensionless exponent)
+and exists only to backstop the degenerate case where an exactly-linear fit collapses both σ and
+spread toward float noise together; on the real Hall file 3σ is the binding term at every
+temperature, with spread/(3σ) ratios of 0.003–0.087 — nowhere near either term, so
+`window_sensitive` is quiet across the whole file. The ladder is skipped entirely (no rungs, no
+flag) when thickness is not supplied: every rung's R_H would then be `None` too, and that is a
+missing user input the thickness gate already names, not evidence the data itself was thin.
+
+**Confidence = min(fit quality, resolved fraction)** on both Hall analyzers, shared through one
+`hall_confidence()` helper so the rule cannot fork between them. `fit_quality` is the mean r²
+over points whose fit has nonzero residual degrees of freedom; `resolved_fraction` is the
+fraction of points passing the decline rule's own `is_resolved()` check. **r² is `None` wherever
+a fit has zero residual degrees of freedom** — a line through exactly two points fits them
+exactly regardless of how noisy the underlying data really is, so r² = 1.0 there is a tautology,
+not a measurement — and such points are excluded from the r² mean rather than pulling it toward
+1.0. When that exclusion leaves no r² at all (no point has ≥ 3 antisym points), `fit_quality`
+defaults to **1.0** — no constraint, not a claim of perfect fit — while `confidence_parts.fit`
+itself is reported as `None`, so a reader can still tell "no r² survived" apart from "r² was
+measured at 1.0". Each ceiling is independent: a poor R_xy-vs-B fit and an R_H that is not
+resolved against its own σ are opposite problems with opposite remedies, and `confidence_parts =
+{fit, resolved}` names which one binds.
+
+**CSV parse contract.** A Hall points CSV that carries run-level warnings opens with them as
+`#`-prefixed lines before the header row, so a naive reader must be told `comment='#'`
+(`pandas.read_csv(path, comment="#")`; `numpy.loadtxt`, Origin and gnuplot already honour `#`
+and need nothing). Skipping that no longer risks a silently-wrong read: the block opens with a
+short comma-free marker line specifically so a naive `pandas.read_csv(path)` either raises
+`ParserError` or returns a single column named by the remedy sentence — never a plausible
+multi-column frame of nonsense, which is what an earlier, comma-bearing version of the block
+was measured producing (a 10×3 DataFrame, no exception raised, because the warning prose's own
+commas split the header into three plausible-looking columns).
 
 ### Dilatometry (not yet implemented)
 

@@ -122,8 +122,11 @@ def test_point_model_defaults():
 
 # ---- Task 6: HallTempDepAnalyzer.analyze() tests ---------------------------
 
-def test_analyze_synth_exact(hall_tdep_synth_path):
-    rt = load_dat(hall_tdep_synth_path)
+def test_analyze_synth_exact(hall_tdep_std_synth_path):
+    # std fixture: the noiseless one publishes no carrier density / mobility since the
+    # residual-sigma floor (its float-noise residual sigma is not an uncertainty estimate
+    # and it has no instrument std column). Same geometry, same R_H oracle below.
+    rt = load_dat(hall_tdep_std_synth_path)
     cfg = RunConfig(hall={"hall_channel": 1, "thickness_mm": 0.05, "longitudinal_channel": 2})
     res = HallTempDepAnalyzer().analyze(rt, cfg)
     assert res.status == "ok"
@@ -146,12 +149,17 @@ def test_analyze_synth_exact(hall_tdep_synth_path):
     assert caps["hall_coefficient"] and caps["carrier_concentration"] and caps["mobility"]
 
 
-def test_analyze_missing_thickness_low_conf(hall_tdep_synth_path):
+def test_analyze_missing_thickness_gates(hall_tdep_synth_path):
+    # Repinned (was status=="low_confidence" with a "thickness" warning and an empty
+    # gate[]): a missing thickness is a missing USER INPUT (R_H = slope x thickness), so
+    # it follows the gate discipline, not a bare confidence downgrade + warning string.
     rt = load_dat(hall_tdep_synth_path)
     res = HallTempDepAnalyzer().analyze(rt, RunConfig(hall={"hall_channel": 1}))
-    assert res.status == "low_confidence"
-    # the warning must name the real cause (thickness), not "no fittable T point"
-    assert any("thickness" in w.lower() for w in res.warnings)
+    assert res.status == "gated"
+    g = next(g for g in res.gate if g.need == "thickness_mm")
+    assert g.remedy["flag"] == "--thickness"
+    assert "--thickness" in g.remedy["example"]
+    assert res.data["points"]                             # slope-only work survives
 
 
 def test_analyze_real_file_sparsity_edge(hall_real_path):
@@ -161,10 +169,20 @@ def test_analyze_real_file_sparsity_edge(hall_real_path):
     cfg = RunConfig(hall={"hall_channel": 1, "thickness_mm": 0.07})
     res = HallTempDepAnalyzer().analyze(rt, cfg)
     # #18 (2026-09-02): this test previously pinned the DEFECT — status low_confidence /
-    # confidence 0.0 with 121 single-pair points disowned as "2point". A single ± pair is
-    # an antisymmetrization; the result was always sound and now says so.
-    assert res.status == "ok"
-    assert res.confidence == 1.0
+    # confidence 0.0 with 121 single-pair points disowned as "2point". A single ± pair IS
+    # an antisymmetrization, and the per-point structure asserted below (antisym counts,
+    # low_confidence flags, carrier_type withholding) is still sound and unaffected.
+    # Repinned (spec §4.5, 2026-09): the AGGREGATE status/confidence moved again, for an
+    # unrelated reason -- confidence used to be antisym_fraction alone (1.0 whenever every
+    # fitted point simply cleared tdep_min_antisym_points), which said nothing about how
+    # many R_H are actually resolved from zero. It is now min(fit_quality, resolved_fraction)
+    # and neither ceiling is 1.0 here: (a) every r2 this file ever reported came from a
+    # 2-point antisym fit and is now correctly None (zero residual DOF, not a measurement),
+    # so fit_quality defaults to 1.0; (b) only 66/138 points have sigma < |R_H| (the other
+    # 72 are the same real-file decline test_hall_unresolved_decline.py measures), so
+    # resolved_fraction = 66/138 = 0.4783, below the 0.5 threshold.
+    assert res.status == "low_confidence"
+    assert res.confidence == pytest.approx(66 / 138)
     fitted = [p for p in res.data["points"] if p["R_H"] is not None]
     anti = [p for p in fitted if p["r_h_method"] == "antisym"]
     two = [p for p in fitted if p["r_h_method"] == "2point"]
@@ -174,7 +192,17 @@ def test_analyze_real_file_sparsity_edge(hall_real_path):
     assert max(p["temperature"] for p in anti) > 100.0   # coverage no longer stops at ~21 K
     # exactly one T has NO ± pair at all: stays 2point + low_confidence (the knob's floor)
     assert len(two) == 1 and two[0]["antisym_points"] == 0 and two[0]["low_confidence"]
-    assert all(p["carrier_type"] in ("electrons", "holes") for p in fitted)  # sign depends on wiring
+    # 2026-09-10 (spec Sec 4.1): sigma >= |R_H| withholds carrier_type -- on this real file
+    # 72/138 points cross that line (see test_hall_unresolved_decline.py's real-file oracle),
+    # so "every fitted point publishes a carrier_type" is no longer true. Resolved points
+    # still publish one (sign depends on wiring); declined points keep it under `withheld`
+    # instead, never as a fabricated `null` classification.
+    resolved = [p for p in fitted if "r_h_unresolved" not in p["derived_flags"]]
+    declined = [p for p in fitted if "r_h_unresolved" in p["derived_flags"]]
+    assert resolved and declined
+    assert all(p["carrier_type"] in ("electrons", "holes") for p in resolved)
+    assert all(p["carrier_type"] is None for p in declined)
+    assert all(p["withheld"]["carrier_type"] in ("electrons", "holes") for p in declined)
 
 
 def test_analyze_resistivity_example_clean(res_path):
@@ -356,13 +384,23 @@ def test_two_point_extended_capability(hall_tdep_synth_path):
     assert caps["two_point_extended"]["applicable"] is True
 
 
-def test_tdep_rh_series_split_by_method(hall_tdep_synth_path):
+def test_tdep_rh_series_split_by_method(hall_tdep_std_synth_path):
     from cryosweep_core.plotting.catalog import series_hall_tdep_rh_t, series_hall_tdep_n_t
-    res = _full_tdep(hall_tdep_synth_path)
+    # std fixture (2026-09-14): on the noiseless one NO n series survives any more -- its
+    # antisym residual sigma is float noise and declined too. Here the antisym points resolve
+    # on their instrument sigma (1.25e-8 < |R_H| 3e-8) while the 2-point tail still does not
+    # (3.5e-8 > 2.5e-8), so the split below is the same one the docstring describes.
+    res = _full_tdep(hall_tdep_std_synth_path)
     keys = {s.key for s in series_hall_tdep_rh_t(res)}
     assert {"R_H_antisym", "R_H_2point"} <= keys
+    # 2026-09-10 (spec Sec 4.1): this fixture carries no Std. Dev. column, so its 2-point
+    # tail has neither a residual sigma (zero DOF by construction) nor an instrument one --
+    # an unquantified uncertainty is not evidence of a small one, so every 2-point point is
+    # withheld (r_h_unresolved) and "n_2point" no longer has any point to plot. R_H itself
+    # is untouched by the decline, so "R_H_2point" survives above.
     nkeys = {s.key for s in series_hall_tdep_n_t(res)}
-    assert {"n_antisym", "n_2point"} <= nkeys
+    assert "n_antisym" in nkeys
+    assert "n_2point" not in nkeys
 
 
 # ---- KNOWN-ISSUES #18 (2026-09-02): a single ± pair IS an antisymmetrization ----
@@ -417,18 +455,63 @@ def _write_single_pair_dat(tmp_path):
     return p
 
 
-def test_single_pair_file_is_ok_with_rebased_confidence(tmp_path):
+def test_single_pair_file_fits_cleanly_but_is_unresolved_without_a_sigma_column(tmp_path):
     # #18 end-to-end: a file whose every T point rests on one ± pair is a sound
-    # measurement and must not report confidence 0.0 / low_confidence.
+    # measurement (r_h_method == "antisym", not low_confidence, exact R_H below) --
+    # that part of #18's original claim is unaffected and re-asserted below.
+    # Repinned (spec §4.5, 2026-09): the AGGREGATE status/confidence is no longer 1.0/"ok"
+    # for an unrelated reason -- this fixture carries no Std. Dev. column, so no point has
+    # EITHER sigma family (r_h_sigma stays None: a single-pair fit has zero residual DOF;
+    # r_h_sigma_instrument stays None: there is no std column to derive it from). Spec
+    # §4.1: "an unquantified uncertainty is not evidence of a small one" -- every point is
+    # therefore unresolved, resolved_fraction is 0.0, and confidence = min(fit_quality, 0.0)
+    # = 0.0 regardless of how good the fit itself is.
     rt = load_dat(_write_single_pair_dat(tmp_path))
     cfg = RunConfig.load(hall={"hall_channel": 1, "thickness_mm": 0.1})
     res = HallTempDepAnalyzer().analyze(rt, cfg)
-    assert res.status == "ok"
-    assert res.confidence == 1.0
+    assert res.status == "low_confidence"
+    assert res.confidence == 0.0
+    assert res.confidence_parts["resolved"] == 0.0
     pts = [p for p in res.data["points"] if p["R_H"] is not None]
     assert pts and all(p["r_h_method"] == "antisym" for p in pts)
     assert all(p["antisym_points"] == 1 for p in pts)
     assert all(not p["low_confidence"] for p in pts)
     # slope d/B = 1.2e-3/2 = 6e-4 Ohm/T; R_H = slope * 1e-4 m = 6e-8 m^3/C (holes)
     assert pts[0]["R_H"] == pytest.approx(6.0e-8, rel=1e-6)
-    assert pts[0]["carrier_type"] == "holes"
+    # 2026-09-10 (spec Sec 4.1): this fixture carries no Std. Dev. column and every point
+    # is a single antisym pair (zero residual DOF), so neither sigma family exists --
+    # carrier_type is withheld, not published, and kept for inspection under `withheld`.
+    # This is orthogonal to #18 (confidence/status above are untouched by the decline).
+    assert pts[0]["carrier_type"] is None
+    assert pts[0]["derived_flags"] == ["r_h_unresolved"]
+    assert pts[0]["withheld"]["carrier_type"] == "holes"
+
+
+# ---- graduated noise wording (2026-09-14) -----------------------------------
+
+def test_aggregate_noise_warning_splits_published_from_withheld(hall_real_path):
+    """Both adversarial reviews, convergently: the aggregate warning read "138/138 R_H(T)
+    points carry > 50% relative instrument sigma ... treat these R_H as noise, not a
+    carrier density" on a result that published 66 carrier densities. The warning threshold
+    is 50 %; the decline withholds at 100 %. Everything in between was told it was not a
+    carrier density while being handed one.
+
+    The aggregate now counts the two bands separately and says the strong thing only about
+    the points the decline actually withheld. No published number moves -- the same 66
+    carrier densities are reported before and after.
+
+    Measured on the real Hall file, channel 1 (2026-09-14)."""
+    rt = load_dat(str(hall_real_path))
+    cfg = RunConfig.load(hall={"hall_channel": 1, "thickness_mm": 0.1})
+    r = HallTempDepAnalyzer().analyze(rt, cfg)
+    pts = r.data["points"]
+    published = [p for p in pts if p["carrier_n"] is not None]
+    assert len(pts) == 138 and len(published) == 66        # unchanged: no number moved
+    noise = [w for w in r.warnings if "relative instrument sigma" in w]
+    assert len(noise) == 1
+    w = noise[0]
+    assert "138/138" in w and "median 101%" in w           # the measurement is unchanged
+    # the strong reading is confined to the points that published nothing
+    assert "not a carrier density" in w
+    assert "72 of them" in w                               # 138 - 66 withheld by the decline
+    assert "the other 66" in w and "interpret" in w

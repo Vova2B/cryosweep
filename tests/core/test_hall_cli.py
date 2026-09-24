@@ -38,6 +38,26 @@ def test_cli_hall_tdep_missing_channel_gates():
     assert env["status"] == "gated"
     assert any(g["need"] == "hall_channel" for g in env["gate"])
 
+def test_cli_hall_missing_thickness_gates():
+    # R_H = slope x thickness: a missing thickness is a missing USER INPUT, so it follows
+    # the same gate discipline as missing --hall-channel above — exit 10 with a remedy an
+    # agent can act on, instead of exit 11 / status low_confidence with an empty gate[].
+    p = _run(["hall", SYNTH, "--hall-channel", "1"])   # no --thickness
+    assert p.returncode == 10
+    env = json.loads(p.stdout)
+    assert env["status"] == "gated"
+    g = next(g for g in env["gate"] if g["need"] == "thickness_mm")
+    assert g["remedy"]["flag"] == "--thickness"
+
+
+def test_cli_hall_tdep_missing_thickness_gates():
+    p = _run(["hall-tdep", SYNTH, "--hall-channel", "1"])   # no --thickness
+    assert p.returncode == 10
+    env = json.loads(p.stdout)
+    assert env["status"] == "gated"
+    g = next(g for g in env["gate"] if g["need"] == "thickness_mm")
+    assert g["remedy"]["flag"] == "--thickness"
+
 def test_cli_hall_thickness_unit_um():
     p = _run(["hall", SYNTH, "--hall-channel", "1", "--thickness", "100", "--thickness-unit", "um"])
     # 100 um == 0.1 mm -> same R_H as the 0.1 mm case

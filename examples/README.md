@@ -57,9 +57,11 @@ R_xy(H) loops at 10 / 100 / 300 K - Hall antisymmetrization and R_H.
 
 ## hall_temperature_dependence.dat
 
-Temperature-dependent Hall: R_H(T), carrier density and mobility.
+Temperature-dependent Hall: R_H(T) at 38 temperatures, and a demonstration of the decline rule.
 
-**In the GUI:** Resistivity-format file for the Temp-Dep Hall tab (green dot): set the Hall channel (1) and thickness to get R_H(T), n(T) and mobility(T); the Resistivity tab shows the ordinary rho(T) of the longitudinal channel.
+This file is noiseless by construction, so the fit at each temperature has no scatter to estimate an uncertainty from - and an uncertainty that cannot be quantified is not evidence of a small one. Every carrier density and mobility is therefore withheld (all 38 points, `r_h_unresolved`; `carrier_concentration` and `mobility` read `applicable: false`) and the run exits 11. R_H itself is published throughout - it is measured, not derived. For published n(T) and mobility(T), use `hall_mixed_sweeps.dat`, which is real data and carries the instrument's own std-dev columns: 73 of its 130 temperatures publish a density.
+
+**In the GUI:** Resistivity-format file for the Temp-Dep Hall tab (green dot): set the Hall channel (1) and thickness to get R_H(T); the carrier-density and mobility panels stay empty for the reason above, and the n(T) panel currently reports that as "no data of this kind in this file", which is wrong - see KNOWN-ISSUES 42. The Resistivity tab shows the ordinary rho(T) of the longitudinal channel.
 
 ## magnetization_vsm_multifield.dat *(anonymized real measurement)*
 
@@ -77,4 +79,4 @@ Anonymized real Cp(T): four fields (0 / 5 / 10 / 13 T) - low-T Cp/T vs T^2 and t
 
 Anonymized real Hall-wired measurement: nine field loops (2-300 K, +-90 kOe) plus fixed-field temperature ramps - drifting temperature setpoints and single-pair field coverage, the messiness the synthetic Hall examples cannot express (KNOWN-ISSUES 18-20 regression data); geometry deliberately unset.
 
-**In the GUI:** Real (anonymized) Hall data, and deliberately messy where the synthetic files are clean. Hall tab: channel 1, thickness 0.07 mm, longitudinal channel 2 - nine R_xy(H) loops incl. a 200 K loop whose setpoint drifted 199.84-199.99 K (one loop, not two - that split once fabricated a phantom carrier density). Temp-Dep Hall tab: most temperatures carry a single +- field pair, fitted as antisym at full confidence; a few unpaired ones fall back to the labeled low-confidence 2-point estimate. The Resistivity tab shows the geometry-unset warning: the header never had sample dimensions, so absolute rho is scale-arbitrary while RRR and MR% stay valid.
+**In the GUI:** Real (anonymized) Hall data, and deliberately messy where the synthetic files are clean. Hall tab: channel 1, thickness 0.07 mm, longitudinal channel 2 - nine R_xy(H) loops incl. a 200 K loop whose setpoint drifted 199.84-199.99 K (one loop, not two - that split once fabricated a phantom carrier density). Temp-Dep Hall tab: most temperatures carry a single +- field pair, fitted as antisym; a few unpaired ones fall back to the labeled low-confidence 2-point estimate. The run exits 11 at confidence 0.56: 57 of its 130 points carry a relative sigma on R_H at or above 1, so their carrier density and mobility are withheld and the remaining 73 are published with a sign confidence the warnings spell out. The Resistivity tab shows the geometry-unset warning: the header never had sample dimensions, so absolute rho is scale-arbitrary while RRR and MR% stay valid.

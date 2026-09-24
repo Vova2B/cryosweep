@@ -94,6 +94,11 @@ HALL_LONG_SYNTH = FIX / "hall_long_synth.dat"
 ACT_SYNTH = FIX / "act_synth.dat"
 MPMS_SYNTH = FIX / "mpms_synth.dat"
 HALL_TDEP_SYNTH = FIX / "hall_tdep_synth.dat"
+# Same geometry as hall_tdep_synth.dat plus the bridge-1 Std. Dev. column. Since the
+# residual-sigma floor (hall.SIGMA_REL_FLOOR) the noiseless fixture publishes NO carrier
+# density -- its float-noise residual sigma is not an uncertainty estimate -- so tests
+# that need a published n / mobility series use this one instead.
+HALL_TDEP_STD_SYNTH = FIX / "hall_tdep_std_synth.dat"
 
 
 # --- real-data fixtures: every one skips when the file is unavailable ---
@@ -178,3 +183,8 @@ def mpms_synth_path():
 def hall_tdep_synth_path():
     assert HALL_TDEP_SYNTH.exists(), HALL_TDEP_SYNTH
     return HALL_TDEP_SYNTH
+
+@pytest.fixture
+def hall_tdep_std_synth_path():
+    assert HALL_TDEP_STD_SYNTH.exists(), HALL_TDEP_STD_SYNTH
+    return HALL_TDEP_STD_SYNTH

@@ -26,7 +26,7 @@ def test_export_hall_writes_points_derived_caps(tmp_path, hall_synth_path):
     out = export_result(res, str(tmp_path / "hall"), fmt="csv")
     assert "points" in out and "capabilities" in out
     with open(out["points"]) as f:
-        rows = list(csv.DictReader(f))
+        rows = list(csv.DictReader(ln for ln in f if not ln.startswith("#")))
     assert rows and "R_H (m^3/C)" in rows[0]
     assert {"temperature (K)"} <= set(rows[0])
 

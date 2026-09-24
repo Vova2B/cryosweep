@@ -80,8 +80,19 @@ def test_no_identity_token_survives():
 
 def test_single_pair_temperatures_fit_as_antisym_with_full_confidence():
     r = _analyze("hall_tdep")
-    assert r.status == "ok"
-    assert r.confidence >= 0.9                      # was 0.0 before the fix (item 18)
+    # Repinned (spec §4.5, 2026-09): confidence is no longer antisym_fraction (which stayed
+    # 1.0 here, matching item 18's original claim) but min(fit_quality, resolved_fraction).
+    # Every r2 this file reports comes from a 2-point antisym fit and is now correctly None
+    # (zero residual DOF); only 73/130 points have sigma < |R_H|, so resolved_fraction =
+    # 0.5615 is the confidence.
+    # Repinned again (2026-09-14): the status moved ok -> low_confidence (exit 0 -> 11, an
+    # accepted consequence). With no r2 on any point the fit ceiling is NOT a default 1.0
+    # -- that scored the absence of fit evidence as a perfect fit -- it is absent, the
+    # status is capped, and the envelope says so. The confidence itself is unchanged.
+    assert r.status == "low_confidence"
+    assert r.confidence_parts["fit"] is None
+    assert "fit_quality_unavailable" in r.data["flags"]
+    assert r.confidence == pytest.approx(73 / 130)
     pts = r.data["points"]
     single = [p for p in pts if p["antisym_points"] == 1]
     assert len(single) >= 80, len(single)

@@ -29,7 +29,7 @@ def test_stage_fit_slope_sigma_matches_linregress():
     lr = linregress(H / _OE_PER_T, R)
     assert d["slope_sigma_ohm_per_T"] == pytest.approx(float(lr.stderr), abs=1e-12)
     assert d["r_h_sigma"] == pytest.approx(float(lr.stderr) * 1e-4, rel=1e-12)
-    assert "sigma_zero_dof" not in d
+    assert d["sigma_zero_dof"] is False and d["sigma_degenerate"] is False
 
 
 def test_stage_fit_two_points_sigma_none_zero_dof():
@@ -63,8 +63,15 @@ def test_stage_a_only_point_uses_raw_sigma_and_is_warned():
     SURVIVED the full suite because nothing reached this branch; this test kills it.
 
     `hall_onesided_synth.dat` is positive-field-only, so `_antisymmetrize` returns empty.
-    Oracles measured through the shipped path (seed 7, thickness 0.1 mm)."""
-    r = _analyze_hall(FIX / "hall_onesided_synth.dat", hall_channel=1, thickness_mm=0.1)
+    Oracles measured through the shipped path (seed 7, thickness 0.1 mm).
+
+    skip_rows=0: this fixture's own first row is an ordinary measurement (not the
+    leading-row defect task 4b addresses), and this test is about Stage A's raw-sigma
+    computation, not about row-skipping -- pinning skip_rows=0 here keeps that oracle
+    decoupled from a default introduced for an unrelated reason (task 4b's own tests
+    exercise the default itself)."""
+    r = _analyze_hall(FIX / "hall_onesided_synth.dat", hall_channel=1, thickness_mm=0.1,
+                       skip_rows=0)
     pts = r.data["points"]
     assert len(pts) == 1
     p = pts[0]
@@ -86,11 +93,51 @@ def test_stage_a_only_point_uses_raw_sigma_and_is_warned():
 
 
 def test_real_qd_300k_warning_fires_2k_silent(res_path):
-    r = _analyze_hall(res_path, hall_channel=2, thickness_mm=0.1)
+    """Re-derived (task 4b, 2026-09-10). This test used to pin the exact damage described
+    above -- the 300 K point's OWN Bridge 2 Resistance row 0 (-3999999.75 Ohm against a
+    file median of order 1e-4 Ohm, reported Std. Dev. 19595.9 Ohm-m) was not a noisy
+    reading, it was not a reading at all, and the sigma-weighted OLS estimator had no
+    robustness against it. Task 4b's `skip_rows` (default 1) now drops that row before
+    either Hall analyzer runs, so the field-sweep `hall` command no longer reproduces the
+    damage by default. The two things this test asserted are now the two things
+    `--skip-rows` controls, so both halves are asserted: the default gives a SOUND 300 K
+    point, and `--skip-rows 0` reproduces the exact old pathological numbers -- proving
+    the flag actually controls the behaviour rather than the data having quietly changed
+    underneath.
+    """
+    r = _analyze_hall(res_path, hall_channel=2, thickness_mm=0.1)     # skip_rows defaults to 1
+    assert r.data["skipped_rows"] == 1
     noisy = [w for w in r.warnings if "treat as noise, not a carrier density" in w]
-    assert any("T = 300.0 K" in w and "154%" in w for w in noisy)
-    assert not any("T = 2.0 K" in w for w in noisy)       # 2 K point: rel sigma 0.21 %
+    # With the unphysical row gone the 300 K point is no longer noise-dominated (its own
+    # relative sigmas, ~5.0% residual / ~3.2% instrument, sit in the same single-digit-
+    # percent band as the other eight temperatures, 0.2-1.2%) -- the >50% warning threshold
+    # never fires for it, and the row was plainly unphysical so no reversal warning fires
+    # either (the default did its job silently).
+    assert not any("T = 300.0 K" in w for w in noisy)
+    assert not any("T = 2.0 K" in w for w in noisy)       # 2 K point: unaffected either way
+    assert not any("looks physical" in w for w in r.warnings)
+    p300 = next(p for p in r.data["points"] if p["temperature"] == 300.0)
+    assert p300["n_points"] == 301
+    # on the trend set by the 200 K neighbour (R_H=-2.8812e-10, r2=0.99888) -- a sound
+    # measurement, not the destroyed one this test used to pin.
+    assert p300["R_H"] == pytest.approx(-2.7424e-10, rel=1e-3)
+    assert p300["r2"] == pytest.approx(0.66948, abs=2e-4)
+    assert p300["r_h_sigma"] / abs(p300["R_H"]) == pytest.approx(0.0501, rel=1e-2)
+    assert p300["r_h_sigma_instrument"] / abs(p300["R_H"]) == pytest.approx(0.0317, rel=1e-2)
     json.dumps(r.data, allow_nan=False)
+
+    # --skip-rows 0 must reproduce the OLD numbers this test used to pin, EXACTLY -- the
+    # flag controls this behaviour; the underlying data and estimator are unchanged.
+    r_unfiltered = _analyze_hall(res_path, hall_channel=2, thickness_mm=0.1, skip_rows=0)
+    assert r_unfiltered.data["skipped_rows"] == 0
+    noisy_old = [w for w in r_unfiltered.warnings if "treat as noise, not a carrier density" in w]
+    assert any("T = 300.0 K" in w and "instrument sigma" in w for w in noisy_old)
+    assert not any("T = 2.0 K" in w for w in noisy_old)
+    p300_old = next(p for p in r_unfiltered.data["points"] if p["temperature"] == 300.0)
+    assert p300_old["n_points"] == 302
+    assert p300_old["r_h_sigma"] / abs(p300_old["R_H"]) == pytest.approx(1.5386, rel=1e-3)
+    assert p300_old["r_h_sigma_instrument"] / abs(p300_old["R_H"]) > 100
+    json.dumps(r_unfiltered.data, allow_nan=False)
 
 
 # ================= Task 9: hall_tempdep residual + instrument sigma (closed O4) ==========
@@ -178,9 +225,11 @@ def test_synth_std_fixture_antisym_and_2point_closed_forms():
     pts = {p["temperature"]: p for p in r.data["points"]}
     p30 = pts[30.0]                       # 3 antisym pairs at B = 2/4/6 T
     assert p30["antisym_points"] == 3
-    # residual sigma: exact-line fit -> finite, tiny (fit noise), NOT None at n >= 3
-    assert p30["slope_sigma_ohm_per_T"] is not None
-    assert abs(p30["slope_sigma_ohm_per_T"]) < 1e-10
+    # residual sigma: exact-line fit -> float noise (measured < 1e-10 Ohm/T against a
+    # 6e-4 slope), which since the residual-sigma floor is None with sigma_degenerate as
+    # its reason rather than a tiny number that would read as maximal resolution
+    assert p30["slope_sigma_ohm_per_T"] is None
+    assert p30["sigma_degenerate"] is True and p30["sigma_zero_dof"] is False
     # instrument sigma closed form: 2.5e-4 Ohm/T (see make_hall_tdep_std.py)
     assert p30["slope_sigma_instrument_ohm_per_T"] == pytest.approx(2.5e-4, rel=1e-6)
     assert p30["r_h_sigma_instrument"] == pytest.approx(1.25e-8, rel=1e-6)
@@ -268,3 +317,92 @@ def test_real_hall_file_oracles(hall_real_path):
 # physics reference. The verdict is UNCHANGED: all 138 points still exceed 50 %.
 REAL_HALL_SPOT_T = 74.0
 REAL_HALL_SPOT_RH_SIG_INST = 1.0617e-11
+
+
+# --- graduated noise wording: the warning must not contradict what was published ---
+
+_NOT_A_CARRIER = "not a carrier density"
+_ELEVATED = "interpret the carrier density with care"
+
+
+def _pt(T, R_H, sigma, *, carrier_n=None, instrument=True, antisym=True):
+    """A HallTempPoint carrying just the fields `sigma_noise_warnings` reads."""
+    from cryosweep_core.analyzers.hall import HallTempPoint
+    kw = dict(temperature=T, R_H=R_H, r2=0.9, antisymmetrized=antisym, carrier_n=carrier_n)
+    kw["r_h_sigma_instrument" if instrument else "r_h_sigma"] = sigma
+    return HallTempPoint(**kw)
+
+
+def test_noise_warning_never_contradicts_a_published_carrier_density():
+    """Both adversarial reviews, convergently: the >50 % noise warning ordered the reader to
+    "treat as noise, not a carrier density" while the same point PUBLISHED one. The decline
+    withholds at sigma >= |R_H| (100 %), so the 50-100 % band got both the instruction and
+    the number, and the two say opposite things about the same value.
+
+    The wording is keyed on what was actually published, not on a second threshold, so the
+    contradiction is structurally impossible rather than merely unlikely."""
+    from cryosweep_core.analyzers.hall import sigma_noise_warnings
+    # 70 % relative sigma: over the warning threshold, under the decline threshold, so the
+    # point keeps its carrier density.
+    published = _pt(10.0, -2.0e-10, 1.4e-10, carrier_n=3.1e28)
+    # 150 %: the decline already withheld this one (carrier_n is None).
+    withheld = _pt(20.0, -2.0e-10, 3.0e-10, carrier_n=None)
+    w = sigma_noise_warnings([published, withheld])
+    assert len(w) == 2
+    w_pub = next(x for x in w if "T = 10.0 K" in x)
+    w_wit = next(x for x in w if "T = 20.0 K" in x)
+    assert _NOT_A_CARRIER not in w_pub          # it published one; do not deny it
+    assert _ELEVATED in w_pub
+    assert "70%" in w_pub and "instrument sigma" in w_pub
+    assert _NOT_A_CARRIER in w_wit              # nothing published: the strong reading stands
+    assert "150%" in w_wit
+
+
+def test_noise_warning_wording_tracks_the_decline_not_a_second_threshold():
+    """A point may publish nothing for a reason other than its own sigma (no R_H at all, so
+    Stage C never ran). The strong wording follows the ABSENCE of a published value, so such
+    a point still reads "not a carrier density" even at a modest relative sigma."""
+    from cryosweep_core.analyzers.hall import sigma_noise_warnings
+    stage_a_only = _pt(30.0, None, None, carrier_n=None, antisym=False)
+    stage_a_only.R_H_raw = -1.0e-10
+    stage_a_only.r_h_sigma_raw = 6.0e-11
+    stage_a_only.r2_raw = 0.4
+    w = sigma_noise_warnings([stage_a_only])
+    assert len(w) == 1
+    assert _NOT_A_CARRIER in w[0] and "Stage A raw" in w[0]
+
+
+def test_real_hall_ch2_no_point_is_both_warned_and_published(hall_real_path):
+    """Measured on the real Hall file, channel 2 (2026-09-14): 9 points, 5 of which
+    published a carrier density while the per-point warning told the reader it was not one.
+    After the graduated wording, zero points carry both."""
+    r = _analyze_hall(hall_real_path, hall_channel=2, thickness_mm=0.1)
+    pts = r.data["points"]
+    assert len(pts) == 9
+    published = [p for p in pts if p["carrier_n"] is not None]
+    assert len(published) == 5                       # unchanged: no number moved
+    denied = {w.split("T = ")[1].split(" K")[0] for w in r.warnings if _NOT_A_CARRIER in w}
+    assert not [p for p in published if f"{p['temperature']:.1f}" in denied]
+    # the five published points are still warned -- softened, never silenced
+    soft = {w.split("T = ")[1].split(" K")[0] for w in r.warnings if _ELEVATED in w}
+    assert {f"{p['temperature']:.1f}" for p in published} == soft
+
+
+def test_shipped_example_shows_the_graduated_band():
+    """The contradiction is reproducible without any local-only file: channel 2 of
+    `hall_mixed_sweeps.dat` warns on all nine temperatures, and the 200 K point sits at 94 %
+    relative instrument sigma — over the warning threshold, under the decline's — so it
+    publishes a carrier density. Every other point is over 100 % and publishes none."""
+    r = _analyze_hall(pathlib.Path("examples/hall_mixed_sweeps.dat"),
+                      hall_channel=2, thickness_mm=0.1)
+    pts = r.data["points"]
+    p200 = next(p for p in pts if p["temperature"] == 200.0)
+    assert p200["carrier_n"] is not None
+    w200 = next(w for w in r.warnings if "T = 200.0 K" in w)
+    assert "94%" in w200 and _ELEVATED in w200 and _NOT_A_CARRIER not in w200
+    # the eight others are withheld and keep the strong reading
+    others = [p for p in pts if p["temperature"] != 200.0]
+    assert len(others) == 8 and all(p["carrier_n"] is None for p in others)
+    for p in others:
+        w = next(x for x in r.warnings if f"T = {p['temperature']:.1f} K" in x)
+        assert _NOT_A_CARRIER in w

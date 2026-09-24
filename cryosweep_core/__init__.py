@@ -1,2 +1,2 @@
 """cryosweep_core — pure, headless Quantum Design PPMS/MPMS analysis core (zero Qt)."""
-__version__ = "0.6.0"
+__version__ = "0.7.0"

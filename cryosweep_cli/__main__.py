@@ -11,6 +11,23 @@ from cryosweep_core.reports import build_report
 from cryosweep_core.discovery import discover
 from cryosweep_core.schema import get_schema, unknown_keys, SCHEMA_NAMES
 
+def _skip_rows_arg(v):
+    """--skip-rows accepts the word 'auto' or a non-negative integer, and nothing else.
+
+    Parsed here rather than left to pydantic so a typo fails at the command line with the
+    usage text, instead of surfacing later as a config validation error.
+    """
+    if v == "auto":
+        return "auto"
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"expected 'auto' or a non-negative integer, got {v!r}")
+    if n < 0:
+        raise argparse.ArgumentTypeError(f"must be >= 0, got {n}")
+    return n
+
+
 def _sha(path):
     return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()[:16]
 
@@ -63,6 +80,12 @@ def main(argv=None):
     ap.add_argument("--thickness-unit", default="mm", choices=["mm", "um", "nm"])
     ap.add_argument("--geometry-sign", type=int, default=None, choices=[1, -1])
     ap.add_argument("--temp-interval", type=float, default=None)
+    ap.add_argument("--skip-rows", type=_skip_rows_arg, default=None,
+                    metavar="auto|N",
+                    help="leading data rows to drop before Hall analysis "
+                         "(HallCfg.skip_rows; default 'auto' drops only rows that are "
+                         "provably corrupt; an explicit N drops exactly N and turns "
+                         "detection off; 0 drops none)")
     ap.add_argument("--plot-kind", default=None, help="plot kind key (default: probe's default kind)")
     ap.add_argument("--style-file", default=None, help="GlobalStyle JSON (deterministic styling)")
     ap.add_argument("--layout-file", default=None, help="PlotLayout JSON (per-plot specs; reconciled)")
@@ -93,6 +116,7 @@ def main(argv=None):
     if a.thickness is not None: hall["thickness_mm"] = a.thickness * _UNIT_MM[a.thickness_unit]
     if a.geometry_sign is not None: hall["geometry_sign"] = a.geometry_sign
     if a.temp_interval is not None: hall["temp_interval"] = a.temp_interval
+    if a.skip_rows is not None: hall["skip_rows"] = a.skip_rows
     overrides = {}
     if a.unit_system is not None: overrides["unit_system"] = a.unit_system
     if geom: overrides["geometry"] = geom

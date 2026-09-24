@@ -16,7 +16,15 @@ from cryosweep_core.analyzers.dispatch import analyze_file
 from cryosweep_core.plotting.render import render_kind
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+FIX = pathlib.Path(__file__).resolve().parent / "fixtures"
 _REG = build_default_registry()
+
+# The shipped noiseless example publishes NO carrier density since the residual-sigma floor
+# (hall.SIGMA_REL_FLOOR: a float-noise residual sigma is not an uncertainty estimate, and
+# the file carries no instrument std column), so every kind that draws an n axis has nothing
+# to plot on it. Tests of those kinds run on the std fixture instead -- the same geometry,
+# so the same degenerate 3e-15 R_H span, plus the instrument sigma that resolves it.
+STD_FIXTURE = "hall_tdep_std_synth.dat"
 
 
 def _analyze(example, probe, width_mm=None, **hall):
@@ -25,7 +33,8 @@ def _analyze(example, probe, width_mm=None, **hall):
         setattr(cfg.hall, k, v)
     if width_mm is not None:
         cfg.geometry.width_mm = width_mm
-    return analyze_file(load_dat(str(ROOT / "examples" / example)), cfg, _REG)
+    path = (FIX / example) if example == STD_FIXTURE else (ROOT / "examples" / example)
+    return analyze_file(load_dat(str(path)), cfg, _REG)
 
 
 # ---------------- #2: estimator families must be visually separable -----------------------
@@ -48,7 +57,7 @@ def test_fallback_estimator_is_drawn_open_and_dashed():
     assert twop.get_linestyle() != anti.get_linestyle()
 
 
-@pytest.mark.parametrize("kind", ["hall_tdep_RH_T", "hall_tdep_n_T"])
+@pytest.mark.parametrize("kind", ["hall_tdep_RH_T"])
 def test_method_boundary_warning_appears_when_both_estimators_present(kind):
     # n_T matters separately: its wide log tick labels shift the axes (and the centred
     # title) right, so a raw-width fit can pass while the right edge still clips
@@ -61,6 +70,32 @@ def test_method_boundary_warning_appears_when_both_estimators_present(kind):
     bb = ax.title.get_window_extent(rend)
     fw = fig.get_window_extent(rend)
     assert bb.x0 >= fw.x0 - 0.5 and bb.x1 <= fw.x1 + 0.5, (bb.x0, bb.x1, fw.x1)
+
+
+def test_no_method_boundary_note_on_n_t_when_the_fallback_carries_no_n():
+    """2026-09-10 (spec Sec 4.1): `_tdep_result`'s fixture carries no Std. Dev. column, so
+    its 0-field+1 fallback points have neither a residual sigma (zero DOF by construction)
+    nor an instrument one and are withheld (r_h_unresolved) -- carrier_n is null on every
+    one of them. R_H(T) still shows a real boundary between the two fit methods (R_H is
+    untouched by the decline), so hall_tdep_RH_T keeps the note (parametrized case above).
+    n(T) does not: at the DEFAULT selection there is no "two_point"-role series plotted, so
+    there is no boundary left to warn about on THIS panel, and the note correctly stays
+    silent. This test used to be the "hall_tdep_n_T" arm of the parametrized case above; it
+    moved here once that stopped being true for this fixture.
+
+    2026-09-12 (task 9): the withheld carrier_n from these very points is now surfaced as
+    its own "n_withheld" inspection series, so the RAW series list legitimately carries a
+    "two_point" role again (KNOWN-ISSUES #2's hollow-marker convention, reused rather than
+    invented a second one for a non-trusted estimator) -- it is just default_on=False, so
+    render_kind's no-spec (default) call never selects it and the note stays silent."""
+    from cryosweep_core.plotting.catalog import series_hall_tdep_n_t
+    # std fixture (see STD_FIXTURE): the noiseless example now has no n series at all. Its
+    # 2-point tail is still withheld here -- instrument sigma 3.5e-8 against |R_H| 2.5e-8.
+    res = _analyze(STD_FIXTURE, "hall_tdep", hall_channel=1, thickness_mm=0.05)
+    two_point_series = [s for s in series_hall_tdep_n_t(res) if s.role == "two_point"]
+    assert two_point_series and all(s.default_on is False for s in two_point_series)
+    fig = render_kind(res, "hall_tdep_n_T")
+    assert fig.axes[0].get_title() == ""
 
 
 def test_no_warning_when_only_one_estimator_family():
@@ -83,9 +118,10 @@ def test_no_warning_when_only_one_estimator_family():
     # Every kind that draws an R_H axis, not just the one the item named: the summary and
     # the twin were rendering a plain "1e-7" header while hall_tdep_RH_T carried mathtext,
     # i.e. the same quantity formatted two ways depending on which kind you opened.
-    ("hall_temperature_dependence.dat", "hall_tdep", "hall_tdep_summary",
+    # (std fixture, not the example: these two kinds draw an n axis -- see STD_FIXTURE)
+    (STD_FIXTURE, "hall_tdep", "hall_tdep_summary",
      dict(hall_channel=1, thickness_mm=0.5, longitudinal_channel=2)),
-    ("hall_temperature_dependence.dat", "hall_tdep", "hall_tdep_rh_n_twin",
+    (STD_FIXTURE, "hall_tdep", "hall_tdep_rh_n_twin",
      dict(hall_channel=1, thickness_mm=0.5)),
 ])
 def test_r_h_axis_never_concatenates_scale_and_offset(example, probe, kind, hall):
@@ -163,3 +199,49 @@ def test_summary_outside_legend_keeps_third_axis_attached_and_legend_on_canvas()
         g["legend"].x0, g["j_decor_x1"], g["ax"].width)
     assert g["fig_w"] <= inside["fig_w"] + g["legend"].width + 0.15 * inside["fig_w"], (
         g["fig_w"], inside["fig_w"], g["legend"].width)
+
+
+def _hand_built_tdep(points):
+    """A Result carrying exactly the points a test needs. The shipped fixtures cannot produce
+    a RESOLVED 0-field+1 point (every one of theirs is withheld), so the case where a genuine
+    fallback series and a declined series share one panel has to be constructed."""
+    from cryosweep_core.result import Result, Provenance
+    return Result(status="ok", confidence=1.0,
+                  data={"probe": "hall_tdep", "points": points},
+                  provenance=Provenance(file="x", sha256="", app_version="", config={}))
+
+
+def test_the_declined_series_alone_does_not_claim_a_fallback_estimator():
+    """The method-boundary note says "open = 0-field+1 fallback estimator; steps between
+    estimators are method, not physics". Declined points are drawn hollow through the SAME
+    role -- there is no second hollow convention available to a catalog series -- but they are
+    not an estimator family: they are points with no published value at all. Measured on the
+    real file, 71 of the 72 open markers this note would describe were fitted by `antisym`,
+    so the sentence is false for them, and its second clause re-publishes them as measurements
+    by another method. The note is therefore gated on a FALLBACK series being present, not
+    merely on the hollow role."""
+    from cryosweep_core.plotting.spec import PlotSpec
+    from cryosweep_core.plotting.catalog import series_hall_tdep_n_t
+    res = _tdep_result()
+    keys = {s.key for s in series_hall_tdep_n_t(res)}
+    assert "n_withheld" in keys and "n_2point" not in keys, "fixture must hold only declined open points"
+    fig = render_kind(res, "hall_tdep_n_T", PlotSpec(curves=["n_antisym", "n_withheld"]))
+    assert fig.axes[0].get_title() == ""
+
+
+def test_a_genuine_fallback_still_warns_even_beside_a_declined_series():
+    """The gate above must not silence the real case. When a 0-field+1 point actually carries
+    a value, the handover between estimators is real physics-vs-method and the reader still
+    needs telling -- the presence of a declined series alongside must not suppress it."""
+    from cryosweep_core.plotting.spec import PlotSpec
+    from cryosweep_core.plotting.catalog import series_hall_tdep_n_t
+    res = _hand_built_tdep([
+        {"temperature": 10.0, "carrier_n": 1e28, "withheld": None, "r_h_method": "antisym"},
+        {"temperature": 20.0, "carrier_n": 2e28, "withheld": None, "r_h_method": "2point"},
+        {"temperature": 30.0, "carrier_n": None, "r_h_method": "antisym",
+         "withheld": {"carrier_n": 5e28, "carrier_type": "holes", "mobility": 2e-3}},
+    ])
+    assert {s.key for s in series_hall_tdep_n_t(res)} == {"n_antisym", "n_2point", "n_withheld"}
+    fig = render_kind(res, "hall_tdep_n_T",
+                      PlotSpec(curves=["n_antisym", "n_2point", "n_withheld"]))
+    assert "method" in fig.axes[0].get_title()
