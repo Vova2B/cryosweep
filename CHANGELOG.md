@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.0 — 2026-09-20
+## 0.7.0 — 2026-09-25
 
 Both Hall analyzers now ask whether a fit's own uncertainty makes its derived quantities
 meaningless, instead of only whether the fit ran. A Hall coefficient whose ±1σ interval
