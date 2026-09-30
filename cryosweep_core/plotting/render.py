@@ -2128,19 +2128,31 @@ def _frame_y_on_data(ax, kind, spec):
     fit to a narrow window can overshoot the data there by 2x — plain autoscale would then
     squeeze the measurement into half the panel. Owner call 2026-09-30: keep the axis on the
     data and let the curve run off the frame; the user can widen the axis when needed. Call
-    BEFORE _finish, so a user ymin/ymax (applied there) and the robust view still win."""
-    if spec.ymin is not None or spec.ymax is not None:
+    BEFORE _finish, so a user ymin/ymax (applied there) and the robust view still win; with
+    only one user limit, the other end is still framed on the data. Log y is framed the
+    same way, in decades: there the curve's approach to Cp(0) = 0 would otherwise add
+    empty decades below the data."""
+    if spec.ymin is not None and spec.ymax is not None:
         return
-    if (spec.yscale if spec.yscale is not None else kind.default_yscale) != "linear":
-        return
+    log = (spec.yscale if spec.yscale is not None else kind.default_yscale) == "log"
     dy = [np.asarray(ln.get_ydata(), float) for ln in ax.lines
           if ln.get_gid() is None or ln.get_gid() == "refline"]
     dy = np.concatenate(dy) if dy else np.array([])
-    dy = dy[np.isfinite(dy)]
-    if dy.size:
-        dlo, dhi = float(dy.min()), float(dy.max())
+    dy = dy[np.isfinite(dy) & (dy > 0)] if log else dy[np.isfinite(dy)]
+    if not dy.size:
+        return
+    dlo, dhi = float(dy.min()), float(dy.max())
+    if log:
+        span = np.log10(dhi / dlo)
+        f = 10 ** (_ROBUST_PAD * span) if span > 0 else 10 ** 0.1
+        lo, hi = dlo / f, dhi * f
+    else:
         pad = _ROBUST_PAD * (dhi - dlo) if dhi > dlo else max(abs(dhi), 1e-12) * 0.1
-        ax.set_ylim(dlo - pad, dhi + pad)
+        lo, hi = dlo - pad, dhi + pad
+    # a lone user limit beyond the data's far end cannot be framed against: leave it alone
+    if (spec.ymin is not None and spec.ymin >= hi) or (spec.ymax is not None and spec.ymax <= lo):
+        return
+    ax.set_ylim(lo, hi)
 
 
 def render_cp_vs_t(results, spec=None, style=None, overlay=None):

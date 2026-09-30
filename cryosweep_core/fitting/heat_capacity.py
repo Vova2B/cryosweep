@@ -344,8 +344,8 @@ def fit_full_range(T, cp, *, init, fixed, fit_min_k=None, fit_max_k=None, seed=N
     ss_res = float(np.sum((cp - yhat) ** 2)); ss_tot = float(np.sum((cp - cp.mean()) ** 2))
     r2 = 1.0 - ss_res / ss_tot if ss_tot else 0.0
     lo_k, hi_k = float(T.min()), float(T.max())
-    grid, curve, inside = _full_curve(p, lo_k, hi_k,
-                                      curve_max_k if curve_max_k is not None else data_t_max)
+    usable = curve_max_k is not None and np.isfinite(curve_max_k) and curve_max_k > 0
+    grid, curve, inside = _full_curve(p, lo_k, hi_k, curve_max_k if usable else data_t_max)
     return {"ok": True, "reason": "", "params": p, "fixed": fixed, "r2": r2,
             "n_points": int(T.size), "fit_range": [lo_k, hi_k],
             "units": dict(_FULL_UNITS),

@@ -17,6 +17,8 @@ class HCInputPanel(InputPanel):
     #: A USER edited one of the 7 Debye-Einstein parameter boxes. Programmatic writes
     #: (set_state, absorb_result) are quiet — they must not draw a manual model curve.
     param_edited = Signal()
+    #: The user finished editing the "Curve to" box: a shown manual curve follows it.
+    curve_span_edited = Signal()
 
     def __init__(self):
         super().__init__("heatcapacity")
@@ -50,6 +52,7 @@ class HCInputPanel(InputPanel):
             "Upper end of the drawn and exported Debye-Einstein curve. The curve always "
             "starts at 0 K. This does not change which points are fitted.")
         g.addWidget(QLabel("Curve to"), 1, 0); g.addWidget(self.full_curve_max, 1, 1, 1, 2)
+        self.full_curve_max.editingFinished.connect(self.curve_span_edited.emit)
         self._val: dict[str, QDoubleSpinBox] = {}
         self._fix: dict[str, QCheckBox] = {}
         for i, k in enumerate(_FULL_KEYS, start=2):
@@ -208,6 +211,9 @@ class HCInputPanel(InputPanel):
             top = max(temps) if temps else None
         if top is None:
             return None
+        fr = (d.get("full_fit") or {}).get("fit_range") or []
+        if len(fr) == 2 and fr[1] is not None and np.isfinite(fr[1]):
+            top = max(float(top), float(fr[1]))  # never inside the window, as for the fit
         x = np.linspace(0.0, float(top), 400)
         params = {k: float(self._val[k].value()) for k in _FULL_KEYS}
         try:                                     # the model raises at T <= 0: Cp(0) = 0

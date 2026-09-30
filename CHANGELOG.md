@@ -9,15 +9,17 @@
   highest data temperature for the Debye-Einstein fit, and from T² = 0 to the top of the
   window for each low-T model. It is one continuous line — the dotted continuation the Cp/T
   vs T² figure used to draw below the window is gone, because the line itself reaches the γ
-  intercept. `full_fit.t_grid`/`cp_fit` and `lowt_fits[].t2_grid`/`cp_over_t_fit` therefore
-  cover the **drawn** span; `fit_range` and the new parallel `in_fit_window` list say which
+  intercept. `full_fit.t_grid`/`cp_fit`, `lowt_fits[].t2_grid`/`cp_over_t_fit` and the per-field
+  low-T fits in `field_groups[].fits[]` therefore cover the **drawn** span; `fit_range` and the new parallel `in_fit_window` list say which
   part was fitted. No fitted parameter changes. The Schottky and transition curves are
   unchanged and still cover their fit window.
 - **`cp_vs_t` and `hc_full_cp_t` frame their y-axis on the data**, not on the fit curve. A fit
   to a narrow window carried out to the highest data temperature can overshoot the data (on
   the public example a 20–60 K fit reaches ~147 J/mol·K at 300 K against ~76 measured); the
   curve now runs off the top of the panel instead of squeezing the measurement into half of
-  it. A y-limit set by the user still takes precedence.
+  it. This holds on a log y-axis too, where the curve's approach to Cp = 0 at 0 K would
+  otherwise add empty decades below the data. A y-limit set by the user still takes
+  precedence; with only one set, the other end stays on the data.
 - **`<stem>.model_curves.csv` gains an `in_fit_window` column** (appended; 1 on rows the fit
   was judged on, 0 on rows where the model is carried outside it) and its rows cover the
   wider span.
@@ -32,7 +34,7 @@
   curve (default: the highest data temperature), with a "Curve to" box in the GUI's
   full-range fit group. It never cuts into the fitted window, and a value that is not a
   positive finite temperature is ignored with a warning.
-- Every low-T fit now reports its `fit_range`.
+- Every low-T fit, including the per-field ones, now reports its `fit_range`.
 
 ## 0.7.0 — 2026-09-25
 

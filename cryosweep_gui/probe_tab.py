@@ -66,6 +66,8 @@ class ProbeTab(QWidget):
             self.panel.refit_requested.connect(self.request_analyze_and_render)
         if hasattr(self.panel, "param_edited"):
             self.panel.param_edited.connect(self._on_param_edited)
+        if hasattr(self.panel, "curve_span_edited"):
+            self.panel.curve_span_edited.connect(self._on_curve_span_edited)
 
         # ── 3-zone splitter: [left-inputs | center-output | right-controls] ──
         left_widget = QWidget()
@@ -205,6 +207,12 @@ class ProbeTab(QWidget):
             return
         x, y, label = curve
         self.output.update_manual_curve(("hc_full_cp_t", "cp_vs_t"), x, y, label)
+
+    def _on_curve_span_edited(self):
+        """A new "Curve to" limit re-spans a manual curve already on screen. It draws none
+        by itself: until a parameter is edited, the fitted curve is the only one."""
+        if self.output.has_manual_curves():
+            self._on_param_edited()
 
     def _set_busy(self, busy):
         self.analyze_btn.setEnabled(not busy)

@@ -92,7 +92,8 @@ never substitute a plausible one.
   confined to that window: `data.full_fit.t_grid`/`cp_fit` (Debye-Einstein) run from 0 K to
   the highest data temperature, or to `heatcapacity.full_curve_max_k` if set, and each
   `data.lowt_fits[].t2_grid`/`cp_over_t_fit` (x = T², y = Cp/T) runs from T² = 0 to the top
-  of the low-T window. **Read `fit_range` (K) and the parallel `in_fit_window` list to know
+  of the low-T window; so do the per-field low-T fits in `data.field_groups[].fits[]`, which
+  carry the same keys. **Read `fit_range` (K) and the parallel `in_fit_window` list to know
   which points were fitted** — outside them the curve is the model extrapolated, and on real
   data it can sit far from the measurement. `<stem>.model_curves.csv` has the same rows with
   an `in_fit_window` column (1/0). The Schottky and transition curves' `t_grid` still cover

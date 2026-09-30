@@ -228,3 +228,46 @@ def test_a_user_y_limit_still_wins(kind):
     ax = render_kind([_narrow_example()], kind, PlotSpec(ymin=0.0, ymax=200.0),
                      GlobalStyle()).axes[0]
     assert ax.get_ylim() == pytest.approx((0.0, 200.0))
+
+
+def _render(kind, spec):
+    import matplotlib
+    matplotlib.use("Agg")
+    from cryosweep_core.plotting.render import render_kind
+    from cryosweep_core.plotting.spec import GlobalStyle
+    r = _narrow_example()
+    return r, render_kind([r], kind, spec, GlobalStyle()).axes[0]
+
+
+@pytest.mark.parametrize("kind", ["cp_vs_t", "hc_full_cp_t"])
+def test_a_log_axis_is_framed_on_the_data_too(kind):
+    """On log y the curve's approach to Cp(0) = 0 would add empty decades below the data,
+    and its overshoot would lift the top; neither may move the frame."""
+    from cryosweep_core.plotting.spec import PlotSpec
+    r, ax = _render(kind, PlotSpec(yscale="log"))
+    cp = np.asarray(r.data["full_cp"], float)
+    cp = cp[np.isfinite(cp) & (cp > 0)]
+    lo, hi = ax.get_ylim()
+    assert cp.min() / 2 < lo <= cp.min()
+    assert cp.max() <= hi < 2 * cp.max()
+
+
+@pytest.mark.parametrize("kind", ["cp_vs_t", "hc_full_cp_t"])
+def test_one_user_limit_wins_and_the_other_end_stays_on_the_data(kind):
+    from cryosweep_core.plotting.spec import PlotSpec
+    r, ax = _render(kind, PlotSpec(ymin=10.0))
+    ymax_data = max(r.data["full_cp"])
+    lo, hi = ax.get_ylim()
+    assert lo == pytest.approx(10.0) and ymax_data <= hi < 1.15 * ymax_data
+    _, ax = _render(kind, PlotSpec(ymax=50.0))
+    lo, hi = ax.get_ylim()
+    assert hi == pytest.approx(50.0) and lo < 0.0 < hi      # bottom still on the data (Cp ~ 0)
+
+
+@pytest.mark.parametrize("bad", [float("inf"), float("nan"), 0.0, -5.0])
+def test_fit_full_range_itself_ignores_an_unusable_curve_limit(bad):
+    """The analyzer already screens the limit; the fitting function must not rely on it."""
+    out, T = _full(curve_max_k=bad)
+    assert out["t_grid"][0] == 0.0
+    assert out["t_grid"][-1] == pytest.approx(T.max())
+    assert np.all(np.isfinite(out["cp_fit"]))

@@ -120,6 +120,17 @@ def test_manual_model_curve_ignores_an_unusable_limit(qapp):
         assert max(x) == pytest.approx(300.0) and np.all(np.isfinite(y)), bad
 
 
+def test_manual_model_curve_never_stops_inside_the_fitted_window(qapp):
+    """Same rule as the fitted curve: a limit below the window top is raised to it, so the
+    manual model and the fit are always drawn over the same span."""
+    p = HCInputPanel()
+    p.full_curve_max.setText("100")
+    r = _result_with_fit(t_grid=np.linspace(0.0, 300.0, 50))
+    r.data["full_fit"]["fit_range"] = [20.0, 150.0]
+    x, _, _ = p.manual_model_curve(r)
+    assert max(x) == pytest.approx(150.0)
+
+
 def test_curve_limit_box_reaches_the_config_and_round_trips(qapp):
     p = HCInputPanel()
     assert "full_curve_max_k" not in p.build_overrides()["heatcapacity"]   # empty = default
@@ -253,3 +264,19 @@ def test_overlay_entries_each_store_their_own_fit(qapp):
         ff = e.result.data["full_fit"]
         assert ff["ok"] is True
         assert e.state["val"]["theta_D"] == pytest.approx(ff["params"]["theta_D"], abs=5e-6)
+
+
+def test_editing_the_curve_limit_redraws_a_shown_manual_curve(qapp):
+    win, tab = _hc_tab(qapp)
+    tab.analyze_and_render()
+    card = _card(tab, "hc_full_cp_t")
+    tab.panel.full_curve_max.setText("400")
+    tab.panel.full_curve_max.editingFinished.emit()
+    assert not _lines_by_gid(card, "manual_model"), "no manual curve until a parameter is edited"
+    tab.panel._val["theta_D"].setValue(300.0)
+    (ln,) = _lines_by_gid(card, "manual_model")
+    assert max(ln.get_xdata()) == pytest.approx(400.0)
+    tab.panel.full_curve_max.setText("350")
+    tab.panel.full_curve_max.editingFinished.emit()
+    (ln,) = _lines_by_gid(card, "manual_model")
+    assert max(ln.get_xdata()) == pytest.approx(350.0)
