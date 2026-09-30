@@ -13,6 +13,11 @@
   cover the **drawn** span; `fit_range` and the new parallel `in_fit_window` list say which
   part was fitted. No fitted parameter changes. The Schottky and transition curves are
   unchanged and still cover their fit window.
+- **`cp_vs_t` and `hc_full_cp_t` frame their y-axis on the data**, not on the fit curve. A fit
+  to a narrow window carried out to the highest data temperature can overshoot the data (on
+  the public example a 20–60 K fit reaches ~147 J/mol·K at 300 K against ~76 measured); the
+  curve now runs off the top of the panel instead of squeezing the measurement into half of
+  it. A y-limit set by the user still takes precedence.
 - **`<stem>.model_curves.csv` gains an `in_fit_window` column** (appended; 1 on rows the fit
   was judged on, 0 on rows where the model is carried outside it) and its rows cover the
   wider span.

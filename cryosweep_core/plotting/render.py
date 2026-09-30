@@ -2121,6 +2121,28 @@ def render_cp_over_t(results, spec=None, style=None, overlay=None):
     _finish(ax, kind, spec, style, "T² (K²)", "Cp/T (J/mol·K²)")
     return fig
 
+def _frame_y_on_data(ax, kind, spec):
+    """Frame the y-axis on the measured data (and reference lines), not on fit curves.
+
+    A heat-capacity curve is drawn beyond its fit window (0 K to the highest data T), and a
+    fit to a narrow window can overshoot the data there by 2x — plain autoscale would then
+    squeeze the measurement into half the panel. Owner call 2026-09-30: keep the axis on the
+    data and let the curve run off the frame; the user can widen the axis when needed. Call
+    BEFORE _finish, so a user ymin/ymax (applied there) and the robust view still win."""
+    if spec.ymin is not None or spec.ymax is not None:
+        return
+    if (spec.yscale if spec.yscale is not None else kind.default_yscale) != "linear":
+        return
+    dy = [np.asarray(ln.get_ydata(), float) for ln in ax.lines
+          if ln.get_gid() is None or ln.get_gid() == "refline"]
+    dy = np.concatenate(dy) if dy else np.array([])
+    dy = dy[np.isfinite(dy)]
+    if dy.size:
+        dlo, dhi = float(dy.min()), float(dy.max())
+        pad = _ROBUST_PAD * (dhi - dlo) if dhi > dlo else max(abs(dhi), 1e-12) * 0.1
+        ax.set_ylim(dlo - pad, dhi + pad)
+
+
 def render_cp_vs_t(results, spec=None, style=None, overlay=None):
     results, kind, spec, style, fig, ax = _setup(results, "cp_vs_t", spec, style)
     _plot_data(ax, results, kind, spec, style, overlay)
@@ -2135,6 +2157,7 @@ def render_cp_vs_t(results, spec=None, style=None, overlay=None):
                 r2 = ff.get("r2")
                 label = f"Debye-Einstein (R²={r2:.3f})" if r2 is not None else "Debye-Einstein"
                 _fit_plot(ax, x, y, style, label=label)
+        _frame_y_on_data(ax, kind, spec)
     _finish(ax, kind, spec, style, "Temperature (K)", "Cp (J/mol·K)")
     return fig
 
@@ -2236,6 +2259,7 @@ def render_hc_full_cp_t(results, spec=None, style=None, overlay=None):
                     va="top", ha="left", fontsize="small", gid="refline-label:h")
 
     _hc_iax = _add_lowt_inset(ax, d0, spec, style)
+    _frame_y_on_data(ax, kind, spec)
     _finish(ax, kind, spec, style, "Temperature (K)", "Cp (J/mol·K)")
     # loc='best' cannot see the inset (a separate Axes); at 12pt+ the legend lands under
     # it. Conditional on real overlap, so the 9 pt gallery render is untouched.

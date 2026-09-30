@@ -185,3 +185,46 @@ def test_model_curves_csv_spans_the_drawn_curve_and_marks_the_fitted_rows(tmp_pa
         lt = [(float(x), int(w)) for m, x, y, w in rows if m == f"lowt:{key}"]
         assert lt[0] == (0.0, 0) and lt[-1][1] == 1
         assert min(x for x, w in lt if w) == pytest.approx(r.data["temperature"][0] ** 2)
+
+
+# ---------------------------------------------------------------- figures: axis stays on data
+
+def _narrow_example():
+    import pathlib
+    from cryosweep_core.analyzers.dispatch import analyze_file
+    from cryosweep_core.io.loader import load_dat
+    from cryosweep_core.registry import build_default_registry
+    cfg = RunConfig.load()
+    cfg.heatcapacity.full_fit_min_k = 20.0
+    cfg.heatcapacity.full_fit_max_k = 60.0
+    ex = pathlib.Path(__file__).parents[2] / "examples" / "heat_capacity.dat"
+    return analyze_file(load_dat(str(ex)), cfg, build_default_registry())
+
+
+@pytest.mark.parametrize("kind", ["cp_vs_t", "hc_full_cp_t"])
+def test_an_overshooting_curve_does_not_stretch_the_axis(kind):
+    """A 20-60 K fit carried to 300 K reaches ~147 J/mol·K against ~76 measured. The axis
+    stays framed on the data; the curve runs off the top of the panel (owner call)."""
+    import matplotlib
+    matplotlib.use("Agg")
+    from cryosweep_core.plotting.render import render_kind
+    from cryosweep_core.plotting.spec import PlotSpec, GlobalStyle
+    r = _narrow_example()
+    ymax_data = max(r.data["full_cp"])
+    assert max(r.data["full_fit"]["cp_fit"]) > 1.5 * ymax_data     # the premise: it overshoots
+    ax = render_kind([r], kind, PlotSpec(), GlobalStyle()).axes[0]
+    lo, hi = ax.get_ylim()
+    assert ymax_data <= hi < 1.15 * ymax_data
+    fit = [ln for ln in ax.lines if ln.get_gid() == "fit"]
+    assert fit and max(fit[0].get_xdata()) == pytest.approx(max(r.data["full_temperature"]))
+
+
+@pytest.mark.parametrize("kind", ["cp_vs_t", "hc_full_cp_t"])
+def test_a_user_y_limit_still_wins(kind):
+    import matplotlib
+    matplotlib.use("Agg")
+    from cryosweep_core.plotting.render import render_kind
+    from cryosweep_core.plotting.spec import PlotSpec, GlobalStyle
+    ax = render_kind([_narrow_example()], kind, PlotSpec(ymin=0.0, ymax=200.0),
+                     GlobalStyle()).axes[0]
+    assert ax.get_ylim() == pytest.approx((0.0, 200.0))
