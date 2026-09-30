@@ -82,3 +82,18 @@ def test_agent_recovery_from_gated(tmp_path):
     r2 = _run("analyze", str(p), flag, "200.0")
     assert r2.returncode == 0
     assert abs(json.loads(r2.stdout)["data"]["fit"]["params"]["C"] - 0.5) < 0.02
+
+
+def test_skill_names_every_hall_carrier_field():
+    """Derived from a real result, not a list: an agent parsing Hall output can only use a
+    field the guide names. 0.7.0 shipped `carrier_sign_confidence` and the exact
+    `carrier_n_ci_low`/`carrier_n_ci_high` interval with none of the three in the guide."""
+    r = _run("hall", "examples/hall_field_sweeps.dat", "--hall-channel", "1",
+             "--thickness", "0.5", "--long-channel", "2")
+    assert r.returncode == 0, r.stderr
+    point = json.loads(r.stdout)["data"]["points"][0]
+    fields = sorted(k for k in point if k.startswith("carrier_"))
+    assert {"carrier_sign_confidence", "carrier_n_ci_low", "carrier_n_ci_high"} <= set(fields)
+    t = SKILL.read_text()
+    for f in fields:
+        assert "`%s`" % f in t, "SKILL.md does not name Hall output field %r" % f

@@ -4,7 +4,17 @@ on:
   push:
     branches: [main, master]
   pull_request:
+    # `edited` so that pasting the verification block into the description re-runs the check.
+    types: [opened, synchronize, reopened, edited]
   workflow_dispatch:
+
+# Each description edit starts a run; a newer one supersedes the last, so an older
+# description can never finish after it. Every other run gets a group of its own: GitHub
+# drops a PENDING run when a newer one joins its group, so a shared group for pushes to
+# main would lose runs even without cancel-in-progress.
+concurrency:
+  group: tests-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   pytest:
@@ -55,6 +65,22 @@ jobs:
       # not exist on main (real-Hall-file tests plus the parametrised canvas-size headroom set).
       - name: Suite completeness
         run: python tools/suite_report.py pytest-results.xml --max-skipped 231 --min-total 2000 --verify-block
+
+      # The block above is printed by CI, in a checkout with no measurement files. The one a
+      # contributor pastes is the only record of a run that had them, and asking for it
+      # without checking for it made it optional in practice. The description reaches the
+      # script through the environment, never interpolated into the shell: it is text written
+      # by whoever opened the pull request. Dependabot cannot paste anything and changes only
+      # action pins, so its pull requests rest on this job's own run.
+      - name: Verification block names this commit
+        if: github.event_name == 'pull_request' && github.event.pull_request.user.login != 'dependabot[bot]'
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: >
+          python tools/check_pr_verification.py --body-env PR_BODY
+          --head-sha "$HEAD_SHA" --head-ref "$HEAD_REF" --junit pytest-results.xml
 
       - name: CLI smoke
         run: |
