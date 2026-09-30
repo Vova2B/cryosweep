@@ -9,10 +9,12 @@ on:
   workflow_dispatch:
 
 # Each description edit starts a run; a newer one supersedes the last, so an older
-# description can never finish after it. Pushes to main are never cancelled.
+# description can never finish after it. Every other run gets a group of its own: GitHub
+# drops a PENDING run when a newer one joins its group, so a shared group for pushes to
+# main would lose runs even without cancel-in-progress.
 concurrency:
-  group: tests-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: tests-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   pytest:
