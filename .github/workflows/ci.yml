@@ -8,6 +8,12 @@ on:
     types: [opened, synchronize, reopened, edited]
   workflow_dispatch:
 
+# Each description edit starts a run; a newer one supersedes the last, so an older
+# description can never finish after it. Pushes to main are never cancelled.
+concurrency:
+  group: tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   pytest:
     runs-on: ubuntu-latest

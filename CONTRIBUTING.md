@@ -81,8 +81,10 @@ line into a failure instead of a note.
 **CI checks the block** (`tools/check_pr_verification.py`). It must name the newest commit
 on the pull request — so commit first, then run, then paste, and paste again after any
 later push — from a clean working tree, with nothing failed and no line removed, and its
-collected count must equal CI's own for the same change. Editing the description re-runs
-the check. A `release*` branch additionally needs the real-data line to say `RAN`, because
+collected count must equal CI's own for the same change. CI counts the tests on your branch
+merged into `main`, so once `main` has moved, merge it into your branch before you run.
+Editing the description re-runs the check; GitHub's "Re-run jobs" button does not help,
+because it replays the description as it was. A `release*` branch additionally needs the real-data line to say `RAN`, because
 CI has no measurement files and that block is the only record those tests ran.
 
 **Don't commit measurement data.** `*.dat` is gitignored except for the committed fixtures and

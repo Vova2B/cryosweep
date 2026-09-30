@@ -17,7 +17,9 @@
          python tools/suite_report.py pytest-results.xml --max-skipped 231 --min-total 2000 --verify-block
 
      CI fails until the block names the newest commit on this pull request, so paste a
-     fresh one after every later push. Editing this description re-runs the check. -->
+     fresh one after every later push. If main has moved, merge it into this branch
+     first: CI counts the tests on the merged result. Editing this description re-runs
+     the check ("Re-run jobs" replays the old description). -->
 
 ## Checklist
 
