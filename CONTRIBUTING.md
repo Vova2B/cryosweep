@@ -67,16 +67,26 @@ that cannot be trusted is more useful reported as untrustworthy than as a value.
 
 ```bash
 pytest --junitxml=pytest-results.xml
-python tools/suite_report.py pytest-results.xml --max-skipped 215 --min-total 2000 --verify-block
+python tools/suite_report.py pytest-results.xml --max-skipped 231 --min-total 2000 --verify-block
 ```
 
 and paste the emitted block into the PR description. It carries the commit, the exact
 suite counts, whether the real-data tests actually ran, and the junit digest — every line
 is re-derivable by re-running the same command, so the block is checkable, not testimony.
-In a public checkout the real-data line will say `NOT RUN — ~209 local-only skips`; that
+In a public checkout the real-data line will say `NOT RUN — ~220 local-only skips`; that
 is the expected shape (those tests need measurement files that are not distributed).
 Maintainers running in the data-bearing tree add `--require-real-data`, which turns that
 line into a failure instead of a note.
+
+**CI checks the block** (`tools/check_pr_verification.py`). It must name the newest commit
+on the pull request — so commit first, then run, then paste, and paste again after any
+later push — from a clean working tree, with nothing failed and no line removed, and its
+collected count must equal CI's own for the same change. CI counts the tests on your branch
+merged into `main`, so once `main` has moved, merge it into your branch before you run.
+To re-run the check, edit the description; GitHub's "Re-run jobs" button replays the
+description as it was, so it keeps failing. A `release*` branch additionally needs the
+real-data line to say `RAN`, because CI has no measurement files and that block is the only
+record those tests ran.
 
 **Don't commit measurement data.** `*.dat` is gitignored except for the committed fixtures and
 examples. If you add an example derived from a real measurement, it must go through the
