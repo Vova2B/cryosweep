@@ -138,6 +138,22 @@ deliberate, not a parse error; the flags column carries the machine-readable rea
   `withheld` field — they are never re-published as measurements. R_H and its own σ are
   NEVER withheld. Once every point in a result declines, the `carrier_concentration`
   capability itself goes `applicable: false` — do not infer it ran because R_H is present.
+- **Hall carrier uncertainty** — every published point carries, beside `carrier_n` and
+  `carrier_type`:
+  - `carrier_sign_confidence` = Φ(|R_H|/σ), the probability that the reported
+    `carrier_type` has the right sign. It runs from 0.84 (σ just under |R_H|) to 1.0; a
+    result whose published points mostly sit below 0.95 also carries a run-level warning.
+  - `carrier_n_ci_low` / `carrier_n_ci_high` (1/m³) = 1/(e(|R_H| ± σ)), the exact ±1σ
+    interval on n. It is asymmetric — the upper bound diverges as σ → |R_H|.
+  - `carrier_n_sigma` and `carrier_n_sigma_instrument` (1/m³) are the *linearized*
+    symmetric propagation from the residual σ and the instrument σ. They understate the
+    upper excursion by 1/(1 − (σ/|R_H|)²); once that exceeds 10 % the point's
+    `derived_flags` carries `carrier_n_sigma_linearized`. **Quote the interval, not
+    `carrier_n ± carrier_n_sigma`, whenever that flag is set.**
+
+  The confidence and the interval use the same σ the decline rule judges by, and all of
+  these are `null` on a declined point. In `<stem>.points.csv` the columns are
+  `carrier_sign_confidence`, `carrier_n_ci_low (1/m^3)`, `carrier_n_ci_high (1/m^3)`.
 
 ## Window-sensitivity ladders — spread ≠ error bar
 
