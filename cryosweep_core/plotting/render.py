@@ -1675,17 +1675,39 @@ def _extrap_plot(ax, x, y, style, color, y_ref):
     (0.75x), half-alpha, the SAME color as its fit line, no legend entry, gid="fit-extrap"
     (excluded from the robust view and the legend-marker snapshots like gid="fit").
 
+    `x` runs TOWARD the fitted segment: its last sample is the one next to the fit (every
+    caller builds it that way).
+
     Insurance against pathological parameter sets (a modified-CW pole, a runaway power
-    law): points with |y| > 3*max|y_ref| (the fitted segment's own values) are dropped, so
-    an extrapolation can never blow up the axis — y-limits stay driven by the data and the
-    finite intercept the figure exists to show (gamma, rho0, -theta/C)."""
+    law): the line may not leave cap = 3*max|y_ref| (the fitted segment's own values), so an
+    extrapolation can never blow up the axis. Where it would, it is CUT AT THE CROSSING:
+      * only the run attached to the fitted segment is kept — samples beyond a blow-up lie
+        on the far side of a pole, and joining them to the near side would draw a straight
+        line through it;
+      * the cut end is the interpolated point where the line reaches the cap, clamped to
+        exactly +/-cap, so the line visibly runs off instead of stopping one sample short;
+      * no interpolation across a non-finite sample — there the kept run simply ends.
+    The number of samples cut is left on the artist as `_extrap_cut` (0 = untouched), so a
+    truncation is never silent to a caller or a test."""
     x = np.asarray(x, float); y = np.asarray(y, float)
     ref = np.asarray(y_ref, float)
     cap = 3.0 * float(np.nanmax(np.abs(ref[np.isfinite(ref)])))
-    m = np.isfinite(x) & np.isfinite(y) & (np.abs(y) <= cap)
+    ok = np.isfinite(x) & np.isfinite(y) & (np.abs(y) <= cap)
+    bad = np.flatnonzero(~ok)
+    start = int(bad[-1]) + 1 if bad.size else 0          # first sample of the attached run
+    xs, ys = x[start:], y[start:]
+    if start > 0 and xs.size:
+        xp, yp = x[start - 1], y[start - 1]              # the sample that left the cap
+        if np.isfinite(xp) and np.isfinite(yp) and yp != ys[0]:
+            edge = cap if yp > 0 else -cap
+            t = (edge - ys[0]) / (yp - ys[0])
+            xs = np.concatenate([[xs[0] + t * (xp - xs[0])], xs])
+            ys = np.concatenate([[edge], ys])
     kw = dict(lw=0.75 * style.line_width, ls=":", alpha=0.5, gid="fit-extrap",
               label="_nolegend_", color=color)
-    return ax.plot(x[m], y[m], **kw)[0]
+    ln = ax.plot(xs, ys, **kw)[0]
+    ln._extrap_cut = start
+    return ln
 
 
 # ---- VSM renderers ----
@@ -2099,6 +2121,40 @@ def render_cp_over_t(results, spec=None, style=None, overlay=None):
     _finish(ax, kind, spec, style, "T² (K²)", "Cp/T (J/mol·K²)")
     return fig
 
+def _frame_y_on_data(ax, kind, spec):
+    """Frame the y-axis on the measured data (and reference lines), not on fit curves.
+
+    A heat-capacity curve is drawn beyond its fit window (0 K to the highest data T), and a
+    fit to a narrow window can overshoot the data there by 2x — plain autoscale would then
+    squeeze the measurement into half the panel. Owner call 2026-09-30: keep the axis on the
+    data and let the curve run off the frame; the user can widen the axis when needed. Call
+    BEFORE _finish, so a user ymin/ymax (applied there) and the robust view still win; with
+    only one user limit, the other end is still framed on the data. Log y is framed the
+    same way, in decades: there the curve's approach to Cp(0) = 0 would otherwise add
+    empty decades below the data."""
+    if spec.ymin is not None and spec.ymax is not None:
+        return
+    log = (spec.yscale if spec.yscale is not None else kind.default_yscale) == "log"
+    dy = [np.asarray(ln.get_ydata(), float) for ln in ax.lines
+          if ln.get_gid() is None or ln.get_gid() == "refline"]
+    dy = np.concatenate(dy) if dy else np.array([])
+    dy = dy[np.isfinite(dy) & (dy > 0)] if log else dy[np.isfinite(dy)]
+    if not dy.size:
+        return
+    dlo, dhi = float(dy.min()), float(dy.max())
+    if log:
+        span = np.log10(dhi / dlo)
+        f = 10 ** (_ROBUST_PAD * span) if span > 0 else 10 ** 0.1
+        lo, hi = dlo / f, dhi * f
+    else:
+        pad = _ROBUST_PAD * (dhi - dlo) if dhi > dlo else max(abs(dhi), 1e-12) * 0.1
+        lo, hi = dlo - pad, dhi + pad
+    # a lone user limit beyond the data's far end cannot be framed against: leave it alone
+    if (spec.ymin is not None and spec.ymin >= hi) or (spec.ymax is not None and spec.ymax <= lo):
+        return
+    ax.set_ylim(lo, hi)
+
+
 def render_cp_vs_t(results, spec=None, style=None, overlay=None):
     results, kind, spec, style, fig, ax = _setup(results, "cp_vs_t", spec, style)
     _plot_data(ax, results, kind, spec, style, overlay)
@@ -2113,6 +2169,7 @@ def render_cp_vs_t(results, spec=None, style=None, overlay=None):
                 r2 = ff.get("r2")
                 label = f"Debye-Einstein (R²={r2:.3f})" if r2 is not None else "Debye-Einstein"
                 _fit_plot(ax, x, y, style, label=label)
+        _frame_y_on_data(ax, kind, spec)
     _finish(ax, kind, spec, style, "Temperature (K)", "Cp (J/mol·K)")
     return fig
 
@@ -2214,6 +2271,7 @@ def render_hc_full_cp_t(results, spec=None, style=None, overlay=None):
                     va="top", ha="left", fontsize="small", gid="refline-label:h")
 
     _hc_iax = _add_lowt_inset(ax, d0, spec, style)
+    _frame_y_on_data(ax, kind, spec)
     _finish(ax, kind, spec, style, "Temperature (K)", "Cp (J/mol·K)")
     # loc='best' cannot see the inset (a separate Axes); at 12pt+ the legend lands under
     # it. Conditional on real overlap, so the 9 pt gallery render is untouched.

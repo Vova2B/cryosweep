@@ -266,8 +266,41 @@ _FULL_UNITS = {"theta_D": "K", "n": "", "gamma": "J/(mol*K^2)", "theta_E1": "K",
                "theta_E2": "K", "m1": "", "m2": ""}
 
 
-def fit_full_range(T, cp, *, init, fixed, fit_min_k=None, fit_max_k=None, seed=None):
-    """Config-driven full-range Debye-Einstein fit. Returns a plain dict (NOT FitResult)."""
+#: Samples across the drawn Debye-Einstein curve / a low-T curve (before the exact window
+#: edges are inserted).
+_FULL_CURVE_POINTS = 400
+_LOWT_CURVE_POINTS = 240
+
+
+def _full_curve(params, fit_lo, fit_hi, top):
+    """The drawn Debye-Einstein curve: T = 0 .. `top`, NOT the fitted window.
+
+    The fit is judged on [fit_lo, fit_hi]; what it implies outside — the approach to zero, how
+    it sits against data above the window — is only visible if the curve is evaluated there.
+    Returns (t_grid, cp_fit, in_fit_window), strictly ascending, with both window edges as
+    exact grid points so the flag flips AT the bound rather than a sample beside it.
+    `debye_heat_capacity` raises for T <= 0, so Cp(0) = 0 is written, not evaluated. A
+    non-finite model value ends the curve there (it must never reach JSON/CSV)."""
+    top = max(float(top), float(fit_hi))
+    g = np.unique(np.concatenate([np.linspace(0.0, top, _FULL_CURVE_POINTS),
+                                  [float(fit_lo), float(fit_hi)]]))
+    y = np.zeros_like(g)
+    y[1:] = specific_heat_full(g[1:], **{k: params[k] for k in _FULL_PARAMS})
+    bad = np.flatnonzero(~np.isfinite(y))
+    if bad.size:
+        g, y = g[:bad[0]], y[:bad[0]]
+    inside = (g >= fit_lo) & (g <= fit_hi)
+    return g.tolist(), y.tolist(), [bool(v) for v in inside]
+
+
+def fit_full_range(T, cp, *, init, fixed, fit_min_k=None, fit_max_k=None, seed=None,
+                   curve_max_k=None):
+    """Config-driven full-range Debye-Einstein fit. Returns a plain dict (NOT FitResult).
+
+    `fit_min_k`/`fit_max_k` bound the points that are FITTED. The returned curve
+    (`t_grid`/`cp_fit`) runs from 0 K to `curve_max_k`, default the highest data temperature
+    passed in, and never stops short of the fitted window; `fit_range` and the parallel
+    `in_fit_window` list say which part was fitted."""
     base = {k: float(init[k]) for k in _FULL_PARAMS}
     fixed = {k: bool(fixed.get(k, False)) for k in _FULL_PARAMS}
     if seed:
@@ -276,13 +309,14 @@ def fit_full_range(T, cp, *, init, fixed, fit_min_k=None, fit_max_k=None, seed=N
                 base[k] = float(seed[k])
     T = np.asarray(T, float); cp = np.asarray(cp, float)
     m = np.isfinite(T) & np.isfinite(cp) & (T > 0)
+    data_t_max = float(T[m].max()) if m.any() else None      # BEFORE the window narrows it
     if fit_min_k is not None: m &= T >= fit_min_k
     if fit_max_k is not None: m &= T <= fit_max_k
     T, cp = T[m], cp[m]
     free = [k for k in _FULL_PARAMS if not fixed[k]]
     fail = {"ok": False, "reason": "", "params": {}, "fixed": fixed, "r2": None,
             "n_points": int(T.size), "fit_range": [], "units": dict(_FULL_UNITS),
-            "t_grid": [], "cp_fit": []}
+            "t_grid": [], "cp_fit": [], "in_fit_window": []}
     if T.size < len(free) + 2:
         fail["reason"] = "too few points for the free-parameter count"; return fail
     if not free:
@@ -309,12 +343,13 @@ def fit_full_range(T, cp, *, init, fixed, fit_min_k=None, fit_max_k=None, seed=N
     yhat = specific_heat_full(T, **{k: p[k] for k in _FULL_PARAMS})
     ss_res = float(np.sum((cp - yhat) ** 2)); ss_tot = float(np.sum((cp - cp.mean()) ** 2))
     r2 = 1.0 - ss_res / ss_tot if ss_tot else 0.0
-    grid = np.linspace(float(T.min()), float(T.max()), 300)
+    lo_k, hi_k = float(T.min()), float(T.max())
+    usable = curve_max_k is not None and np.isfinite(curve_max_k) and curve_max_k > 0
+    grid, curve, inside = _full_curve(p, lo_k, hi_k, curve_max_k if usable else data_t_max)
     return {"ok": True, "reason": "", "params": p, "fixed": fixed, "r2": r2,
-            "n_points": int(T.size), "fit_range": [float(T.min()), float(T.max())],
+            "n_points": int(T.size), "fit_range": [lo_k, hi_k],
             "units": dict(_FULL_UNITS),
-            "t_grid": grid.tolist(),
-            "cp_fit": specific_heat_full(grid, **{k: p[k] for k in _FULL_PARAMS}).tolist()}
+            "t_grid": grid, "cp_fit": curve, "in_fit_window": inside}
 
 
 def debye_temp_from_beta(beta, n_atoms=1):
@@ -446,7 +481,7 @@ def _failed(spec):
     return {"key": spec["key"], "label": spec["label"], "ok": False, "r2": float("-inf"),
             "adj_r2": float("-inf"), "params": {}, "theta_D": float("nan"),
             "n_params": len(spec["param_names"]), "t2_grid": [], "cp_over_t_fit": [],
-            "fitresult": None}
+            "in_fit_window": [], "fit_range": [], "fitresult": None}
 
 def _information_criteria(rss, n, k):
     """AIC/BIC/AICc for least squares. rss clamped to avoid log(0). AICc None if n-k-2<=0."""
@@ -503,12 +538,21 @@ def fit_lowt_models(T, cp, n_atoms=1.0, parsimony_r2=0.99, extended=False,
 
     When extended=True each dict in fits[] additionally carries:
       sigma, aic, bic, aicc, max_abs_corr.
-    When extended=False the return is byte-identical to the pre-Task-2 result."""
+    When extended=False those keys are absent.
+
+    The points passed in ARE the fit window. Each curve (`t2_grid`/`cp_over_t_fit`) runs from
+    T^2 = 0 — where Cp/T is the model's gamma — to the top of that window, never above it: a
+    gamma + beta*T^2 line carried far above the window describes nothing. `fit_range` (K) and
+    the parallel `in_fit_window` list say which part was fitted."""
     T = np.asarray(T, float); cp = np.asarray(cp, float)
     m = np.isfinite(T) & np.isfinite(cp) & (T > 0)
     T, cp = T[m], cp[m]
     x = T ** 2; y = cp / T; n = int(x.size)
-    grid = np.linspace(float(x.min()), float(x.max()), 200) if n else np.array([])
+    # 0 .. window top, with the window's lower edge as an exact grid point (the SAME float as
+    # x.min(), so the flag flips at the bound and nothing downstream re-squares a temperature)
+    grid = (np.unique(np.concatenate([np.linspace(0.0, float(x.max()), _LOWT_CURVE_POINTS),
+                                      [float(x.min())]])) if n else np.array([]))
+    inside = grid >= float(x.min()) if n else np.array([], bool)
     fits = []
     for spec in _LOWT_MODELS:
         p = len(spec["param_names"])
@@ -568,6 +612,8 @@ def fit_lowt_models(T, cp, n_atoms=1.0, parsimony_r2=0.99, extended=False,
                        "aic": aic, "bic": bic, "aicc": aicc,
                        "max_abs_corr": (_fin(max_corr) if max_corr is not None else None),
                        "identifiable": bool(fit_ok), "identifiability": ident}
+            curve = np.asarray(curve, float)
+            fin = np.isfinite(curve)                 # non-finite must never reach JSON/CSV
             fr_params = dict(params); fr_params["theta_D"] = theta_pub
             # gamma < 0 is unphysical (negative Sommerfeld coefficient) but it IS the
             # measured value: flag it machine-readably rather than blanking it, so every
@@ -579,9 +625,11 @@ def fit_lowt_models(T, cp, n_atoms=1.0, parsimony_r2=0.99, extended=False,
                                   quality_flags=qflags)
             fits.append({"key": spec["key"], "label": spec["label"], "ok": True, "r2": r2,
                          "adj_r2": _adj_r2(r2, n, p), "params": fr_params, "theta_D": theta_pub,
-                         "n_params": p, "t2_grid": grid.tolist(),
-                         "cp_over_t_fit": np.asarray(curve, float).tolist(), "fitresult": fitresult,
-                         **ext})
+                         "n_params": p, "t2_grid": grid[fin].tolist(),
+                         "cp_over_t_fit": curve[fin].tolist(),
+                         "in_fit_window": [bool(v) for v in inside[fin]],
+                         "fit_range": [float(T.min()), float(T.max())],
+                         "fitresult": fitresult, **ext})
         except Exception:
             fits.append(_failed(spec))
     chosen = next((f for f in fits if f["ok"] and f["r2"] >= parsimony_r2), None)
@@ -590,7 +638,8 @@ def fit_lowt_models(T, cp, n_atoms=1.0, parsimony_r2=0.99, extended=False,
         chosen = max(ok, key=lambda f: f["adj_r2"]) if ok else None
     _extra = ("sigma", "aic", "bic", "aicc", "max_abs_corr", "identifiable", "identifiability")
     public = [{**{k: f[k] for k in ("key", "label", "ok", "r2", "adj_r2", "params", "theta_D",
-                                    "n_params", "t2_grid", "cp_over_t_fit")},
+                                    "n_params", "t2_grid", "cp_over_t_fit",
+                                    "in_fit_window", "fit_range")},
                **{k: f[k] for k in _extra if k in f}} for f in fits]
     return {"fits": public, "chosen": (chosen["fitresult"] if chosen else None),
             "chosen_key": (chosen["key"] if chosen else None)}

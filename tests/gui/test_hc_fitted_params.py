@@ -84,7 +84,8 @@ def test_manual_model_curve_is_model_at_box_values(qapp):
     p._val["theta_D"].setValue(300.0)                     # hand-set, differs from the fit
     x, y, label = p.manual_model_curve(r)
     params = {k: p._val[k].value() for k in _FULL_KEYS}
-    np.testing.assert_allclose(y, specific_heat_full(np.asarray(x), **params))
+    assert x[0] == 0.0 and y[0] == 0.0                    # same span as the fitted curve
+    np.testing.assert_allclose(y[1:], specific_heat_full(np.asarray(x[1:]), **params))
     assert "manual" in label and "fit" not in label.lower()
 
 
@@ -94,8 +95,49 @@ def test_manual_model_curve_without_accepted_fit_uses_data_range(qapp):
                               "full_fit": {"ok": False, "t_grid": []},
                               "full_temperature": [2.0, 150.0, 300.0]})
     x, y, label = p.manual_model_curve(r)
-    assert min(x) >= 2.0 and max(x) == pytest.approx(300.0)
+    assert min(x) == 0.0 and max(x) == pytest.approx(300.0)
     assert len(x) >= 50
+
+
+def test_manual_model_curve_follows_the_curve_limit_box(qapp):
+    """The hand-set model is drawn over the span the fitted curve uses, including when no
+    fit was accepted — which is when the manual curve matters most."""
+    p = HCInputPanel()
+    p.full_curve_max.setText("400")
+    for r in (_result_with_fit(t_grid=np.linspace(2.0, 300.0, 50)),
+              SimpleNamespace(data={"probe": "heatcapacity",
+                                    "full_fit": {"ok": False, "t_grid": []},
+                                    "full_temperature": [2.0, 150.0, 300.0]})):
+        x, y, _ = p.manual_model_curve(r)
+        assert min(x) == 0.0 and max(x) == pytest.approx(400.0)
+
+
+def test_manual_model_curve_ignores_an_unusable_limit(qapp):
+    p = HCInputPanel()
+    for bad in ("inf", "-5", "0", "abc"):
+        p.full_curve_max.setText(bad)
+        x, y, _ = p.manual_model_curve(_result_with_fit(t_grid=np.linspace(2.0, 300.0, 50)))
+        assert max(x) == pytest.approx(300.0) and np.all(np.isfinite(y)), bad
+
+
+def test_manual_model_curve_never_stops_inside_the_fitted_window(qapp):
+    """Same rule as the fitted curve: a limit below the window top is raised to it, so the
+    manual model and the fit are always drawn over the same span."""
+    p = HCInputPanel()
+    p.full_curve_max.setText("100")
+    r = _result_with_fit(t_grid=np.linspace(0.0, 300.0, 50))
+    r.data["full_fit"]["fit_range"] = [20.0, 150.0]
+    x, _, _ = p.manual_model_curve(r)
+    assert max(x) == pytest.approx(150.0)
+
+
+def test_curve_limit_box_reaches_the_config_and_round_trips(qapp):
+    p = HCInputPanel()
+    assert "full_curve_max_k" not in p.build_overrides()["heatcapacity"]   # empty = default
+    p.full_curve_max.setText("350")
+    assert p.build_overrides()["heatcapacity"]["full_curve_max_k"] == 350.0
+    q = HCInputPanel(); q.set_state(p.get_state())
+    assert q.full_curve_max.text() == "350"
 
 
 def test_manual_model_curve_declines_on_invalid_params(qapp):
@@ -166,8 +208,9 @@ def test_edit_draws_manual_curve_and_leaves_fit_untouched(qapp):
     assert ln.get_label() == "model (manual)"
     assert ln.get_linestyle() == "--"
     params = {k: tab.panel._val[k].value() for k in _FULL_KEYS}
-    np.testing.assert_allclose(ln.get_ydata(),
-                               specific_heat_full(np.asarray(ln.get_xdata(), float), **params))
+    mx, my = np.asarray(ln.get_xdata(), float), np.asarray(ln.get_ydata(), float)
+    assert mx[0] == 0.0 and my[0] == 0.0                  # the curve starts at 0 K
+    np.testing.assert_allclose(my[1:], specific_heat_full(mx[1:], **params))
     assert len(_lines_by_gid(card, "fit")) == n_fit_before   # fitted curve untouched
     legend = card.figure.axes[0].get_legend()
     assert legend is not None
@@ -221,3 +264,19 @@ def test_overlay_entries_each_store_their_own_fit(qapp):
         ff = e.result.data["full_fit"]
         assert ff["ok"] is True
         assert e.state["val"]["theta_D"] == pytest.approx(ff["params"]["theta_D"], abs=5e-6)
+
+
+def test_editing_the_curve_limit_redraws_a_shown_manual_curve(qapp):
+    win, tab = _hc_tab(qapp)
+    tab.analyze_and_render()
+    card = _card(tab, "hc_full_cp_t")
+    tab.panel.full_curve_max.setText("400")
+    tab.panel.full_curve_max.editingFinished.emit()
+    assert not _lines_by_gid(card, "manual_model"), "no manual curve until a parameter is edited"
+    tab.panel._val["theta_D"].setValue(300.0)
+    (ln,) = _lines_by_gid(card, "manual_model")
+    assert max(ln.get_xdata()) == pytest.approx(400.0)
+    tab.panel.full_curve_max.setText("350")
+    tab.panel.full_curve_max.editingFinished.emit()
+    (ln,) = _lines_by_gid(card, "manual_model")
+    assert max(ln.get_xdata()) == pytest.approx(350.0)

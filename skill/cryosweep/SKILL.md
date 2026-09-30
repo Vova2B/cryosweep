@@ -86,6 +86,18 @@ never substitute a plausible one.
   `transitions_enabled`, fit windows, `entropy_*`, `full_init`/`full_fixed`) and to
   `quality.exclude_outliers`; explicit flags override the file per key.
   E.g. `{"heatcapacity": {"schottky_enabled": true}}`.
+- **Heat-capacity fit windows vs the curve** (config only, no flags):
+  `heatcapacity.lowt_fit_min_k` / `lowt_fit_max_k` (default ≤ 10 K) and
+  `full_fit_min_k` / `full_fit_max_k` bound the points that are **fitted**. The curve is not
+  confined to that window: `data.full_fit.t_grid`/`cp_fit` (Debye-Einstein) run from 0 K to
+  the highest data temperature, or to `heatcapacity.full_curve_max_k` if set, and each
+  `data.lowt_fits[].t2_grid`/`cp_over_t_fit` (x = T², y = Cp/T) runs from T² = 0 to the top
+  of the low-T window; so do the per-field low-T fits in `data.field_groups[].fits[]`, which
+  carry the same keys. **Read `fit_range` (K) and the parallel `in_fit_window` list to know
+  which points were fitted** — outside them the curve is the model extrapolated, and on real
+  data it can sit far from the measurement. `<stem>.model_curves.csv` has the same rows with
+  an `in_fit_window` column (1/0). The Schottky and transition curves' `t_grid` still cover
+  their fit window only.
 - Plot: `--plot-kind KEY` (default: probe's default kind; keys from `cryosweep plots`), `--all` (every kind → `<prefix>_<kind>.<fmt>`; mutually exclusive with `--plot-kind`), `--format png,pdf,svg` (comma list, default png), `--dpi N`, `--tight`, `--style-file JSON`, `--layout-file JSON`
 - An unavailable plot kind is NOT an error: `data.plot` is null and a warning explains — check it.
 

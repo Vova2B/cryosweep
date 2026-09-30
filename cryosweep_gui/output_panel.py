@@ -780,6 +780,9 @@ class OutputPanel(QWidget):
                 refresh_legend(ax, self.style, card.entry.spec)
             card.canvas.draw_idle()
 
+    def has_manual_curves(self) -> bool:
+        return any(card.manual_line is not None for card in self._cards)
+
     def clear_manual_curves(self) -> None:
         from cryosweep_core.plotting.render import refresh_legend
         for card in self._cards:

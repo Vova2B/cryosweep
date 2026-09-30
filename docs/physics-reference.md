@@ -98,6 +98,19 @@ source; the physics is reproducible from the formulas here.
 
 **Debye temperature from β**: θ_D = (12π⁴nR / 5β)^(1/3)
 
+**Fit window vs drawn curve.** Each fit is judged only on the points inside its temperature
+window (low-T: `lowt_fit_min_k`..`lowt_fit_max_k`, default up to 10 K; Debye-Einstein:
+`full_fit_min_k`..`full_fit_max_k`, default all points). The curve is evaluated beyond it:
+the Debye-Einstein curve from T = 0 (where Cp = 0) to the highest data temperature or a set
+limit (`full_curve_max_k`), and each low-T curve from T² = 0 — where Cp/T = γ, the intercept
+the fit reports — to the top of its window. Low-T curves are not carried above the window: a
+γ + βT² form describes nothing far above it. Outside the window the curve is an
+extrapolation of the fitted model, drawn as the same line; the fit range is reported with
+every fit (`fit_range`) and each exported curve row carries `in_fit_window`. A
+Debye-Einstein fit to a narrow window can leave the data well outside it — on the public
+example a 20–60 K fit reaches 147 J/mol·K at 300 K against 76 measured — and showing that
+is the point: it is what the fitted parameters imply there.
+
 **Magnetic-entropy Rln match verdict** (uncertainty honesty, 2026-08-10): `suggest_rln` picks the nearest R·ln(2J+1) plateau to the magnetic-entropy saturation, but the suggestion carries a **verdict**, not just a label — `matched` iff |S_sat − Rln(2J+1)|/Rln(2J+1) ≤ 25 % (`rel_err`, `distance`, `tol` all reported). A negative saturation is unphysical and is always unmatched. The nearest ladder value is a nearest-neighbour, **not evidence of a doublet**: an always-on warning says so whenever a suggestion is present and unmatched. GUI reads `R ln3 (matched, 2% off)` vs `R ln2 (NOT matched — S_mag saturation is 113% away)`; the entropy CSV appends `rln_label`/`rln_matched`/`rln_rel_err`. Measured on the four real HC files: `matched = False` on all of them (`rel_err` 1.1265 / 0.7191 / 1.4878 / n/a).
 
 ### Hall Effect

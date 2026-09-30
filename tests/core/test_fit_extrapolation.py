@@ -5,10 +5,11 @@ Owner request 2026-09-05: "fits are not extrapolated to 0k on figures ... extrap
 already claims in text (gamma on cp_over_t, theta via the Curie-Weiss line on inverse_chi,
 rho0 on the resistivity kinds) — extending the fitted curve makes the claim visible.
 
-The extrapolated segment is a statement about behaviour OUTSIDE the fitted window, so it
-must never read as fit: dotted, thinner, half-alpha, gid="fit-extrap" (the fitted portion
-keeps gid="fit" and its exact range). Kinds where 0 K is not on the abscissa
-(resistivity_arrhenius plots against 1000/T) get NO extrapolation.
+Where a separate continuation is drawn (Curie-Weiss, resistivity) it must never read as
+fit: dotted, thinner, half-alpha, gid="fit-extrap". Heat capacity no longer draws one — its
+curves are built over the whole drawn span (see test_hc_curve_span.py), so the fit line
+itself reaches 0 as one line. Kinds where 0 K is not on the abscissa (resistivity_arrhenius
+plots against 1000/T) get NO extrapolation.
 
 Also here: the fit-window shade becomes opt-in (PlotSpec.fit_window_shade, default OFF) —
 owner: "it can be useful, but switched off by default".
@@ -48,34 +49,46 @@ def _lines(ax, gid):
 
 # ---------------- cp_over_t: the gamma intercept becomes visible ----------------
 
-def test_cp_over_t_fit_extrapolates_to_zero_and_hits_gamma():
+def test_cp_over_t_fit_line_reaches_zero_and_hits_gamma():
+    """The heat-capacity curves carry their own span since the curve-span change: the fit
+    line itself runs to T^2 = 0, as one line, with no separate dotted continuation."""
     fig = _fig("heat_capacity.dat", "cp_over_t")
     ax = fig.axes[0]
-    ext = _lines(ax, "fit-extrap")
-    assert ext, "no extrapolated segment drawn"
     d = _res("heat_capacity.dat").data
     fits = {f["key"]: f for f in d["lowt_fits"] if f.get("ok")}
-    assert len(ext) == len(fits)                 # one continuation per drawn fit line
-    ln = ext[0]
-    x = np.asarray(ln.get_xdata(), float)
-    assert x.min() == 0.0                        # reaches the T^2 = 0 axis
-    # the intercept at T^2 = 0 IS gamma — the number the annotation prints
+    lines = _lines(ax, "fit")
+    assert len(lines) == len(fits)
+    assert not _lines(ax, "fit-extrap")          # one continuous line, not fit + extension
     gamma = fits["debye_t3"]["params"]["gamma"]
-    deb = [l for l in ext if abs(float(np.asarray(l.get_ydata(), float)[np.argmin(np.asarray(l.get_xdata(), float))]) - gamma) < 1e-9]
-    assert deb, "no extrapolated line lands on gamma at T^2=0"
+    hits = []
+    for ln in lines:
+        x = np.asarray(ln.get_xdata(), float); y = np.asarray(ln.get_ydata(), float)
+        assert x.min() == 0.0                    # reaches the T^2 = 0 axis
+        hits.append(abs(float(y[np.argmin(x)]) - gamma) < 1e-9)
+    assert any(hits), "no fit line lands on gamma at T^2=0"
 
 
-def test_cp_over_t_fitted_portion_is_unchanged():
+def test_cp_over_t_line_stops_at_the_top_of_the_fit_window():
     fig = _fig("heat_capacity.dat", "cp_over_t")
     ax = fig.axes[0]
     d = _res("heat_capacity.dat").data
-    lo = min(x for f in d["lowt_fits"] if f.get("ok") for x in f["t2_grid"])
+    top = max(d["t_squared"])
     for ln in _lines(ax, "fit"):
-        assert float(np.asarray(ln.get_xdata(), float).min()) == pytest.approx(lo)
+        assert float(np.asarray(ln.get_xdata(), float).max()) == pytest.approx(top)
+
+
+def test_cp_vs_t_debye_einstein_line_spans_zero_to_the_highest_data_temperature():
+    fig = _fig("heat_capacity.dat", "cp_vs_t")
+    ax = fig.axes[0]
+    d = _res("heat_capacity.dat").data
+    (ln,) = _lines(ax, "fit")
+    x = np.asarray(ln.get_xdata(), float)
+    assert x.min() == 0.0 and x.max() == pytest.approx(max(d["full_temperature"]))
 
 
 def test_extrapolation_is_visually_distinct_from_the_fit():
-    fig = _fig("heat_capacity.dat", "cp_over_t")
+    """Still true wherever a separate continuation is drawn (Curie-Weiss, resistivity)."""
+    fig = _fig("magnetization_vsm.dat", "inverse_chi")
     ax = fig.axes[0]
     fits, exts = _lines(ax, "fit"), _lines(ax, "fit-extrap")
     assert fits and exts
@@ -150,16 +163,54 @@ def test_arrhenius_kind_gets_no_extrapolation():
     assert not _lines(ax, "fit-extrap")
 
 
-def test_extrap_guard_drops_blowup_points():
+def _guard(x, y, ref=(1.0, 2.0)):
     from cryosweep_core.plotting.render import _extrap_plot
     import matplotlib.pyplot as plt
     fig, ax = plt.subplots()
-    x = np.linspace(0, 1, 5)
-    y = np.array([1e9, 2.0, 1.5, 1.2, 1.0])     # pole-like first point
-    ln = _extrap_plot(ax, x, y, GlobalStyle(), "C0", y_ref=np.array([1.0, 2.0]))
-    kept = np.asarray(ln.get_ydata(), float)
-    assert np.nanmax(np.abs(kept[np.isfinite(kept)])) <= 3 * 2.0
+    ln = _extrap_plot(ax, np.asarray(x, float), np.asarray(y, float), GlobalStyle(), "C0",
+                      y_ref=np.asarray(ref, float))
+    out = (np.asarray(ln.get_xdata(), float), np.asarray(ln.get_ydata(), float), ln)
     plt.close(fig)
+    return out
+
+
+def test_extrap_guard_cuts_a_blowup_at_the_cap():
+    """cap = 3 x max|fitted segment| = 6. The line is cut where it CROSSES the cap, not at the
+    last sample that happened to survive — so it visibly runs off instead of stopping short."""
+    x, y, ln = _guard(np.linspace(0, 1, 5), [1e9, 2.0, 1.5, 1.2, 1.0])
+    assert np.abs(y).max() == 6.0                     # clamped exactly, no float overshoot
+    assert 0.0 < x[0] < 0.25                          # the crossing lies between the samples
+    assert list(y[1:]) == [2.0, 1.5, 1.2, 1.0]        # everything below the cap is untouched
+    assert ln._extrap_cut == 1
+
+
+def test_extrap_guard_keeps_only_the_run_attached_to_the_fit():
+    """Samples beyond a blow-up are on the far side of a pole. Joining them to the near side
+    draws a straight line through the pole."""
+    x, y, ln = _guard(np.linspace(0, 1, 6), [1.0, 1.1, 50.0, 1.4, 1.2, 1.0])
+    assert x[-1] == 1.0 and x[0] > 0.4                # nothing from before the blow-up
+    assert np.abs(y).max() == 6.0 and ln._extrap_cut == 3
+
+
+def test_extrap_guard_does_not_interpolate_across_a_non_finite_sample():
+    x, y, ln = _guard(np.linspace(0, 1, 5), [np.inf, np.nan, 1.5, 1.2, 1.0])
+    assert list(y) == [1.5, 1.2, 1.0] and np.all(np.isfinite(x))
+    assert ln._extrap_cut == 2
+
+
+def test_extrap_guard_handles_a_negative_blowup():
+    x, y, ln = _guard(np.linspace(0, 1, 4), [-1e6, 1.0, 1.0, 1.0])
+    assert y[0] == -6.0 and ln._extrap_cut == 1
+
+
+def test_extrap_guard_leaves_a_well_behaved_line_alone():
+    x, y, ln = _guard(np.linspace(0, 1, 5), [1.8, 1.6, 1.4, 1.2, 1.0])
+    assert list(y) == [1.8, 1.6, 1.4, 1.2, 1.0] and ln._extrap_cut == 0
+
+
+def test_extrap_guard_draws_nothing_when_the_sample_next_to_the_fit_is_beyond_the_cap():
+    x, y, ln = _guard(np.linspace(0, 1, 4), [1.0, 1.0, 1.0, 99.0])
+    assert x.size == 0 and ln._extrap_cut == 4
 
 
 def test_extrapolation_does_not_blow_up_the_y_axis():
