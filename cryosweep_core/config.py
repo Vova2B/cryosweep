@@ -80,6 +80,9 @@ class HeatCapacityCfg(BaseModel):
         "theta_E1": False, "theta_E2": False, "m1": False, "m2": False})
     full_fit_min_k: float | None = None
     full_fit_max_k: float | None = None
+    # Upper end of the DRAWN/EXPORTED Debye-Einstein curve (it always starts at 0 K). None =
+    # the highest data temperature. This does not change which points are fitted.
+    full_curve_max_k: float | None = None
     lowt_fit_min_k: float | None = None
     lowt_fit_max_k: float | None = None
     full_max_t_min_k: float = 50.0    # require T_max >= this for the full-range fit to be available

@@ -1675,17 +1675,39 @@ def _extrap_plot(ax, x, y, style, color, y_ref):
     (0.75x), half-alpha, the SAME color as its fit line, no legend entry, gid="fit-extrap"
     (excluded from the robust view and the legend-marker snapshots like gid="fit").
 
+    `x` runs TOWARD the fitted segment: its last sample is the one next to the fit (every
+    caller builds it that way).
+
     Insurance against pathological parameter sets (a modified-CW pole, a runaway power
-    law): points with |y| > 3*max|y_ref| (the fitted segment's own values) are dropped, so
-    an extrapolation can never blow up the axis — y-limits stay driven by the data and the
-    finite intercept the figure exists to show (gamma, rho0, -theta/C)."""
+    law): the line may not leave cap = 3*max|y_ref| (the fitted segment's own values), so an
+    extrapolation can never blow up the axis. Where it would, it is CUT AT THE CROSSING:
+      * only the run attached to the fitted segment is kept — samples beyond a blow-up lie
+        on the far side of a pole, and joining them to the near side would draw a straight
+        line through it;
+      * the cut end is the interpolated point where the line reaches the cap, clamped to
+        exactly +/-cap, so the line visibly runs off instead of stopping one sample short;
+      * no interpolation across a non-finite sample — there the kept run simply ends.
+    The number of samples cut is left on the artist as `_extrap_cut` (0 = untouched), so a
+    truncation is never silent to a caller or a test."""
     x = np.asarray(x, float); y = np.asarray(y, float)
     ref = np.asarray(y_ref, float)
     cap = 3.0 * float(np.nanmax(np.abs(ref[np.isfinite(ref)])))
-    m = np.isfinite(x) & np.isfinite(y) & (np.abs(y) <= cap)
+    ok = np.isfinite(x) & np.isfinite(y) & (np.abs(y) <= cap)
+    bad = np.flatnonzero(~ok)
+    start = int(bad[-1]) + 1 if bad.size else 0          # first sample of the attached run
+    xs, ys = x[start:], y[start:]
+    if start > 0 and xs.size:
+        xp, yp = x[start - 1], y[start - 1]              # the sample that left the cap
+        if np.isfinite(xp) and np.isfinite(yp) and yp != ys[0]:
+            edge = cap if yp > 0 else -cap
+            t = (edge - ys[0]) / (yp - ys[0])
+            xs = np.concatenate([[xs[0] + t * (xp - xs[0])], xs])
+            ys = np.concatenate([[edge], ys])
     kw = dict(lw=0.75 * style.line_width, ls=":", alpha=0.5, gid="fit-extrap",
               label="_nolegend_", color=color)
-    return ax.plot(x[m], y[m], **kw)[0]
+    ln = ax.plot(xs, ys, **kw)[0]
+    ln._extrap_cut = start
+    return ln
 
 
 # ---- VSM renderers ----

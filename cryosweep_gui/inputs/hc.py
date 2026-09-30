@@ -42,9 +42,17 @@ class HCInputPanel(InputPanel):
         self.full_min = QLineEdit(); self.full_min.setPlaceholderText("min T (K)")
         self.full_max = QLineEdit(); self.full_max.setPlaceholderText("max T (K)")
         g.addWidget(QLabel("T range"), 0, 0); g.addWidget(self.full_min, 0, 1); g.addWidget(self.full_max, 0, 2)
+        # The T range above bounds the points that are FITTED. The curve is drawn and
+        # exported from 0 K to this limit regardless (empty = the highest data temperature).
+        self.full_curve_max = QLineEdit()
+        self.full_curve_max.setPlaceholderText("max T (K, default: data max)")
+        self.full_curve_max.setToolTip(
+            "Upper end of the drawn and exported Debye-Einstein curve. The curve always "
+            "starts at 0 K. This does not change which points are fitted.")
+        g.addWidget(QLabel("Curve to"), 1, 0); g.addWidget(self.full_curve_max, 1, 1, 1, 2)
         self._val: dict[str, QDoubleSpinBox] = {}
         self._fix: dict[str, QCheckBox] = {}
-        for i, k in enumerate(_FULL_KEYS, start=1):
+        for i, k in enumerate(_FULL_KEYS, start=2):
             # 6 decimals: gamma is ~0.01 J/(mol*K^2), and after a fit these boxes SHOW the
             # fitted values — 4 decimals would truncate gamma to two significant digits.
             sb = QDoubleSpinBox(); sb.setRange(-1e6, 1e6); sb.setDecimals(6)
@@ -53,7 +61,7 @@ class HCInputPanel(InputPanel):
             g.addWidget(QLabel(k), i, 0); g.addWidget(sb, i, 1); g.addWidget(cb, i, 2)
             sb.valueChanged.connect(self._emit_param_edited)
         self.run_full_btn = QPushButton("Run full-range fit")
-        g.addWidget(self.run_full_btn, len(_FULL_KEYS) + 1, 0, 1, 3)
+        g.addWidget(self.run_full_btn, len(_FULL_KEYS) + 2, 0, 1, 3)
         cg_full = CollapsibleGroup("Full-range fit (Debye-Einstein)", collapsed=True)
         box.setTitle("")                              # avoid a doubled title under the toggle header
         cg_full.body_layout.addWidget(box)
@@ -182,27 +190,28 @@ class HCInputPanel(InputPanel):
         return {**state, "val": vals}
 
     def manual_model_curve(self, result):
-        """2(b): evaluate the Debye-Einstein model at the CURRENT box values over the
-        result's T range. Returns (x, y, label) or None. This is a model evaluation, never
-        a refit — whatever the caller draws from it must be labelled a manual model, not a
-        fit (physics-integrity rule)."""
+        """2(b): evaluate the Debye-Einstein model at the CURRENT box values over the span
+        the fitted curve is drawn on — 0 K to the "Curve to" limit, else the highest
+        temperature in the result. The span is built here, not copied from the fit's grid,
+        so it is the same whether or not a fit was accepted. Returns (x, y, label) or None.
+        This is a model evaluation, never a refit — whatever the caller draws from it must
+        be labelled a manual model, not a fit (physics-integrity rule)."""
         from cryosweep_core.fitting.heat_capacity import specific_heat_full
         d = (getattr(result, "data", None) or {}) if result else {}
         if d.get("probe") != "heatcapacity":
             return None
-        grid = (d.get("full_fit") or {}).get("t_grid") or []
-        if not grid:
-            T = [t for t in (d.get("full_temperature") or []) if t and t > 0]
-            if len(T) < 2:
-                return None
-            grid = np.linspace(min(T), max(T), 300)
-        x = np.asarray(grid, float)
-        x = x[np.isfinite(x) & (x > 0)]
-        if x.size < 2:
+        temps = [t for t in (list((d.get("full_fit") or {}).get("t_grid") or [])
+                             + list(d.get("full_temperature") or []))
+                 if t is not None and np.isfinite(t) and t > 0]
+        top = opt_float(self.full_curve_max.text())
+        if top is None or not (np.isfinite(top) and top > 0):
+            top = max(temps) if temps else None
+        if top is None:
             return None
+        x = np.linspace(0.0, float(top), 400)
         params = {k: float(self._val[k].value()) for k in _FULL_KEYS}
-        try:
-            y = specific_heat_full(x, **params)
+        try:                                     # the model raises at T <= 0: Cp(0) = 0
+            y = np.concatenate([[0.0], specific_heat_full(x[1:], **params)])
         except (ValueError, FloatingPointError, OverflowError):
             return None                          # unphysical hand-set params: no curve
         if not np.all(np.isfinite(y)):
@@ -235,6 +244,7 @@ class HCInputPanel(InputPanel):
             "full_fixed": {k: bool(self._fix[k].isChecked()) for k in _FULL_KEYS},
         }
         for name, w in (("full_fit_min_k", self.full_min), ("full_fit_max_k", self.full_max),
+                        ("full_curve_max_k", self.full_curve_max),
                         ("lowt_fit_min_k", self.lowt_min), ("lowt_fit_max_k", self.lowt_max)):
             val = opt_float(w.text())
             if val is not None:
@@ -264,6 +274,7 @@ class HCInputPanel(InputPanel):
         return {"n_atoms": self.n_atoms_edit.text(),
                 "lowt_min": self.lowt_min.text(), "lowt_max": self.lowt_max.text(),
                 "full_min": self.full_min.text(), "full_max": self.full_max.text(),
+                "full_curve_max": self.full_curve_max.text(),
                 "val": {k: self._val[k].value() for k in _FULL_KEYS},
                 "fix": {k: self._fix[k].isChecked() for k in _FULL_KEYS},
                 "schottky_enabled": self.schottky_enable.isChecked(),
@@ -293,6 +304,7 @@ class HCInputPanel(InputPanel):
         self.n_atoms_edit.setText(state.get("n_atoms", ""))
         self.lowt_min.setText(state.get("lowt_min", "")); self.lowt_max.setText(state.get("lowt_max", ""))
         self.full_min.setText(state.get("full_min", "")); self.full_max.setText(state.get("full_max", ""))
+        self.full_curve_max.setText(state.get("full_curve_max", ""))
         for k, v in (state.get("val") or {}).items():
             if k in self._val: self._val[k].setValue(float(v))
         for k, v in (state.get("fix") or {}).items():

@@ -359,15 +359,24 @@ def _export_heatcapacity(result, stem) -> dict:
     # 3) model curves (tidy long)
     mc = stem.with_suffix(".model_curves.csv")
     with mc.open("w", newline="") as f:
-        w = csv.writer(f); w.writerow(["model", "x", "y"])
+        # A curve spans more than its fit window (Debye-Einstein: 0 K to the highest data
+        # temperature; low-T: T^2 = 0 to the window top). in_fit_window = 1 on the rows the
+        # fit was judged on, 0 on the rows that are the model carried outside it. The flag
+        # comes from the fit itself -- never recomputed here from rounded bounds.
+        w = csv.writer(f); w.writerow(["model", "x", "y", "in_fit_window"])
+
+        def _rows(tag, xs, ys, flags):
+            flags = flags if len(flags) == len(xs) else [None] * len(xs)
+            for x, y, inside in zip(xs, ys, flags):
+                w.writerow([tag, x, y, "" if inside is None else int(bool(inside))])
+
         for mf in d.get("lowt_fits", []):
-            xs = mf.get("t2_grid") or []; ys = mf.get("cp_over_t_fit") or []
-            for x, y in zip(xs, ys):
-                w.writerow([f'lowt:{mf.get("key")}', x, y])
+            _rows(f'lowt:{mf.get("key")}', mf.get("t2_grid") or [],
+                  mf.get("cp_over_t_fit") or [], mf.get("in_fit_window") or [])
         ff = d.get("full_fit") or {}
         if ff.get("ok"):
-            for x, y in zip(ff.get("t_grid") or [], ff.get("cp_fit") or []):
-                w.writerow(["full:debye_einstein", x, y])
+            _rows("full:debye_einstein", ff.get("t_grid") or [], ff.get("cp_fit") or [],
+                  ff.get("in_fit_window") or [])
     out["model_curves"] = str(mc)
     # 4) raw points — the FULL measured group (the complete dataset behind the Cp-vs-T plot),
     #    not the low-T subset. Falls back to the low-T arrays if full_* is absent.

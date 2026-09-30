@@ -364,9 +364,15 @@ class HCAnalyzer:
             avail = True
             init = dict(hccfg.full_init); init["n"] = float(n_atoms)
             seed = {"gamma": fit.params.get("gamma"), "theta_D": fit.params.get("theta_D")}
+            curve_max = getattr(hccfg, "full_curve_max_k", None)
+            if curve_max is not None and not (np.isfinite(curve_max) and curve_max > 0):
+                warnings.append(f"full_curve_max_k={curve_max!r} is not a positive finite "
+                                "temperature; the curve is drawn to the highest data "
+                                "temperature instead")
+                curve_max = None
             full = fit_full_range(Tg, Cg, init=init, fixed=dict(hccfg.full_fixed),
                                   fit_min_k=hccfg.full_fit_min_k, fit_max_k=hccfg.full_fit_max_k,
-                                  seed=seed)
+                                  seed=seed, curve_max_k=curve_max)
             if not full.get("ok"):
                 warnings.append(f"full-range fit failed: {full.get('reason','')}")
             elif full.get("r2") is not None and full["r2"] < hccfg.full_min_r2:

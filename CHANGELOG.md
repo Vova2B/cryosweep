@@ -1,5 +1,34 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **Heat-capacity model curves no longer stop at the fit window.** The fit still runs only on
+  the points inside the window; the curve that is drawn and exported now runs from 0 K to the
+  highest data temperature for the Debye-Einstein fit, and from T² = 0 to the top of the
+  window for each low-T model. It is one continuous line — the dotted continuation the Cp/T
+  vs T² figure used to draw below the window is gone, because the line itself reaches the γ
+  intercept. `full_fit.t_grid`/`cp_fit` and `lowt_fits[].t2_grid`/`cp_over_t_fit` therefore
+  cover the **drawn** span; `fit_range` and the new parallel `in_fit_window` list say which
+  part was fitted. No fitted parameter changes. The Schottky and transition curves are
+  unchanged and still cover their fit window.
+- **`<stem>.model_curves.csv` gains an `in_fit_window` column** (appended; 1 on rows the fit
+  was judged on, 0 on rows where the model is carried outside it) and its rows cover the
+  wider span.
+- **A fit-line continuation that leaves its cap is cut where it crosses it** (Curie-Weiss and
+  resistivity figures). It used to drop the offending samples, which stopped the line a grid
+  step short and could join samples from either side of a pole with a straight segment. No
+  example or reference figure reaches the cap, so none changes.
+
+### Added
+
+- **`heatcapacity.full_curve_max_k`** — upper end of the drawn and exported Debye-Einstein
+  curve (default: the highest data temperature), with a "Curve to" box in the GUI's
+  full-range fit group. It never cuts into the fitted window, and a value that is not a
+  positive finite temperature is ignored with a warning.
+- Every low-T fit now reports its `fit_range`.
+
 ## 0.7.0 — 2026-09-25
 
 Both Hall analyzers now ask whether a fit's own uncertainty makes its derived quantities

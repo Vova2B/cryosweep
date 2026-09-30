@@ -118,7 +118,8 @@ def test_default_return_unchanged_keys():
     out = fit_lowt_models(T, cp, n_atoms=2.0)        # default (extended=False)
     for f in out["fits"]:
         assert set(f) == {"key", "label", "ok", "r2", "adj_r2", "params",
-                          "theta_D", "n_params", "t2_grid", "cp_over_t_fit"}
+                          "theta_D", "n_params", "t2_grid", "cp_over_t_fit",
+                          "in_fit_window", "fit_range"}
 
 
 # --------------------------------------------------------------------------- #
