@@ -317,12 +317,18 @@ def _export_csvs(res, tmp):
 # fitted parameter in its leading digits, not its fifteenth. The report markdown carries only
 # rounded values and stays an exact comparison; the PNG bytes remain pinned and version-skipped.
 _ORACLE_RTOL = 1e-9
+# CSV rows of the modified Curie-Weiss fit: an iterative solve whose sigma comes from a
+# finite-difference Jacobian drifts in the 9th digit between platforms (measured pair in
+# test_oracle_csv_tolerates_iterative_fit_drift_on_modified_rows_only). Still far below a
+# real regression, which moves a parameter in its leading digits.
+_ORACLE_RTOL_ITERATIVE = 1e-6
+_ITERATIVE_MODELS = ("curie_weiss_modified",)
 
 
-def _num_close(a, b) -> bool:
+def _num_close(a, b, rtol=_ORACLE_RTOL) -> bool:
     if isinstance(a, bool) or isinstance(b, bool):
         return a is b                       # bools are ints in Python; never tolerate
-    return bool(np.isclose(a, b, rtol=_ORACLE_RTOL, atol=0.0, equal_nan=True))
+    return bool(np.isclose(a, b, rtol=rtol, atol=0.0, equal_nan=True))
 
 
 def _assert_like_oracle(got, want, path="$"):
@@ -354,6 +360,7 @@ def _assert_csv_like_oracle(blob: bytes, golden: pathlib.Path, label: str):
     for r, (gl, wl) in enumerate(zip(got_rows, want_rows)):
         gc, wc = gl.split(","), wl.split(",")
         assert len(gc) == len(wc), f"{label} row {r}: {len(gc)} cells != {len(wc)}"
+        rtol = _ORACLE_RTOL_ITERATIVE if any(m in wc for m in _ITERATIVE_MODELS) else _ORACLE_RTOL
         for c, (g, w) in enumerate(zip(gc, wc)):
             if g == w:
                 continue
@@ -361,8 +368,8 @@ def _assert_csv_like_oracle(blob: bytes, golden: pathlib.Path, label: str):
                 gv, wv = float(g), float(w)
             except ValueError:
                 raise AssertionError(f"{label} row {r} col {c}: {g!r} != {w!r}") from None
-            assert _num_close(gv, wv), \
-                f"{label} row {r} col {c}: {g} != {w} (rtol {_ORACLE_RTOL})"
+            assert _num_close(gv, wv, rtol), \
+                f"{label} row {r} col {c}: {g} != {w} (rtol {rtol})"
 
 
 def test_oracle_comparison_tolerates_platform_ulps_but_not_regressions():
@@ -379,6 +386,29 @@ def test_oracle_comparison_tolerates_platform_ulps_but_not_regressions():
     ]:
         with pytest.raises(AssertionError):
             _assert_like_oracle(bad, base)
+
+
+def test_oracle_csv_tolerates_iterative_fit_drift_on_modified_rows_only():
+    """The modified Curie-Weiss fit is an iterative least-squares solve, and its sigma comes
+    from a finite-difference Jacobian: platforms disagree in the 9th digit, not the 15th.
+    Measured on the first Linux CI run of the modified-fit CSV rows (2026-10-01):
+        8.998909818421354e-06  (macOS/Accelerate)  vs
+        8.99890977318397e-06   (Linux/OpenBLAS)    -> 5.0e-9 relative
+    Rows of that model get 1e-6; every other row keeps the 1e-9 above."""
+    import tempfile
+    head = "quantity,value,sigma,unit,model\n"
+    mac = head + "C,0.5,8.998909818421354e-06,K,curie_weiss_modified\n"
+    linux = head + "C,0.5,8.99890977318397e-06,K,curie_weiss_modified\n"
+    with tempfile.TemporaryDirectory() as d:
+        g = pathlib.Path(d) / "g.golden"
+        g.write_text(mac)
+        _assert_csv_like_oracle(linux.encode(), g, "derived")          # measured pair passes
+        with pytest.raises(AssertionError):                             # a 6th-digit move fails
+            _assert_csv_like_oracle(linux.replace("8.9989097", "8.9989597").encode(), g, "derived")
+        g.write_text(mac.replace("curie_weiss_modified", "curie_weiss"))
+        with pytest.raises(AssertionError):                             # plain rows stay at 1e-9
+            _assert_csv_like_oracle(linux.replace("curie_weiss_modified", "curie_weiss").encode(),
+                                    g, "derived")
 
 
 def test_oracle_vsm_synth_json_csv_report_png(tmp_path):
