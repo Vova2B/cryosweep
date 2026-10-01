@@ -97,7 +97,8 @@ def main(argv=None):
                     help="modified Curie-Weiss fit: highest temperature fitted (K)")
     ap.add_argument("--cw-curve-max", type=float, default=None,
                     help="upper end of the drawn/exported Curie-Weiss curves (K; "
-                         "default: highest data temperature)")
+                         "default: highest data temperature; a value below a fit "
+                         "window's top is raised to it, with a warning)")
     ap.add_argument("--plot-kind", default=None, help="plot kind key (default: probe's default kind)")
     ap.add_argument("--style-file", default=None, help="GlobalStyle JSON (deterministic styling)")
     ap.add_argument("--layout-file", default=None, help="PlotLayout JSON (per-plot specs; reconciled)")

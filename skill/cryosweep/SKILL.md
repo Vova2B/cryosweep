@@ -102,13 +102,20 @@ never substitute a plausible one.
   (`vsm.cw_fit_min_k`/`cw_fit_max_k`) bound the points the Curie-Weiss fit and its
   `cw_ladder` use; `--cw-mod-tmin`/`--cw-mod-tmax` (`vsm.cw_mod_fit_min_k`/`cw_mod_fit_max_k`)
   bound the modified fit, separately; `--cw-curve-max` (`vsm.cw_curve_max_k`) sets the upper end
-  of the drawn curves. The exported arrays are never windowed. `data.fit_curve` and
+  of the drawn curves (a value below a fit window's top is raised to it, with a warning
+  naming `vsm.cw_curve_max_k`). The exported arrays are never windowed. `data.fit_curve` and
   `data.fit_modified_curve` carry `t_grid`, `inv_chi_fit` (in `inv_chi_unit`), `in_fit_window`,
   `fit_range`, `window_k`, `zero_crossing` and `reason`: each curve starts at 1/χ = 0 at its own
   θ and runs to the highest data temperature. **`zero_crossing: false` means the curve is the
   fit window only** — `reason` says why (`C_nonpositive`, `theta_in_window`, `pole_in_window`,
-  `theta_out_of_range`). A modified fit flagged **`theta_out_of_range`** (θ below −T_max of its
-  window) keeps its numbers but describes no Curie-Weiss regime — do not quote its θ or μ_eff.
+  `theta_out_of_range`). The plain fit carries the same reason in `fit.quality_flags` and the
+  status is then `low_confidence` (C ≤ 0 also makes `mu_eff` null). A fit flagged
+  **`theta_out_of_range`** (θ below −T_max of its window) keeps its numbers but describes no
+  Curie-Weiss regime — do not quote its θ or μ_eff. **Declined modified parameters:** a
+  modified-fit parameter pinned at a fit bound or with σ ≥ |value| (or σ = 0) is `null` in JSON
+  and blank in CSV, flagged `<param>_at_bound` / `<param>_unresolved` (C, theta, chi0; μ_eff
+  goes with C). With C or θ declined the modified curve is empty (`reason` = that flag) and is
+  neither drawn nor exported; a declined chi0 alone leaves the curve.
   A window that leaves < 3 points: that fit is `null`, the status `low_confidence`, and a warning
   names the config key; widen the window. `<stem>.model_curves.csv` carries the curves
   (`model,x,y,in_fit_window`); `derived.csv` carries the modified fit's parameters as rows with

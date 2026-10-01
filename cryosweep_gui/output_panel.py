@@ -139,6 +139,12 @@ def _kappa_ph_row(kf: dict) -> str:
     return head + joiner + "; ".join(parts)
 
 
+#: Kinds whose fit lines follow the fit-line toggles, not the curve checklist: their
+#: role="fit" series (kept in the catalog for series consumers) are not listed there, where
+#: unticking them would do nothing.
+_CHECKLIST_HIDES_FIT = frozenset({"inverse_chi"})
+
+
 def _cw_window_text(curve) -> str:
     """'full-window fit', or the user's Curie-Weiss window as the curve dict records it."""
     lo, hi = ((curve or {}).get("window_k") or [None, None])[:2]
@@ -161,8 +167,15 @@ def _cw_modified_row(data: dict) -> str:
                 "see the warnings")
     p = fm.get("params") or {}
     u = fm.get("units") or {}
-    bits = [f"θ = {p['theta']:.3g} K, C = {p['C']:.3g} {u.get('C', '')}".rstrip(),
-            f"χ₀ = {p['chi0']:.3g} {u.get('chi0', '')}".rstrip()]
+    if p.get("theta") is None or p.get("C") is None:
+        # a pinned/unresolved theta or C is not a measurement: no numbers, the reason
+        declined = [f for f in fm.get("quality_flags") or []
+                    if f.endswith(("_unresolved", "_at_bound"))]
+        bits = [f"declined — {', '.join(declined) or 'parameters not resolved'}"]
+    else:
+        bits = [f"θ = {p['theta']:.3g} K, C = {p['C']:.3g} {u.get('C', '')}".rstrip(),
+                ("χ₀ unresolved" if p.get("chi0") is None else
+                 f"χ₀ = {p['chi0']:.3g} {u.get('chi0', '')}".rstrip())]
     fr = fm.get("fit_range") or []
     if len(fr) == 2:
         bits.append(f"fitted {fr[0]:.3g}–{fr[1]:.3g} K")
@@ -282,12 +295,14 @@ def _arrhenius_row(ar: dict, spread) -> str:
 def flatten_rows(data: dict) -> list[tuple[str, str]]:
     rows: list[tuple[str, str]] = []
     for k, v in data.items():
+        if v is None and k in ("fit_curve", "fit_modified_curve"):
+            continue                       # explained by the Curie-Weiss rows below
         if v is None or isinstance(v, _SCALARS):
             rows.append((k, "—" if v is None else str(v)))
     fit = data.get("fit")
     if isinstance(fit, dict):
         for pk, pv in (fit.get("params") or {}).items():
-            rows.append((f"fit.{pk}", str(pv)))
+            rows.append((f"fit.{pk}", "— (declined; see flags)" if pv is None else str(pv)))
         if fit.get("r2") is not None:
             rows.append(("fit.r2", str(fit["r2"])))
     # mu_eff and chi_mol scale with these, so the number behind the result belongs next to
@@ -532,6 +547,8 @@ class PlotCard(QFrame):
         _fu = getattr(style, "field_unit", "Oe")
         series = (overlay_series(kind, results, overlay, field_unit=_fu) if overlay is not None
                   else kind.series(results[0], field_unit=_fu))
+        if entry.kind in _CHECKLIST_HIDES_FIT:
+            series = [s for s in series if s.role != "fit"]
         self.strip = AxisStrip(series, entry.spec, kind)
         self.strip.spec_changed.connect(self._on_spec_changed)
         self._lay.addWidget(self.strip)

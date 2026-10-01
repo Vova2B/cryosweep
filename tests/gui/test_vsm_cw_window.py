@@ -142,3 +142,52 @@ def test_a_window_on_a_clean_fit_is_still_named():
     assert "Curie-Weiss θ" not in rows                       # not window-sensitive
     assert rows["Curie-Weiss window"] == "fit window T ≥ 150 K; fitted 150–300 K (150 points)"
     assert "Curie-Weiss window" not in dict(flatten_rows(_data(sensitive=False)))
+
+
+def test_none_curve_keys_make_no_raw_rows():
+    d = _data(fit_modified=False)
+    d["fit_curve"] = None
+    keys = [k for k, _ in flatten_rows(d)]
+    assert "fit_curve" not in keys and "fit_modified_curve" not in keys
+
+
+def test_declined_modified_parameters_read_as_declined():
+    d = _data(flags=("chi0_unresolved",))
+    d["fit_modified"]["params"]["chi0"] = None
+    d["fit_modified"]["sigma"] = {"chi0": None}
+    row = dict(flatten_rows(d))["Modified Curie-Weiss"]
+    assert "χ₀ unresolved" in row and "flags: chi0_unresolved" in row
+    d = _data(flags=("C_unresolved", "theta_unresolved"))
+    d["fit_modified"]["params"].update(C=None, theta=None, mu_eff=None)
+    row = dict(flatten_rows(d))["Modified Curie-Weiss"]
+    assert row.startswith("declined") and "C_unresolved" in row and "None" not in row
+
+
+def test_declined_plain_parameter_is_not_printed_as_none():
+    d = _data()
+    d["fit"]["params"]["mu_eff"] = None
+    assert dict(flatten_rows(d))["fit.mu_eff"] != "None"
+
+
+def test_inverse_chi_checklist_lists_no_fit_entries(qapp):
+    """The stored fit curves are drawn by the fit-line toggles, not the curve checklist; an
+    entry there would do nothing when unticked."""
+    win, tab = _vsm_tab(qapp)
+    tab.analyze_and_render()
+    card = next(c for c in tab.output._cards if c.entry.kind == "inverse_chi")
+    from cryosweep_gui.plot_controls import _KEY_ROLE
+    keys = [it.data(_KEY_ROLE) for it in card.strip.checklist._items()]
+    assert "cw_fit" not in keys and "cw_modified_fit" not in keys
+    assert keys                                          # the data curve is still listed
+
+
+def test_overlay_checklist_lists_no_fit_entries(qapp):
+    from cryosweep_core.plotting.catalog import OverlayFile, get_kind, overlay_series
+    win, tab = _vsm_tab(qapp)
+    r = tab.analyze()
+    ss = overlay_series(get_kind("inverse_chi"), [r, r],
+                        [OverlayFile(0, "a"), OverlayFile(1, "b")])
+    assert {s.key for s in ss if s.role == "fit"} == {"0::cw_fit", "0::cw_modified_fit",
+                                                       "1::cw_fit", "1::cw_modified_fit"}
+    from cryosweep_gui.output_panel import _CHECKLIST_HIDES_FIT
+    assert "inverse_chi" in _CHECKLIST_HIDES_FIT

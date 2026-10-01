@@ -40,7 +40,8 @@ class VSMInputPanel(InputPanel):
         self.cw_curve_max.setToolTip(
             "Upper end of the drawn and exported Curie-Weiss curves. Each curve starts "
             "where it reaches 1/χ = 0, at its own θ. This does not change which points are "
-            "fitted.")
+            "fitted. A value below the top of a fit window is raised to it (with a warning): "
+            "a curve never stops inside its fitted points.")
         fl.addRow("Curve to", self.cw_curve_max)
         self._layout.addWidget(box)
 

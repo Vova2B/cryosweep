@@ -14,10 +14,26 @@
 - **The modified Curie-Weiss fit is unit-invariant.** It is now fitted on χ / median|χ| and
   rescaled. Before, in SI χ₀ stayed at its 0.0 starting value: on the multi-field example θ
   came out −67.0 K in SI against −173.3 K in CGS; both now give −173.3 K. CGS values move in
-  the 5th–6th significant digit on well-conditioned files.
-- **The Curie-Weiss window ladder skips rungs at or below the lower edge of the fitted
-  window** — inside a window they are copies of the primary fit. Without a window no rung
-  changes (data start near 2 K). A narrow window can therefore carry no spread at all.
+  the 5th–6th significant digit on well-conditioned fits, more on ill-conditioned ones (one
+  real file whose modified fit has r² < 0 moved θ from −2.5×10⁵ to −2.8×10⁵ K — it is now
+  declined, below). Windowed SI fits now fail where the CGS fit fails; they used to
+  "succeed" with χ₀ stuck at 0.
+- **Modified Curie-Weiss parameters that are not measurements are declined** (owner call): a
+  parameter pinned at a fit bound or with σ ≥ |value| is `null` in JSON and blank in CSV, with
+  `<param>_at_bound` / `<param>_unresolved` in `quality_flags`; μ_eff goes with C. With θ or C
+  declined no modified curve is drawn or exported. On the public examples χ₀ is unresolved
+  (the synthetic data have none), so χ₀ is blank there and the figure reads "χ₀ unresolved".
+- **Unphysical plain Curie-Weiss fits are flagged**: C ≤ 0, θ inside the fit window, or θ below
+  −T_max of it is a quality flag (`C_nonpositive`, `theta_in_window`, `theta_out_of_range`),
+  the status is `low_confidence`, and the curve is drawn over the window only. μ_eff is null
+  for C ≤ 0 (it used to be NaN). None of these fires on any example or real file without a
+  window.
+- **Flags reach the figure and the report**: the legend label and the annotation of a flagged
+  Curie-Weiss or modified fit carry the flag (e.g. "modified CW (θ out of range)"); the VSM
+  report adds the modified fit with its flags and lists the warnings.
+- **Inside a user window the Curie-Weiss ladder skips rungs at or below the fitted T_min** —
+  copies of the primary fit — and one surviving rung gives a spread. Without a user window
+  the ladder is unchanged.
 - **The `vsm` config section appears in every result's `provenance.config` and every
   `meta.json`**, whatever the probe.
 - Pipeline steps that set `unit_system` now keep the rest of the base config; they used to
@@ -53,7 +69,8 @@
   `--cw-tmax`) bound the points the Curie-Weiss fit and its window ladder use;
   `vsm.cw_mod_fit_min_k` / `cw_mod_fit_max_k` (`--cw-mod-tmin` / `--cw-mod-tmax`) do the same,
   separately, for the modified fit; `vsm.cw_curve_max_k` (`--cw-curve-max`) sets the upper end
-  of both drawn curves. The GUI's VSM panel has a box for each. The windows filter points of
+  of both drawn curves (a value below a fit window's top is raised to it, with a warning). The
+  GUI's VSM panel has a box for each. The windows filter points of
   the chosen ramp; the exported arrays stay the whole ramp. A window that leaves fewer than 3
   points loses that fit but keeps the data (`status: low_confidence`, a warning naming the
   config key); an invalid window (not finite, or min ≥ max) is ignored with a warning.
