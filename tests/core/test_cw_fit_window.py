@@ -297,3 +297,74 @@ def test_real_file_far_negative_modified_theta_is_flagged_and_kept():
     c = d["fit_modified_curve"]
     assert c["zero_crossing"] is False and c["reason"] == "theta_out_of_range"
     assert min(c["t_grid"]) >= fm["fit_range"][0]
+
+
+# ------------------------------------------------------------------ export
+
+import csv
+import json
+
+from cryosweep_core.io.export import export_result
+
+
+def _rows(path):
+    with open(path, newline="") as f:
+        return list(csv.reader(f))
+
+
+def test_model_curves_csv_runs_from_theta_to_the_top_with_window_flags(tmp_path):
+    r = _an({"cw_fit_min_k": 150.0})
+    out = export_result(r, str(tmp_path / "e"))
+    rows = _rows(out["model_curves"])
+    assert rows[0] == ["model", "x", "y", "in_fit_window"]     # same header as heat capacity
+    cw = [x for x in rows[1:] if x[0] == "curie_weiss"]
+    mod = [x for x in rows[1:] if x[0] == "curie_weiss_modified"]
+    assert cw and mod
+    d = r.data
+    assert float(cw[0][1]) == pytest.approx(d["fit"]["params"]["theta"]) and float(cw[0][2]) == 0.0
+    assert float(cw[-1][1]) == pytest.approx(max(d["temperature"]))
+    flags = [x[3] for x in cw]
+    first_in = flags.index("1")
+    assert float(cw[first_in][1]) == pytest.approx(d["fit"]["fit_range"][0])
+    assert set(flags[:first_in]) == {"0"}
+    meta = json.loads(pathlib.Path(out["meta"]).read_text())
+    assert meta["units"]["model_curves.y"] == d["inv_chi_unit"]
+    assert meta["units"]["model_curves.x"] == "K"
+
+
+def test_derived_csv_carries_the_modified_fit(tmp_path):
+    r = _an()
+    rows = _rows(export_result(r, str(tmp_path / "e"))["derived"])
+    assert rows[0] == ["quantity", "value", "sigma", "unit", "model"]
+    mod = {x[0]: x for x in rows[1:] if x[4] == "curie_weiss_modified"}
+    pm = r.data["fit_modified"]["params"]
+    assert set(pm) <= set(mod)
+    assert float(mod["chi0"][1]) == pytest.approx(pm["chi0"])
+    assert mod["chi0"][3] == r.data["fit_modified"]["units"]["chi0"]
+    assert "quality_flags" not in mod                           # clean fit: no flags row
+
+
+def test_export_survives_a_fit_lost_to_the_window(tmp_path):
+    r = _an({"cw_fit_min_k": 299.5})
+    out = export_result(r, str(tmp_path / "e"))
+    rows = _rows(out["model_curves"])
+    assert {x[0] for x in rows[1:]} == {"curie_weiss_modified"}
+    assert _rows(out["fit_params"])[0] == ["param", "value", "sigma", "unit"]
+    assert len(_rows(out["points"])) == 301
+
+
+def test_model_curves_csv_is_header_only_without_curves(tmp_path):
+    r = _an({"cw_fit_min_k": 299.5, "cw_mod_fit_min_k": 299.5})
+    rows = _rows(export_result(r, str(tmp_path / "e"))["model_curves"])
+    assert rows == [["model", "x", "y", "in_fit_window"]]
+
+
+def test_derived_csv_names_a_flagged_modified_fit(tmp_path):
+    import dataclasses
+    rt = load_dat(str(require_real("vsm_mt")))
+    rt = dataclasses.replace(rt, header=dataclasses.replace(rt.header, molar_mass=200.0,
+                                                            mass_mg=5.0))
+    r = VSMAnalyzer().analyze(rt, RunConfig.load())
+    rows = _rows(export_result(r, str(tmp_path / "e"))["derived"])
+    flags = [x for x in rows[1:] if x[0] == "quality_flags" and x[4] == "curie_weiss_modified"]
+    assert flags and "theta_out_of_range" in flags[0][1]

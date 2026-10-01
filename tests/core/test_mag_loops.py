@@ -258,6 +258,13 @@ def test_mpms_zfc_fc_two_ramps_in_field_group(mpms_real_path):
 # Legend-fix amendment (multi-axis "best" placement): the twin `vsm_chi_t` merged legend now
 #   dodges BOTH axes' data (not just the host axis'), so its golden was regenerated once more.
 #   The three single-axis VSM kinds stay strictly byte-identical (the fix is gated on >1 axes).
+# Fit-window amendment (2026-10-01, sanctioned): the export gains `<stem>.model_curves.csv`
+#   (new goldens vsm_synth/mpms.model_curves.golden: each fit's 1/chi curve from theta to
+#   the top of the data), and derived.csv gains the modified Curie-Weiss rows APPENDED after
+#   the unchanged Curie-Weiss rows (vsm_synth/mpms.derived.golden regenerated; diff = +4
+#   rows each, existing rows byte-identical). inverse_chi.png regenerated: the fits are now
+#   one solid line from 1/chi = 0 at theta (no dotted continuation) and the y-axis is framed
+#   on the data and 0. The other three PNG kinds stay byte-identical.
 _NEW_KEYS = ("loops", "ramps", "fit_modified", "t_blocks",
              # 2026-08-10 uncertainty-honesty additive fields (CW ladder, spec §1.2):
              "cw_ladder", "theta_spread_k", "mu_eff_spread",

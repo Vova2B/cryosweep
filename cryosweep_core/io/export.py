@@ -741,7 +741,7 @@ def export_result(result, stem, fmt="csv") -> dict:
     # though it holds `window_sensitive`. The spread rows are renamed self-describingly and
     # tagged `window_spread` so they can never be read as another fitted parameter with an
     # unknown error bar (U3: "spread != error bar, in EVERY rendering").
-    fit = d.get("fit", {})
+    fit = d.get("fit") or {}             # None when a user fit window left too few points
     ladder = d.get("cw_ladder") or []
     fp = stem.with_suffix(".fit_params.csv")
     fit_flags = ";".join(fit.get("quality_flags") or [])
@@ -779,7 +779,35 @@ def export_result(result, stem, fmt="csv") -> dict:
         w = csv.writer(f); w.writerow(["quantity", "value", "sigma", "unit", "model"])
         for k, v in fit.get("params", {}).items():
             w.writerow([k, v, fit.get("sigma", {}).get(k, ""), fit.get("units", {}).get(k, ""), fit.get("model", "")])
+        # The modified Curie-Weiss fit (chi = chi0 + C/(T - theta)) used to reach JSON only.
+        # Appended rows, so fit_params.csv (pinned layout, ladder columns) is untouched. Its
+        # quality flags ride on one extra row: a theta_out_of_range fit keeps its numbers,
+        # and a reader of this file must not take them without the flag.
+        fm = d.get("fit_modified") or {}
+        for k, v in (fm.get("params") or {}).items():
+            w.writerow([k, v, (fm.get("sigma") or {}).get(k, ""), (fm.get("units") or {}).get(k, ""),
+                        fm.get("model", "")])
+        if fm.get("quality_flags"):
+            w.writerow(["quality_flags", ";".join(fm["quality_flags"]), "", "", fm.get("model", "")])
     out["derived"] = str(dq)
+    if d.get("probe") == "vsm":
+        # Drawn curves, tidy long, same header as heat capacity's model_curves.csv: each runs
+        # from 1/chi = 0 at its own theta to the top of the data; in_fit_window = 1 on the
+        # rows the fit was judged on. Always written (header-only when no fit produced one).
+        mc = stem.with_suffix(".model_curves.csv")
+        with mc.open("w", newline="") as f:
+            w = csv.writer(f); w.writerow(["model", "x", "y", "in_fit_window"])
+            for tag, key in (("curie_weiss", "fit_curve"),
+                             ("curie_weiss_modified", "fit_modified_curve")):
+                c = d.get(key) or {}
+                xs, ys = c.get("t_grid") or [], c.get("inv_chi_fit") or []
+                flags = c.get("in_fit_window") or []
+                flags = flags if len(flags) == len(xs) else [None] * len(xs)
+                for x, y, inside in zip(xs, ys, flags):
+                    w.writerow([tag, x, y, "" if inside is None else int(bool(inside))])
+        out["model_curves"] = str(mc)
+        units = {**units, "model_curves.x": "K",
+                 "model_curves.y": d.get("inv_chi_unit") or UNIT_HINTS["inv_chi"]}
     # sidecar
     meta = {"source": result.provenance.file, "sha256": result.provenance.sha256,
             "app_version": result.provenance.app_version,
