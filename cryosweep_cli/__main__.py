@@ -86,6 +86,18 @@ def main(argv=None):
                          "(HallCfg.skip_rows; default 'auto' drops only rows that are "
                          "provably corrupt; an explicit N drops exactly N and turns "
                          "detection off; 0 drops none)")
+    # Curie-Weiss fit windows (K) and the upper end of the drawn curves -> cfg.vsm.*
+    ap.add_argument("--cw-tmin", type=float, default=None,
+                    help="Curie-Weiss fit: lowest temperature fitted (K)")
+    ap.add_argument("--cw-tmax", type=float, default=None,
+                    help="Curie-Weiss fit: highest temperature fitted (K)")
+    ap.add_argument("--cw-mod-tmin", type=float, default=None,
+                    help="modified Curie-Weiss fit: lowest temperature fitted (K)")
+    ap.add_argument("--cw-mod-tmax", type=float, default=None,
+                    help="modified Curie-Weiss fit: highest temperature fitted (K)")
+    ap.add_argument("--cw-curve-max", type=float, default=None,
+                    help="upper end of the drawn/exported Curie-Weiss curves (K; "
+                         "default: highest data temperature)")
     ap.add_argument("--plot-kind", default=None, help="plot kind key (default: probe's default kind)")
     ap.add_argument("--style-file", default=None, help="GlobalStyle JSON (deterministic styling)")
     ap.add_argument("--layout-file", default=None, help="PlotLayout JSON (per-plot specs; reconciled)")
@@ -117,8 +129,13 @@ def main(argv=None):
     if a.geometry_sign is not None: hall["geometry_sign"] = a.geometry_sign
     if a.temp_interval is not None: hall["temp_interval"] = a.temp_interval
     if a.skip_rows is not None: hall["skip_rows"] = a.skip_rows
+    vsm = {k: v for k, v in (("cw_fit_min_k", a.cw_tmin), ("cw_fit_max_k", a.cw_tmax),
+                             ("cw_mod_fit_min_k", a.cw_mod_tmin),
+                             ("cw_mod_fit_max_k", a.cw_mod_tmax),
+                             ("cw_curve_max_k", a.cw_curve_max)) if v is not None}
     overrides = {}
     if a.unit_system is not None: overrides["unit_system"] = a.unit_system
+    if vsm: overrides["vsm"] = vsm
     if geom: overrides["geometry"] = geom
     if hall: overrides["hall"] = hall
     probe_override = a.probe or ("hall" if a.command == "hall" else ("hall_tdep" if a.command == "hall-tdep" else None))

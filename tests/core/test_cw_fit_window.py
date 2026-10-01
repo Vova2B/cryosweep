@@ -464,3 +464,54 @@ def test_window_only_modified_curve_draws_only_its_window():
     x = np.asarray(mod[0].get_xdata(), float)
     assert x.min() >= lo
     plt.close("all")
+
+
+# ------------------------------------------------------------------ CLI and pipeline
+
+import subprocess
+import sys
+
+_ROOT = pathlib.Path(__file__).resolve().parents[2]
+
+
+def _cli(args):
+    return subprocess.run([sys.executable, "-m", "cryosweep_cli", *args],
+                          capture_output=True, text=True, cwd=_ROOT)
+
+
+def test_cli_window_flags_reach_the_fit():
+    r = _cli(["analyze", str(_EX / "magnetization_vsm.dat"), "--cw-tmin", "150",
+              "--cw-tmax", "280", "--cw-mod-tmin", "50", "--cw-mod-tmax", "200",
+              "--cw-curve-max", "350"])
+    assert r.returncode in (0, 11), r.stderr
+    out = json.loads(r.stdout)
+    v = out["provenance"]["config"]["vsm"]
+    assert v == {"cw_fit_min_k": 150.0, "cw_fit_max_k": 280.0, "cw_mod_fit_min_k": 50.0,
+                 "cw_mod_fit_max_k": 200.0, "cw_curve_max_k": 350.0}
+    d = out["data"]
+    assert d["fit"]["fit_range"][0] >= 150.0 and d["fit"]["fit_range"][1] <= 280.0
+    assert d["fit_curve"]["t_grid"][-1] == 350.0
+
+
+def test_cli_flags_override_a_config_file_per_key(tmp_path):
+    cf = tmp_path / "cfg.json"
+    cf.write_text(json.dumps({"vsm": {"cw_fit_min_k": 100.0, "cw_curve_max_k": 400.0}}))
+    r = _cli(["analyze", str(_EX / "magnetization_vsm.dat"), "--config", str(cf),
+              "--cw-tmin", "150"])
+    assert r.returncode in (0, 11), r.stderr
+    v = json.loads(r.stdout)["provenance"]["config"]["vsm"]
+    assert v["cw_fit_min_k"] == 150.0 and v["cw_curve_max_k"] == 400.0
+
+
+def test_pipeline_unit_system_option_keeps_the_base_config(tmp_path):
+    """A step that sets unit_system used to rebuild RunConfig from scratch, dropping every
+    --config key (here: the Curie-Weiss window)."""
+    from cryosweep_core.pipeline import run_pipeline
+    pf = tmp_path / "p.json"
+    pf.write_text(json.dumps({"steps": [{"command": "analyze",
+                                         "file": str(_EX / "magnetization_vsm.dat"),
+                                         "options": {"unit_system": "SI"}}]}))
+    out = run_pipeline(str(pf), RunConfig.load(vsm={"cw_fit_min_k": 150.0}))
+    d = out["results"][0]["data"]
+    assert d["inv_chi_unit"] == "mol/m^3"
+    assert d["fit"]["fit_range"][0] >= 150.0

@@ -32,7 +32,10 @@ def _apply_options(rt, base_cfg, options):
     from cryosweep_core.io.header import apply_sample_inputs
     rt = apply_sample_inputs(rt, {"molar_mass": options.get("molar_mass"),
                                   "mass_mg": options.get("mass_mg")})
-    cfg = RunConfig.load(unit_system=options["unit_system"]) if "unit_system" in options else base_cfg
+    # Merge onto the base config: rebuilding it from scratch here dropped every --config key
+    # (fit windows, quality, ...) from any step that set unit_system.
+    cfg = (RunConfig(**{**base_cfg.model_dump(), "unit_system": options["unit_system"]})
+           if "unit_system" in options else base_cfg)
     return rt, cfg
 
 
