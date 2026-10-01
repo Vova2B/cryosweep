@@ -174,3 +174,126 @@ def test_modified_fit_is_unit_invariant():
     assert b.params["C"] == pytest.approx(a.params["C"] * _SI_PER_CGS, rel=1e-5)
     assert b.sigma["chi0"] == pytest.approx(a.sigma["chi0"] * _SI_PER_CGS, rel=1e-3)
     assert b.sigma["theta"] == pytest.approx(a.sigma["theta"], rel=1e-3)
+
+
+# ------------------------------------------------------------------ analyzer
+
+import pathlib
+
+from cryosweep_core.analyzers.mag import VSMAnalyzer
+from cryosweep_core.io.loader import load_dat
+
+from tests.core.conftest import require_real
+
+_EX = pathlib.Path(__file__).parents[2] / "examples"
+
+
+def _an(vsm=None, unit_system="CGS", name="magnetization_vsm.dat"):
+    rt = load_dat(str(_EX / name))
+    return VSMAnalyzer().analyze(rt, RunConfig.load(unit_system=unit_system, vsm=vsm or {}))
+
+
+def test_no_window_carries_both_curves_from_theta_to_the_data_top():
+    r = _an()
+    d = r.data
+    T = np.asarray(d["temperature"])
+    for key, fkey in (("fit_curve", "fit"), ("fit_modified_curve", "fit_modified")):
+        c = d[key]
+        assert c["zero_crossing"] is True
+        assert c["t_grid"][0] == d[fkey]["params"]["theta"] and c["inv_chi_fit"][0] == 0.0
+        assert c["t_grid"][-1] == pytest.approx(T.max())
+        assert c["fit_range"] == d[fkey]["fit_range"]
+        assert c["window_k"] == [None, None]
+
+
+def test_curve_keys_are_appended_last():
+    keys = list(_an().data)
+    i = keys.index("mu_eff_spread")
+    assert keys[i + 1:i + 3] == ["fit_curve", "fit_modified_curve"]
+
+
+def test_cw_window_bounds_the_fit_and_its_ladder_but_not_the_data():
+    base = _an().data
+    d = _an({"cw_fit_min_k": 150.0}).data
+    T = np.asarray(d["temperature"])
+    assert len(T) == len(base["temperature"])                 # data are not windowed
+    assert d["fit"]["fit_range"][0] >= 150.0
+    assert d["fit"]["n_points"] == int((T >= 150.0).sum())
+    assert all(e["tmin_k"] > d["fit"]["fit_range"][0] for e in d["cw_ladder"] or [])
+    # the curve still starts at theta and runs to the top of the data
+    c = d["fit_curve"]
+    assert c["t_grid"][0] == d["fit"]["params"]["theta"] and c["t_grid"][-1] == T.max()
+    g, f = np.asarray(c["t_grid"]), np.asarray(c["in_fit_window"])
+    assert not f[g < d["fit"]["fit_range"][0]].any() and f[g == d["fit"]["fit_range"][0]].all()
+    assert c["window_k"] == [150.0, None]
+    # the modified fit has its own window: untouched
+    assert d["fit_modified"]["fit_range"] == base["fit_modified"]["fit_range"]
+
+
+def test_modified_window_is_separate():
+    d = _an({"cw_mod_fit_min_k": 50.0, "cw_mod_fit_max_k": 200.0}).data
+    lo, hi = d["fit_modified"]["fit_range"]
+    assert lo >= 50.0 and hi <= 200.0
+    assert d["fit"]["fit_range"] == _an().data["fit"]["fit_range"]
+    assert d["fit_modified_curve"]["window_k"] == [50.0, 200.0]
+
+
+def test_curve_limit_extends_and_an_invalid_one_is_ignored_with_a_warning():
+    assert _an({"cw_curve_max_k": 400.0}).data["fit_curve"]["t_grid"][-1] == 400.0
+    r = _an({"cw_curve_max_k": -5.0})
+    assert r.data["fit_curve"]["t_grid"][-1] == max(r.data["temperature"])
+    assert any("cw_curve_max_k" in w for w in r.warnings)
+
+
+def test_a_window_that_leaves_too_few_points_keeps_the_data():
+    r = _an({"cw_fit_min_k": 299.5})
+    assert r.status == "low_confidence"
+    assert r.data["fit"] is None and r.data["fit_curve"] is None
+    assert len(r.data["temperature"]) == 300                   # arrays, plots, export survive
+    assert any("vsm.cw_fit_min_k" in w for w in r.warnings)
+    assert r.data["fit_modified"] is not None                  # its own window is unbounded
+
+
+def test_a_modified_window_that_leaves_too_few_points_is_non_blocking():
+    r = _an({"cw_mod_fit_min_k": 299.5})
+    assert r.status == "ok" and r.data["fit"] is not None
+    assert r.data["fit_modified"] is None and r.data["fit_modified_curve"] is None
+    assert any("vsm.cw_mod_fit_min_k" in w for w in r.warnings)
+
+
+@pytest.mark.parametrize("vsm", [{"cw_fit_min_k": 200.0, "cw_fit_max_k": 100.0},
+                                 {"cw_fit_min_k": float("nan")}])
+def test_an_invalid_window_is_ignored_with_a_warning(vsm):
+    r = _an(vsm)
+    base = _an()
+    assert r.data["fit"] == base.data["fit"]
+    assert any("cw_fit" in w and "ignored" in w for w in r.warnings)
+
+
+def test_paramagnetic_regime_warning_uses_the_window_minimum():
+    msg = "CW fit window extends below |theta|"
+    assert any(msg in w for w in _an().warnings)               # 2 K < |theta| = 10 K
+    assert not any(msg in w for w in _an({"cw_fit_min_k": 50.0}).warnings)
+
+
+def test_si_curve_is_in_si_units():
+    d = _an(unit_system="SI").data
+    c = d["fit_curve"]
+    T = np.asarray(d["temperature"]); y = np.asarray(d["inv_chi"])
+    i = int(np.argmax(T))
+    assert c["inv_chi_fit"][-1] == pytest.approx(y[i], rel=1e-2)
+
+
+def test_real_file_far_negative_modified_theta_is_flagged_and_kept():
+    """No window: theta_mod = -2.5e5 K. Params stay (decline the curve, not the record)."""
+    import dataclasses
+    rt = load_dat(str(require_real("vsm_mt")))
+    rt = dataclasses.replace(rt, header=dataclasses.replace(rt.header, molar_mass=200.0,
+                                                            mass_mg=5.0))
+    d = VSMAnalyzer().analyze(rt, RunConfig.load()).data
+    fm = d["fit_modified"]
+    assert "theta_out_of_range" in fm["quality_flags"]
+    assert fm["params"]["theta"] < -max(d["temperature"])
+    c = d["fit_modified_curve"]
+    assert c["zero_crossing"] is False and c["reason"] == "theta_out_of_range"
+    assert min(c["t_grid"]) >= fm["fit_range"][0]

@@ -263,7 +263,10 @@ _NEW_KEYS = ("loops", "ramps", "fit_modified", "t_blocks",
              "cw_ladder", "theta_spread_k", "mu_eff_spread",
              # 2026-09-06: which molar mass / sample mass produced this mu_eff, and whether
              # a person supplied it. Additive -- the oracle's own numbers are untouched.
-             "sample_inputs")
+             "sample_inputs",
+             # 2026-10-01: the drawn 1/chi curve of each fit (theta -> top of the data).
+             # Additive dicts; the fitted numbers themselves are untouched.
+             "fit_curve", "fit_modified_curve")
 _UNCHANGED_PNG_KINDS = ("vsm_moment_t", "vsm_chi_t_product")
 
 
