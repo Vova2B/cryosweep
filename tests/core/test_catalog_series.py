@@ -20,8 +20,12 @@ def _res():
 def test_vsm_kinds_single_curve_default_on():
     res = _vsm()
     for key in ("inverse_chi", "vsm_moment_t"):
-        s = KINDS[key].series(res)
+        # inverse_chi also carries its two stored fit curves (role "fit", 2026-10-01); the
+        # renderer never draws those as data, so the single-DATA-curve contract is unchanged.
+        s = [sr for sr in KINDS[key].series(res) if sr.role != "fit"]
         assert len(s) == 1 and s[0].default_on and len(s[0].x) == len(s[0].y) > 0
+    fits = [sr.key for sr in KINDS["inverse_chi"].series(res) if sr.role == "fit"]
+    assert fits == ["cw_fit", "cw_modified_fit"]
     # PQ-3 Item 2: vsm_chi_t emits χ (key "curve") + χ⁻¹ (key "inv_chi", role tag), both
     # default_on for the twin-axis default view.
     s = KINDS["vsm_chi_t"].series(res)

@@ -258,12 +258,33 @@ def test_mpms_zfc_fc_two_ramps_in_field_group(mpms_real_path):
 # Legend-fix amendment (multi-axis "best" placement): the twin `vsm_chi_t` merged legend now
 #   dodges BOTH axes' data (not just the host axis'), so its golden was regenerated once more.
 #   The three single-axis VSM kinds stay strictly byte-identical (the fix is gated on >1 axes).
+# Fit-window amendment (2026-10-01, sanctioned): the export gains `<stem>.model_curves.csv`
+#   (new goldens vsm_synth/mpms.model_curves.golden: each fit's 1/chi curve from theta to
+#   the top of the data), and derived.csv gains the modified Curie-Weiss rows APPENDED after
+#   the unchanged Curie-Weiss rows (vsm_synth/mpms.derived.golden regenerated; diff = +4
+#   rows each, existing rows byte-identical). inverse_chi.png regenerated: the fits are now
+#   one solid line from 1/chi = 0 at theta (no dotted continuation) and the y-axis is framed
+#   on the data and 0. The other three PNG kinds stay byte-identical.
+# Decline amendment (2026-10-01, owner call, sanctioned): a modified-CW parameter with
+#   sigma >= |value| is declined. The synthetic fixture's chi0 is 5.9e-8 +- 7.5e-8, so
+#   vsm_synth.derived.golden blanks the chi0 value/sigma cells and appends a quality_flags row
+#   (chi0_unresolved); every other row is byte-identical. vsm_synth.report.md gains the
+#   modified-fit section and the warnings list (the existing lines are unchanged), and
+#   inverse_chi.png regenerated: annotation "χ₀ unresolved", legend "modified CW (χ₀
+#   unresolved)". The mpms goldens are unchanged (its chi0 is resolved).
+# Plain-flags amendment (2026-10-01, sanctioned): derived.csv appends a `curie_weiss`
+#   quality_flags row whenever the plain fit carries flags -- mpms.derived.golden gains
+#   "quality_flags,window_sensitive,,,curie_weiss" after its three CW rows; every other row is
+#   byte-identical. vsm_synth's fit is unflagged, so its goldens are unchanged.
 _NEW_KEYS = ("loops", "ramps", "fit_modified", "t_blocks",
              # 2026-08-10 uncertainty-honesty additive fields (CW ladder, spec §1.2):
              "cw_ladder", "theta_spread_k", "mu_eff_spread",
              # 2026-09-06: which molar mass / sample mass produced this mu_eff, and whether
              # a person supplied it. Additive -- the oracle's own numbers are untouched.
-             "sample_inputs")
+             "sample_inputs",
+             # 2026-10-01: the drawn 1/chi curve of each fit (theta -> top of the data).
+             # Additive dicts; the fitted numbers themselves are untouched.
+             "fit_curve", "fit_modified_curve")
 _UNCHANGED_PNG_KINDS = ("vsm_moment_t", "vsm_chi_t_product")
 
 
@@ -296,12 +317,18 @@ def _export_csvs(res, tmp):
 # fitted parameter in its leading digits, not its fifteenth. The report markdown carries only
 # rounded values and stays an exact comparison; the PNG bytes remain pinned and version-skipped.
 _ORACLE_RTOL = 1e-9
+# CSV rows of the modified Curie-Weiss fit: an iterative solve whose sigma comes from a
+# finite-difference Jacobian drifts in the 9th digit between platforms (measured pair in
+# test_oracle_csv_tolerates_iterative_fit_drift_on_modified_rows_only). Still far below a
+# real regression, which moves a parameter in its leading digits.
+_ORACLE_RTOL_ITERATIVE = 1e-6
+_ITERATIVE_MODELS = ("curie_weiss_modified",)
 
 
-def _num_close(a, b) -> bool:
+def _num_close(a, b, rtol=_ORACLE_RTOL) -> bool:
     if isinstance(a, bool) or isinstance(b, bool):
         return a is b                       # bools are ints in Python; never tolerate
-    return bool(np.isclose(a, b, rtol=_ORACLE_RTOL, atol=0.0, equal_nan=True))
+    return bool(np.isclose(a, b, rtol=rtol, atol=0.0, equal_nan=True))
 
 
 def _assert_like_oracle(got, want, path="$"):
@@ -333,6 +360,7 @@ def _assert_csv_like_oracle(blob: bytes, golden: pathlib.Path, label: str):
     for r, (gl, wl) in enumerate(zip(got_rows, want_rows)):
         gc, wc = gl.split(","), wl.split(",")
         assert len(gc) == len(wc), f"{label} row {r}: {len(gc)} cells != {len(wc)}"
+        rtol = _ORACLE_RTOL_ITERATIVE if any(m in wc for m in _ITERATIVE_MODELS) else _ORACLE_RTOL
         for c, (g, w) in enumerate(zip(gc, wc)):
             if g == w:
                 continue
@@ -340,8 +368,8 @@ def _assert_csv_like_oracle(blob: bytes, golden: pathlib.Path, label: str):
                 gv, wv = float(g), float(w)
             except ValueError:
                 raise AssertionError(f"{label} row {r} col {c}: {g!r} != {w!r}") from None
-            assert _num_close(gv, wv), \
-                f"{label} row {r} col {c}: {g} != {w} (rtol {_ORACLE_RTOL})"
+            assert _num_close(gv, wv, rtol), \
+                f"{label} row {r} col {c}: {g} != {w} (rtol {rtol})"
 
 
 def test_oracle_comparison_tolerates_platform_ulps_but_not_regressions():
@@ -358,6 +386,29 @@ def test_oracle_comparison_tolerates_platform_ulps_but_not_regressions():
     ]:
         with pytest.raises(AssertionError):
             _assert_like_oracle(bad, base)
+
+
+def test_oracle_csv_tolerates_iterative_fit_drift_on_modified_rows_only():
+    """The modified Curie-Weiss fit is an iterative least-squares solve, and its sigma comes
+    from a finite-difference Jacobian: platforms disagree in the 9th digit, not the 15th.
+    Measured on the first Linux CI run of the modified-fit CSV rows (2026-10-01):
+        8.998909818421354e-06  (macOS/Accelerate)  vs
+        8.99890977318397e-06   (Linux/OpenBLAS)    -> 5.0e-9 relative
+    Rows of that model get 1e-6; every other row keeps the 1e-9 above."""
+    import tempfile
+    head = "quantity,value,sigma,unit,model\n"
+    mac = head + "C,0.5,8.998909818421354e-06,K,curie_weiss_modified\n"
+    linux = head + "C,0.5,8.99890977318397e-06,K,curie_weiss_modified\n"
+    with tempfile.TemporaryDirectory() as d:
+        g = pathlib.Path(d) / "g.golden"
+        g.write_text(mac)
+        _assert_csv_like_oracle(linux.encode(), g, "derived")          # measured pair passes
+        with pytest.raises(AssertionError):                             # a 6th-digit move fails
+            _assert_csv_like_oracle(linux.replace("8.9989097", "8.9989597").encode(), g, "derived")
+        g.write_text(mac.replace("curie_weiss_modified", "curie_weiss"))
+        with pytest.raises(AssertionError):                             # plain rows stay at 1e-9
+            _assert_csv_like_oracle(linux.replace("curie_weiss_modified", "curie_weiss").encode(),
+                                    g, "derived")
 
 
 def test_oracle_vsm_synth_json_csv_report_png(tmp_path):

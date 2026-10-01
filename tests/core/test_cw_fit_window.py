@@ -1,0 +1,715 @@
+"""Curie-Weiss fit windows, and curves that run from 1/chi = 0 to the top of the data.
+
+The user can bound the points the Curie-Weiss (CW) fit and, separately, the modified CW fit
+(chi = chi0 + C/(T - theta)) are judged on. The curve each fit produces does not stop at its
+window: it starts where it reaches 1/chi = 0 -- at its own theta -- and runs to the highest
+data temperature (or a set limit), as ONE line. `fit_range` and the parallel `in_fit_window`
+list say which part was fitted.
+
+Where carrying a curve outside its window would draw something false -- a CW line with C <= 0
+or with theta inside its own window (1/chi <= 0 on fitted points), a modified curve whose pole
+lies inside the window, or a modified theta so far below zero that T >> |theta| is never
+reached -- the curve is the window only and says so (`zero_crossing: false` plus a reason).
+"""
+import numpy as np
+import pytest
+
+from cryosweep_core.config import RunConfig
+from cryosweep_core.fitting.models import CurieWeissModel, cw_curve, fit_cw_ladder
+
+_SI_PER_CGS = 4 * np.pi * 1e-6          # chi_SI (m^3/mol) = chi_CGS (emu/(mol*Oe)) * 4 pi 1e-6
+
+
+def _cw(theta=-10.0, C=0.5, n=150, tmin=2.0, tmax=300.0):
+    T = np.linspace(tmin, tmax, n)
+    return T, (T - theta) / C
+
+
+def _mod(theta=-20.0, C=0.8, chi0=2e-3, n=150, tmin=2.0, tmax=300.0):
+    T = np.linspace(tmin, tmax, n)
+    return T, 1.0 / (chi0 + C / (T - theta))
+
+
+def _arr(c, k):
+    return np.asarray(c[k], float)
+
+
+# ------------------------------------------------------------------ config
+
+def test_vsm_config_defaults_to_no_window():
+    v = RunConfig().vsm
+    assert (v.cw_fit_min_k, v.cw_fit_max_k, v.cw_mod_fit_min_k, v.cw_mod_fit_max_k,
+            v.cw_curve_max_k) == (None,) * 5
+
+
+def test_vsm_config_loads_and_is_in_the_schema():
+    cfg = RunConfig.load(vsm={"cw_fit_min_k": 150.0, "cw_curve_max_k": 400.0})
+    assert cfg.vsm.cw_fit_min_k == 150.0 and cfg.vsm.cw_curve_max_k == 400.0
+    props = RunConfig.model_json_schema()["$defs"]["VSMCfg"]["properties"]
+    assert {"cw_fit_min_k", "cw_fit_max_k", "cw_mod_fit_min_k", "cw_mod_fit_max_k",
+            "cw_curve_max_k"} <= set(props)
+
+
+# ------------------------------------------------------------------ cw_curve: plain CW
+
+def test_cw_curve_starts_at_theta_with_zero_and_ends_at_top():
+    c = cw_curve({"C": 0.5, "theta": -10.0}, "curie_weiss", 50.0, 200.0, 300.0)
+    g, y, f = _arr(c, "t_grid"), _arr(c, "inv_chi_fit"), np.asarray(c["in_fit_window"])
+    assert g[0] == -10.0 and y[0] == 0.0
+    assert g[-1] == 300.0
+    assert np.all(np.diff(g) > 0) and np.all(np.isfinite(y))
+    assert c["zero_crossing"] is True
+    # both window edges are exact grid points and the flag flips AT them
+    assert 50.0 in g and 200.0 in g
+    assert f[g == 50.0][0] and f[g == 200.0][0]
+    assert not f[g < 50.0].any() and not f[g > 200.0].any()
+    assert f[(g >= 50.0) & (g <= 200.0)].all()
+    assert len(g) == len(y) == len(f)
+
+
+def test_cw_curve_positive_theta_below_the_window_starts_at_theta():
+    c = cw_curve({"C": 0.5, "theta": 30.0}, "curie_weiss", 60.0, 300.0, 300.0)
+    assert c["t_grid"][0] == 30.0 and c["inv_chi_fit"][0] == 0.0
+    assert c["zero_crossing"] is True
+
+
+def test_cw_curve_top_never_cuts_into_the_window():
+    c = cw_curve({"C": 0.5, "theta": -10.0}, "curie_weiss", 50.0, 200.0, 120.0)
+    assert c["t_grid"][-1] == 200.0
+
+
+@pytest.mark.parametrize("params, why", [
+    ({"C": -0.5, "theta": 400.0}, "C_nonpositive"),
+    ({"C": 0.5, "theta": 80.0}, "theta_in_window"),
+])
+def test_cw_curve_declines_the_extension_and_never_draws_negative_inverse_chi(params, why):
+    c = cw_curve(params, "curie_weiss", 50.0, 200.0, 300.0)
+    g, y = _arr(c, "t_grid"), _arr(c, "inv_chi_fit")
+    assert c["zero_crossing"] is False and c["reason"] == why
+    assert g.size and g.min() >= 50.0 and g.max() <= 200.0     # the window only
+    assert np.all(y > 0)                                         # clipped to 1/chi > 0
+    assert all(c["in_fit_window"])
+
+
+# ------------------------------------------------------------------ cw_curve: modified
+
+def test_modified_curve_starts_at_its_own_theta_and_ends_at_top():
+    p = {"C": 0.8, "theta": -20.0, "chi0": 2e-3}
+    c = cw_curve(p, "curie_weiss_modified", 2.0, 300.0, 300.0)
+    g, y = _arr(c, "t_grid"), _arr(c, "inv_chi_fit")
+    assert g[0] == -20.0 and y[0] == 0.0          # evaluated as (T-theta)/(...): exactly 0
+    assert g[-1] == 300.0 and np.all(np.isfinite(y)) and np.all(y[1:] > 0)
+    assert c["zero_crossing"] is True and c["reason"] is None
+
+
+def test_modified_curve_with_negative_chi0_stops_before_its_pole():
+    # chi0 < 0: the denominator chi0 (T - theta) + C vanishes at T* = theta - C/chi0
+    p = {"C": 0.8, "theta": -20.0, "chi0": -2e-3}
+    tstar = -20.0 - 0.8 / -2e-3                   # 380 K, above the window, below top
+    c = cw_curve(p, "curie_weiss_modified", 2.0, 300.0, 500.0)
+    g, y = _arr(c, "t_grid"), _arr(c, "inv_chi_fit")
+    assert g[0] == -20.0 and y[0] == 0.0
+    assert g.max() < tstar and g.max() > 300.0
+    assert np.all(np.isfinite(y)) and np.all(y[1:] > 0)     # never joins +inf to -inf
+    assert c["zero_crossing"] is True
+
+
+def test_modified_curve_with_its_pole_inside_the_window_is_window_only():
+    p = {"C": 0.8, "theta": -20.0, "chi0": -5e-3}          # T* = 140 K, inside 2-300 K
+    c = cw_curve(p, "curie_weiss_modified", 2.0, 300.0, 300.0)
+    y = _arr(c, "inv_chi_fit")
+    assert c["zero_crossing"] is False and c["reason"] == "pole_in_window"
+    assert np.all(np.isfinite(y)) and np.all(y > 0)
+    assert min(c["t_grid"]) >= 2.0 and max(c["t_grid"]) < 140.0
+
+
+def test_modified_theta_far_below_zero_is_window_only_and_flagged():
+    # T >> |theta| is never reached when theta < -T_max(window): no asymptotic regime
+    # the real-file magnitudes (theta -2.5e5 K, pole near 667 K)
+    p = {"C": 141524210.47, "theta": -250502.16, "chi0": -563.46}
+    c = cw_curve(p, "curie_weiss_modified", 2.0, 300.0, 300.0)
+    g = _arr(c, "t_grid")
+    assert c["zero_crossing"] is False and c["reason"] == "theta_out_of_range"
+    assert g.min() >= 2.0 and g.max() <= 300.0
+
+
+def test_curve_values_are_json_safe():
+    for p, m in (({"C": 0.5, "theta": -10.0}, "curie_weiss"),
+                 ({"C": 0.8, "theta": -20.0, "chi0": -2e-3}, "curie_weiss_modified")):
+        c = cw_curve(p, m, 2.0, 300.0, 1000.0)
+        assert np.all(np.isfinite(_arr(c, "inv_chi_fit")))
+        assert all(isinstance(v, bool) for v in c["in_fit_window"])
+
+
+# ------------------------------------------------------------------ ladder inside a window
+
+def test_ladder_inside_a_window_skips_copies_and_spreads_over_one_rung():
+    T, inv = _cw()
+    w = T >= 150.0
+    _, ladder, spread, _ = fit_cw_ladder(T[w], inv[w], windowed=True)
+    # 25/50/100/150 K would all be exact copies of the primary fit
+    assert [e["tmin_k"] for e in ladder] == [200.0]
+    assert spread is not None                    # primary + one rung = two fits
+
+
+def test_ladder_inside_a_narrow_window_has_no_spread():
+    T, inv = _cw()
+    w = T >= 250.0
+    _, ladder, spread, _ = fit_cw_ladder(T[w], inv[w], windowed=True)
+    assert ladder == [] and spread is None       # never 0.0
+
+
+def test_ladder_without_a_window_keeps_every_rung():
+    T, inv = _cw()
+    _, ladder, _, _ = fit_cw_ladder(T, inv)
+    assert [e["tmin_k"] for e in ladder] == [25.0, 50.0, 100.0, 150.0, 200.0]
+
+
+@pytest.mark.parametrize("tmin", [40.0, 160.0])
+def test_ladder_without_a_window_is_unchanged_on_data_starting_high(tmin):
+    """No user window = the previous ladder exactly, even when the data start above some
+    rungs (those rungs refit the full data; the spread needs >= 2 rungs, as before)."""
+    T, inv = _cw(tmin=tmin)
+    inv = inv * (1 + 0.01 * np.sin(T / 7.0))     # some window dependence
+    _, ladder, spread, _ = fit_cw_ladder(T, inv)
+    cut = [c for c in (25.0, 50.0, 100.0, 150.0, 200.0) if c < T.max() - 20.0]
+    assert [e["tmin_k"] for e in ladder] == cut
+    assert spread is not None
+
+
+# ------------------------------------------------------------------ modified fit unit invariance
+
+def test_modified_fit_is_unit_invariant():
+    """Same data in CGS and SI must give the same theta and the same chi0 (converted). Before
+    the fix SI chi0 stuck at its 0.0 start: the parameter scale was ~1e-5 of the CGS one."""
+    T, inv_cgs = _mod()
+    rng = np.random.default_rng(7)
+    inv_cgs = inv_cgs * (1.0 + 0.005 * rng.standard_normal(T.size))
+    a = CurieWeissModel().fit(T, inv_cgs, "CGS", modified=True)
+    b = CurieWeissModel().fit(T, inv_cgs / _SI_PER_CGS, "SI", modified=True)
+    assert a.params["theta"] == pytest.approx(-20.0, abs=2.0)
+    assert b.params["theta"] == pytest.approx(a.params["theta"], rel=1e-5)
+    assert b.params["chi0"] == pytest.approx(a.params["chi0"] * _SI_PER_CGS, rel=1e-4)
+    assert b.params["C"] == pytest.approx(a.params["C"] * _SI_PER_CGS, rel=1e-5)
+    assert b.sigma["chi0"] == pytest.approx(a.sigma["chi0"] * _SI_PER_CGS, rel=1e-3)
+    assert b.sigma["theta"] == pytest.approx(a.sigma["theta"], rel=1e-3)
+
+
+# ------------------------------------------------------------------ analyzer
+
+import pathlib
+
+from cryosweep_core.analyzers.mag import VSMAnalyzer
+from cryosweep_core.io.loader import load_dat
+
+from tests.core.conftest import require_real
+
+_EX = pathlib.Path(__file__).parents[2] / "examples"
+
+
+def _an(vsm=None, unit_system="CGS", name="magnetization_vsm.dat"):
+    rt = load_dat(str(_EX / name))
+    return VSMAnalyzer().analyze(rt, RunConfig.load(unit_system=unit_system, vsm=vsm or {}))
+
+
+def test_no_window_carries_both_curves_from_theta_to_the_data_top():
+    r = _an()
+    d = r.data
+    T = np.asarray(d["temperature"])
+    for key, fkey in (("fit_curve", "fit"), ("fit_modified_curve", "fit_modified")):
+        c = d[key]
+        assert c["zero_crossing"] is True
+        assert c["t_grid"][0] == d[fkey]["params"]["theta"] and c["inv_chi_fit"][0] == 0.0
+        assert c["t_grid"][-1] == pytest.approx(T.max())
+        assert c["fit_range"] == d[fkey]["fit_range"]
+        assert c["window_k"] == [None, None]
+
+
+def test_curve_keys_are_appended_last():
+    keys = list(_an().data)
+    i = keys.index("mu_eff_spread")
+    assert keys[i + 1:i + 3] == ["fit_curve", "fit_modified_curve"]
+
+
+def test_cw_window_bounds_the_fit_and_its_ladder_but_not_the_data():
+    base = _an().data
+    d = _an({"cw_fit_min_k": 150.0}).data
+    T = np.asarray(d["temperature"])
+    assert len(T) == len(base["temperature"])                 # data are not windowed
+    assert d["fit"]["fit_range"][0] >= 150.0
+    assert d["fit"]["n_points"] == int((T >= 150.0).sum())
+    assert all(e["tmin_k"] > d["fit"]["fit_range"][0] for e in d["cw_ladder"] or [])
+    # the curve still starts at theta and runs to the top of the data
+    c = d["fit_curve"]
+    assert c["t_grid"][0] == d["fit"]["params"]["theta"] and c["t_grid"][-1] == T.max()
+    g, f = np.asarray(c["t_grid"]), np.asarray(c["in_fit_window"])
+    assert not f[g < d["fit"]["fit_range"][0]].any() and f[g == d["fit"]["fit_range"][0]].all()
+    assert c["window_k"] == [150.0, None]
+    # the modified fit has its own window: untouched
+    assert d["fit_modified"]["fit_range"] == base["fit_modified"]["fit_range"]
+
+
+def test_modified_window_is_separate():
+    d = _an({"cw_mod_fit_min_k": 50.0, "cw_mod_fit_max_k": 200.0}).data
+    lo, hi = d["fit_modified"]["fit_range"]
+    assert lo >= 50.0 and hi <= 200.0
+    assert d["fit"]["fit_range"] == _an().data["fit"]["fit_range"]
+    assert d["fit_modified_curve"]["window_k"] == [50.0, 200.0]
+
+
+def test_curve_limit_extends_and_an_invalid_one_is_ignored_with_a_warning():
+    assert _an({"cw_curve_max_k": 400.0}).data["fit_curve"]["t_grid"][-1] == 400.0
+    r = _an({"cw_curve_max_k": -5.0})
+    assert r.data["fit_curve"]["t_grid"][-1] == max(r.data["temperature"])
+    assert any("cw_curve_max_k" in w for w in r.warnings)
+
+
+def test_a_window_that_leaves_too_few_points_keeps_the_data():
+    r = _an({"cw_fit_min_k": 299.5})
+    assert r.status == "low_confidence"
+    assert r.data["fit"] is None and r.data["fit_curve"] is None
+    assert len(r.data["temperature"]) == 300                   # arrays, plots, export survive
+    assert any("vsm.cw_fit_min_k" in w for w in r.warnings)
+    assert r.data["fit_modified"] is not None                  # its own window is unbounded
+
+
+def test_a_modified_window_that_leaves_too_few_points_is_non_blocking():
+    r = _an({"cw_mod_fit_min_k": 299.5})
+    assert r.status == "ok" and r.data["fit"] is not None
+    assert r.data["fit_modified"] is None and r.data["fit_modified_curve"] is None
+    assert any("vsm.cw_mod_fit_min_k" in w for w in r.warnings)
+
+
+@pytest.mark.parametrize("vsm", [{"cw_fit_min_k": 200.0, "cw_fit_max_k": 100.0},
+                                 {"cw_fit_min_k": float("nan")}])
+def test_an_invalid_window_is_ignored_with_a_warning(vsm):
+    r = _an(vsm)
+    base = _an()
+    assert r.data["fit"] == base.data["fit"]
+    assert any("cw_fit" in w and "ignored" in w for w in r.warnings)
+
+
+def test_paramagnetic_regime_warning_uses_the_window_minimum():
+    msg = "CW fit window extends below |theta|"
+    assert any(msg in w for w in _an().warnings)               # 2 K < |theta| = 10 K
+    assert not any(msg in w for w in _an({"cw_fit_min_k": 50.0}).warnings)
+
+
+def test_si_curve_is_in_si_units():
+    d = _an(unit_system="SI").data
+    c = d["fit_curve"]
+    T = np.asarray(d["temperature"]); y = np.asarray(d["inv_chi"])
+    i = int(np.argmax(T))
+    assert c["inv_chi_fit"][-1] == pytest.approx(y[i], rel=1e-2)
+
+
+def _real(key, vsm=None, unit_system="CGS"):
+    import dataclasses
+    rt = load_dat(str(require_real(key)))
+    if rt.header.molar_mass is None or key == "vsm_mt":
+        mm, ms = {"mpms": (683.22, 12.0), "vsm": (300.0, 1.1)}.get(key, (200.0, 5.0))
+        rt = dataclasses.replace(rt, header=dataclasses.replace(rt.header, molar_mass=mm,
+                                                                mass_mg=ms))
+    return VSMAnalyzer().analyze(rt, RunConfig.load(unit_system=unit_system, vsm=vsm or {}))
+
+
+def test_real_file_unresolved_modified_fit_is_declined():
+    """No window: theta_mod ~ -2.5e5 K with sigma ~ 4e8 K. Not a measurement: C, theta, chi0
+    and mu_eff are null, flagged, and no curve is drawn or exported."""
+    d = _real("vsm_mt").data
+    fm = d["fit_modified"]
+    for k in ("C", "theta", "chi0", "mu_eff"):
+        assert fm["params"][k] is None and fm["sigma"][k] is None, k
+    assert {"C_unresolved", "theta_unresolved", "chi0_unresolved"} <= set(fm["quality_flags"])
+    c = d["fit_modified_curve"]
+    assert c["t_grid"] == [] and c["zero_crossing"] is False
+    assert c["reason"] in ("C_unresolved", "theta_unresolved")
+
+
+def test_modified_parameter_pinned_at_its_bound_is_declined():
+    """mpms 2-20 K: C sits at its positive lower bound and theta = -3781 K with sigma 0."""
+    d = _real("mpms", {"cw_mod_fit_min_k": 2.0, "cw_mod_fit_max_k": 20.0}).data
+    fm = d["fit_modified"]
+    assert "C_at_bound" in fm["quality_flags"] and "theta_unresolved" in fm["quality_flags"]
+    assert fm["params"]["C"] is None and fm["params"]["theta"] is None
+    assert fm["params"]["mu_eff"] is None
+    assert d["fit_modified_curve"]["t_grid"] == []
+
+
+def test_unresolved_chi0_alone_keeps_the_curve():
+    """The examples' exact data put chi0 at ~0 with sigma >= |chi0|: chi0 is blanked, but the
+    curve (the fit's own prediction) is still drawn."""
+    d = _an().data
+    fm = d["fit_modified"]
+    assert fm["quality_flags"] == ["chi0_unresolved"]
+    assert fm["params"]["chi0"] is None and fm["params"]["theta"] is not None
+    c = d["fit_modified_curve"]
+    assert c["zero_crossing"] is True and c["t_grid"][0] == fm["params"]["theta"]
+
+
+def test_resolved_far_negative_modified_theta_is_flagged_and_kept(tmp_path):
+    """theta_mod below -T_max, but resolved: kept, flagged, drawn over its window only."""
+    T = np.linspace(2.0, 300.0, 150)
+    chi = 1e-3 + 40.0 / (T + 600.0)
+    p = tmp_path / "far.dat"
+    _write_dat(p, T, chi)
+    d = VSMAnalyzer().analyze(load_dat(str(p)), RunConfig.load()).data
+    fm = d["fit_modified"]
+    assert fm["params"]["theta"] == pytest.approx(-600.0, rel=1e-3)
+    assert fm["quality_flags"] == ["theta_out_of_range"]
+    c = d["fit_modified_curve"]
+    assert c["reason"] == "theta_out_of_range" and min(c["t_grid"]) >= fm["fit_range"][0]
+
+
+def _write_dat(path, T, chi, H=1000.0, mass_mg=5.0, mol=200.0):
+    mom = np.asarray(chi) * H * (mass_mg / 1000.0) / mol
+    path.write_text(
+        "[Header]\nTITLE,synthetic\nBYAPP,VSM,1.0,1.0\n"
+        f"INFO,{mass_mg},MASS:Sample Mass (mg)\nINFO,{mol},MOLWGHT:Formula Weight (g/mole)\n"
+        "[Data]\nTemperature (K),Magnetic Field (Oe),Moment (emu),M. Std. Err. (emu)\n"
+        + "".join(f"{t:.6f},{H:.4f},{v:.10e},1e-9\n" for t, v in zip(T, mom)))
+
+
+# ------------------------------------------------------------------ plain CW honesty
+
+def test_unphysical_plain_cw_is_flagged_and_not_ok():
+    """mpms 2-20 K: C = -2.2, theta = +103 K. It used to report status ok with no flag."""
+    r = _real("mpms", {"cw_fit_min_k": 2.0, "cw_fit_max_k": 20.0})
+    f = r.data["fit"]
+    assert f["params"]["C"] < 0
+    assert "C_nonpositive" in f["quality_flags"]
+    assert r.status == "low_confidence"
+    assert f["params"]["mu_eff"] is None             # sqrt(C < 0): not a number, never NaN
+
+
+def test_plain_cw_theta_far_below_the_window_is_flagged_and_window_only():
+    """vsm 10-20 K: theta = -344 K; the axis used to run to -344."""
+    r = _real("vsm", {"cw_fit_min_k": 10.0, "cw_fit_max_k": 20.0})
+    f, c = r.data["fit"], r.data["fit_curve"]
+    assert f["params"]["theta"] < -f["fit_range"][1]
+    assert "theta_out_of_range" in f["quality_flags"]
+    assert c["reason"] == "theta_out_of_range" and min(c["t_grid"]) >= f["fit_range"][0]
+    assert r.status == "low_confidence"
+
+
+def test_cw_curve_plain_theta_out_of_range():
+    c = cw_curve({"C": 0.5, "theta": -400.0}, "curie_weiss", 10.0, 20.0, 300.0)
+    assert c["reason"] == "theta_out_of_range" and min(c["t_grid"]) >= 10.0
+
+
+def test_curve_limit_below_the_window_top_warns():
+    r = _an({"cw_curve_max_k": 100.0})
+    assert r.data["fit_curve"]["t_grid"][-1] == max(r.data["temperature"])
+    assert any("vsm.cw_curve_max_k" in w and "below" in w for w in r.warnings)
+
+
+def test_report_names_the_modified_fit_flags_and_the_warnings():
+    from cryosweep_core.reports import build_report
+    md = build_report(_an()).get("markdown")
+    assert "curie_weiss_modified" in md and "chi0_unresolved" in md
+    assert "## Warnings" in md
+    lost = build_report(_an({"cw_fit_min_k": 299.5}))["markdown"]
+    assert "vsm.cw_fit_min_k" in lost
+
+
+# ------------------------------------------------------------------ export
+
+import csv
+import json
+
+from cryosweep_core.io.export import export_result
+
+
+def _rows(path):
+    with open(path, newline="") as f:
+        return list(csv.reader(f))
+
+
+def test_model_curves_csv_runs_from_theta_to_the_top_with_window_flags(tmp_path):
+    r = _an({"cw_fit_min_k": 150.0})
+    out = export_result(r, str(tmp_path / "e"))
+    rows = _rows(out["model_curves"])
+    assert rows[0] == ["model", "x", "y", "in_fit_window"]     # same header as heat capacity
+    cw = [x for x in rows[1:] if x[0] == "curie_weiss"]
+    mod = [x for x in rows[1:] if x[0] == "curie_weiss_modified"]
+    assert cw and mod
+    d = r.data
+    assert float(cw[0][1]) == pytest.approx(d["fit"]["params"]["theta"]) and float(cw[0][2]) == 0.0
+    assert float(cw[-1][1]) == pytest.approx(max(d["temperature"]))
+    flags = [x[3] for x in cw]
+    first_in = flags.index("1")
+    assert float(cw[first_in][1]) == pytest.approx(d["fit"]["fit_range"][0])
+    assert set(flags[:first_in]) == {"0"}
+    meta = json.loads(pathlib.Path(out["meta"]).read_text())
+    assert meta["units"]["model_curves.y"] == d["inv_chi_unit"]
+    assert meta["units"]["model_curves.x"] == "K"
+
+
+def test_derived_csv_carries_the_modified_fit(tmp_path):
+    r = _an(name="magnetization_vsm_multifield.dat")
+    rows = _rows(export_result(r, str(tmp_path / "e"))["derived"])
+    assert rows[0] == ["quantity", "value", "sigma", "unit", "model"]
+    mod = {x[0]: x for x in rows[1:] if x[4] == "curie_weiss_modified"}
+    pm = r.data["fit_modified"]["params"]
+    assert set(pm) <= set(mod)
+    assert float(mod["chi0"][1]) == pytest.approx(pm["chi0"])
+    assert mod["chi0"][3] == r.data["fit_modified"]["units"]["chi0"]
+    assert "quality_flags" not in mod                           # clean fit: no flags row
+
+
+def test_export_survives_a_fit_lost_to_the_window(tmp_path):
+    r = _an({"cw_fit_min_k": 299.5})
+    out = export_result(r, str(tmp_path / "e"))
+    rows = _rows(out["model_curves"])
+    assert {x[0] for x in rows[1:]} == {"curie_weiss_modified"}
+    assert _rows(out["fit_params"])[0] == ["param", "value", "sigma", "unit"]
+    assert len(_rows(out["points"])) == 301
+
+
+def test_model_curves_csv_is_header_only_without_curves(tmp_path):
+    r = _an({"cw_fit_min_k": 299.5, "cw_mod_fit_min_k": 299.5})
+    rows = _rows(export_result(r, str(tmp_path / "e"))["model_curves"])
+    assert rows == [["model", "x", "y", "in_fit_window"]]
+
+
+def test_derived_csv_blanks_and_names_a_declined_parameter(tmp_path):
+    rows = _rows(export_result(_an(), str(tmp_path / "e"))["derived"])
+    mod = {x[0]: x for x in rows[1:] if x[4] == "curie_weiss_modified"}
+    assert mod["chi0"][1] == "" and mod["chi0"][2] == ""
+    assert mod["theta"][1] != ""
+    assert "chi0_unresolved" in mod["quality_flags"][1]
+
+
+def test_declined_curve_is_not_exported(tmp_path):
+    rows = _rows(export_result(_real("vsm_mt"), str(tmp_path / "e"))["model_curves"])
+    assert {x[0] for x in rows[1:]} == {"curie_weiss"}
+
+
+# ------------------------------------------------------------------ figure
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+from cryosweep_core.plotting.catalog import OverlayFile, series_inverse_chi
+from cryosweep_core.plotting.render import render_kind
+from cryosweep_core.plotting.spec import GlobalStyle, PlotSpec
+
+
+def _fig(r, **kw):
+    return render_kind([r], "inverse_chi", PlotSpec(**kw), GlobalStyle())
+
+
+def _gid(ax, gid):
+    return [ln for ln in ax.lines if ln.get_gid() == gid]
+
+
+def test_each_fit_is_one_solid_line_from_zero_at_theta_to_the_top():
+    r = _an({"cw_fit_min_k": 150.0})
+    ax = _fig(r).axes[0]
+    assert not _gid(ax, "fit-extrap")                  # no dotted continuation
+    fits = _gid(ax, "fit")
+    assert len(fits) == 2
+    for ln, key in zip(fits, ("fit_curve", "fit_modified_curve")):
+        c = r.data[key]
+        x = np.asarray(ln.get_xdata(), float); y = np.asarray(ln.get_ydata(), float)
+        assert x[0] == c["t_grid"][0] and y[0] == 0.0
+        assert x[-1] == pytest.approx(max(r.data["temperature"]))
+    assert fits[0].get_linestyle() != fits[1].get_linestyle()   # which model, by style
+    plt.close("all")
+
+
+def test_y_axis_is_framed_on_the_data_and_zero():
+    r = _an({"cw_curve_max_k": 900.0})                 # the curve overshoots the data 3x
+    ax = _fig(r).axes[0]
+    lo, hi = ax.get_ylim()
+    y = np.asarray(r.data["inv_chi"])
+    assert lo <= 0.0 < y.min()                         # 1/chi = 0 at theta is on the frame
+    assert hi < 1.2 * y.max()                          # framed on the data, not the curve
+    assert ax.get_xlim()[0] <= r.data["fit"]["params"]["theta"]   # negative theta visible
+    plt.close("all")
+
+
+def test_user_y_limits_still_win():
+    ax = _fig(_an(), ymin=10.0, ymax=50.0).axes[0]
+    assert ax.get_ylim() == pytest.approx((10.0, 50.0))
+    plt.close("all")
+
+
+def test_old_results_without_curves_keep_the_old_drawing():
+    r = _an()
+    old = r.model_copy(deep=True)
+    for k in ("fit_curve", "fit_modified_curve"):
+        old.data.pop(k)
+    ax = _fig(old).axes[0]
+    assert _gid(ax, "fit-extrap")                      # the dotted continuation, as before
+    plt.close("all")
+
+
+def test_fit_series_are_cataloged_but_never_drawn_as_data():
+    r = _an()
+    fits = [s for s in series_inverse_chi(r) if s.role == "fit"]
+    assert {s.key for s in fits} == {"cw_fit", "cw_modified_fit"}
+    c = r.data["fit_curve"]
+    s = next(s for s in fits if s.key == "cw_fit")
+    assert s.x == c["t_grid"] and s.y == c["inv_chi_fit"]
+    ax = _fig(r).axes[0]
+    marked = [ln for ln in ax.lines if ln.get_marker() not in (None, "None", "", " ")]
+    assert all(len(ln.get_xdata()) != len(c["t_grid"]) for ln in marked)
+    plt.close("all")
+
+
+def test_overlay_draws_no_fit_lines():
+    a, b = _an(), _an({"cw_fit_min_k": 150.0})
+    ov = [OverlayFile(file_id=0, label="a"), OverlayFile(file_id=1, label="b")]
+    ax = render_kind([a, b], "inverse_chi", PlotSpec(), GlobalStyle(), overlay=ov).axes[0]
+    assert not _gid(ax, "fit") and not _gid(ax, "fit-extrap")
+    assert len(ax.lines) == 2                          # one data series per file
+    plt.close("all")
+
+
+def test_window_only_modified_curve_draws_only_its_window():
+    r = _an()
+    r = r.model_copy(deep=True)
+    lo, hi = r.data["fit_modified"]["fit_range"]
+    r.data["fit_modified_curve"] = cw_curve(
+        {"C": 0.8, "theta": -20.0, "chi0": -5e-3}, "curie_weiss_modified", lo, hi, hi)
+    ax = _fig(r).axes[0]
+    mod = [ln for ln in _gid(ax, "fit") if ln.get_label().startswith("modified CW")]
+    x = np.asarray(mod[0].get_xdata(), float)
+    assert x.min() >= lo
+    plt.close("all")
+
+
+def _annotation(ax):
+    return next(t.get_text() for t in ax.texts if "θ" in t.get_text())
+
+
+def test_flags_reach_the_figure_unresolved_chi0():
+    ax = _fig(_an()).axes[0]
+    labels = [ln.get_label() for ln in _gid(ax, "fit")]
+    assert "modified CW (χ₀ unresolved)" in labels
+    txt = _annotation(ax)
+    assert "χ₀ unresolved" in txt and "χ₀ = " not in txt
+    plt.close("all")
+
+
+def test_flags_reach_the_figure_theta_out_of_range(tmp_path):
+    T = np.linspace(2.0, 300.0, 150)
+    pth = tmp_path / "far.dat"
+    _write_dat(pth, T, 1e-3 + 40.0 / (T + 600.0))
+    r = VSMAnalyzer().analyze(load_dat(str(pth)), RunConfig.load())
+    ax = _fig(r).axes[0]
+    labels = [ln.get_label() for ln in _gid(ax, "fit")]
+    assert "modified CW (θ out of range)" in labels
+    txt = _annotation(ax)
+    assert "χ₀ = " in txt and "(θ out of range)" in txt.split("χ₀")[1]
+    plt.close("all")
+
+
+def test_flags_reach_the_figure_plain_cw():
+    r = _real("vsm", {"cw_fit_min_k": 10.0, "cw_fit_max_k": 20.0})
+    ax = _fig(r).axes[0]
+    labels = [ln.get_label() for ln in _gid(ax, "fit")]
+    assert "Curie-Weiss fit (θ out of range)" in labels
+    assert _annotation(ax).splitlines()[1] == "CW fit (θ out of range)"
+    cw = next(ln for ln in _gid(ax, "fit") if ln.get_label().startswith("Curie-Weiss"))
+    assert min(cw.get_xdata()) >= r.data["fit"]["fit_range"][0]   # no run out to -344 K
+    plt.close("all")
+
+
+def test_declined_modified_curve_is_not_drawn():
+    ax = _fig(_real("vsm_mt")).axes[0]
+    assert not [ln for ln in _gid(ax, "fit") if ln.get_label().startswith("modified CW")]
+    assert "χ₀" not in _annotation(ax)
+    plt.close("all")
+
+
+# ------------------------------------------------------------------ CLI and pipeline
+
+import subprocess
+import sys
+
+_ROOT = pathlib.Path(__file__).resolve().parents[2]
+
+
+def _cli(args):
+    return subprocess.run([sys.executable, "-m", "cryosweep_cli", *args],
+                          capture_output=True, text=True, cwd=_ROOT)
+
+
+def test_cli_window_flags_reach_the_fit():
+    r = _cli(["analyze", str(_EX / "magnetization_vsm.dat"), "--cw-tmin", "150",
+              "--cw-tmax", "280", "--cw-mod-tmin", "50", "--cw-mod-tmax", "200",
+              "--cw-curve-max", "350"])
+    assert r.returncode in (0, 11), r.stderr
+    out = json.loads(r.stdout)
+    v = out["provenance"]["config"]["vsm"]
+    assert v == {"cw_fit_min_k": 150.0, "cw_fit_max_k": 280.0, "cw_mod_fit_min_k": 50.0,
+                 "cw_mod_fit_max_k": 200.0, "cw_curve_max_k": 350.0}
+    d = out["data"]
+    assert d["fit"]["fit_range"][0] >= 150.0 and d["fit"]["fit_range"][1] <= 280.0
+    assert d["fit_curve"]["t_grid"][-1] == 350.0
+
+
+def test_cli_flags_override_a_config_file_per_key(tmp_path):
+    cf = tmp_path / "cfg.json"
+    cf.write_text(json.dumps({"vsm": {"cw_fit_min_k": 100.0, "cw_curve_max_k": 400.0}}))
+    r = _cli(["analyze", str(_EX / "magnetization_vsm.dat"), "--config", str(cf),
+              "--cw-tmin", "150"])
+    assert r.returncode in (0, 11), r.stderr
+    v = json.loads(r.stdout)["provenance"]["config"]["vsm"]
+    assert v["cw_fit_min_k"] == 150.0 and v["cw_curve_max_k"] == 400.0
+
+
+def test_pipeline_unit_system_option_keeps_the_base_config(tmp_path):
+    """A step that sets unit_system used to rebuild RunConfig from scratch, dropping every
+    --config key (here: the Curie-Weiss window)."""
+    from cryosweep_core.pipeline import run_pipeline
+    pf = tmp_path / "p.json"
+    pf.write_text(json.dumps({"steps": [{"command": "analyze",
+                                         "file": str(_EX / "magnetization_vsm.dat"),
+                                         "options": {"unit_system": "SI"}}]}))
+    out = run_pipeline(str(pf), RunConfig.load(vsm={"cw_fit_min_k": 150.0}))
+    d = out["results"][0]["data"]
+    assert d["inv_chi_unit"] == "mol/m^3"
+    assert d["fit"]["fit_range"][0] >= 150.0
+
+
+# ------------------------------------------------------------------ plain-fit flags everywhere
+
+def test_plain_fit_flags_reach_derived_and_fit_params_without_a_ladder(tmp_path):
+    r = _real("vsm_mt", {"cw_fit_min_k": 2.0, "cw_fit_max_k": 20.0})
+    assert not r.data["cw_ladder"] and r.data["fit"]["quality_flags"]
+    out = export_result(r, str(tmp_path / "e"))
+    flags = ";".join(r.data["fit"]["quality_flags"])
+    der = [x for x in _rows(out["derived"])[1:] if x[0] == "quality_flags" and x[4] == "curie_weiss"]
+    assert der and der[0][1] == flags
+    fp = _rows(out["fit_params"])
+    assert fp[0] == ["param", "value", "sigma", "unit", "flags"]
+    assert all(row[4] == flags for row in fp[1:])
+
+
+def test_fit_params_layout_unchanged_without_flags(tmp_path):
+    r = _an({"cw_fit_min_k": 250.0})                      # no ladder, clean fit
+    assert not r.data["cw_ladder"] and not r.data["fit"]["quality_flags"]
+    out = export_result(r, str(tmp_path / "e"))
+    assert _rows(out["fit_params"])[0] == ["param", "value", "sigma", "unit"]
+    assert not [x for x in _rows(out["derived"]) if x[4:] == ["curie_weiss"] and x[0] == "quality_flags"]
+
+
+def test_curve_limit_warning_says_fitted_range_without_a_window():
+    w = [x for x in _an({"cw_curve_max_k": 100.0}).warnings if "cw_curve_max_k" in x]
+    assert w and all("fitted range" in x and "fit window" not in x for x in w)
+    w = [x for x in _an({"cw_curve_max_k": 100.0, "cw_mod_fit_max_k": 200.0}).warnings
+         if "curie_weiss_modified" in x]
+    assert w and "fit window" in w[0]
+
+
+def test_fully_declined_modified_fit_is_named_on_the_figure():
+    ax = _fig(_real("vsm_mt")).axes[0]
+    assert "modified CW declined (C_unresolved)" in _annotation(ax)
+    plt.close("all")
+    ax = _fig(_real("vsm_mt"), fit_lines=("cw",)).axes[0]
+    assert "declined" not in _annotation(ax)
+    plt.close("all")

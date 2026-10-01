@@ -98,6 +98,31 @@ never substitute a plausible one.
   data it can sit far from the measurement. `<stem>.model_curves.csv` has the same rows with
   an `in_fit_window` column (1/0). The Schottky and transition curves' `t_grid` still cover
   their fit window only.
+- **Curie-Weiss fit windows vs the curves** (flags or config): `--cw-tmin`/`--cw-tmax`
+  (`vsm.cw_fit_min_k`/`cw_fit_max_k`) bound the points the Curie-Weiss fit and its
+  `cw_ladder` use; `--cw-mod-tmin`/`--cw-mod-tmax` (`vsm.cw_mod_fit_min_k`/`cw_mod_fit_max_k`)
+  bound the modified fit, separately; `--cw-curve-max` (`vsm.cw_curve_max_k`) sets the upper end
+  of the drawn curves (a value below a fit window's top is raised to it, with a warning
+  naming `vsm.cw_curve_max_k`). The exported arrays are never windowed. `data.fit_curve` and
+  `data.fit_modified_curve` carry `t_grid`, `inv_chi_fit` (in `inv_chi_unit`), `in_fit_window`,
+  `fit_range`, `window_k`, `zero_crossing` and `reason`: each curve starts at 1/χ = 0 at its own
+  θ and runs to the highest data temperature. **`zero_crossing: false` means the curve is the
+  fit window only** — `reason` says why (`C_nonpositive`, `theta_in_window`, `pole_in_window`,
+  `theta_out_of_range`). The plain fit carries the same reason in `fit.quality_flags` and the
+  status is then `low_confidence` (C ≤ 0 also makes `mu_eff` null). A fit flagged
+  **`theta_out_of_range`** (θ below −T_max of its window) keeps its numbers but describes no
+  Curie-Weiss regime — do not quote its θ or μ_eff. **Declined modified parameters:** a
+  modified-fit parameter pinned at a fit bound or with σ ≥ |value| (or σ = 0) is `null` in JSON
+  and blank in CSV, flagged `<param>_at_bound` / `<param>_unresolved` (C, theta, chi0; μ_eff
+  goes with C). With C or θ declined the modified curve is empty (`reason` = that flag) and is
+  neither drawn nor exported; a declined chi0 alone leaves the curve. **Any FitResult
+  `params`/`sigma` value may be `null`** (schema: number or null, every probe) — handle it
+  before formatting. A flagged plain fit adds a `quality_flags` row (model `curie_weiss`) to
+  `derived.csv`.
+  A window that leaves < 3 points: that fit is `null`, the status `low_confidence`, and a warning
+  names the config key; widen the window. `<stem>.model_curves.csv` carries the curves
+  (`model,x,y,in_fit_window`); `derived.csv` carries the modified fit's parameters as rows with
+  `model = curie_weiss_modified` (plus a `quality_flags` row when flagged).
 - Plot: `--plot-kind KEY` (default: probe's default kind; keys from `cryosweep plots`), `--all` (every kind → `<prefix>_<kind>.<fmt>`; mutually exclusive with `--plot-kind`), `--format png,pdf,svg` (comma list, default png), `--dpi N`, `--tight`, `--style-file JSON`, `--layout-file JSON`
 - An unavailable plot kind is NOT an error: `data.plot` is null and a warning explains — check it.
 
@@ -173,7 +198,9 @@ Fits are re-run across fit-window rungs; `spread = max−min` across rungs is re
 to the statistical σ and can dwarf it (channel 2 above: `power_law_n_spread` 0.59 vs
 σ_n 0.11). The spread is window sensitivity, not an uncertainty — quote both.
 
-- VSM Curie-Weiss: `cw_ladder` + `theta_spread_k` / `mu_eff_spread`
+- VSM Curie-Weiss: `cw_ladder` + `theta_spread_k` / `mu_eff_spread` (inside a
+  `vsm.cw_fit_*` window the ladder runs on the windowed points only; a narrow window can carry
+  no spread — `null`)
 - Resistivity: `power_law_ladder` + `power_law_n_spread` (bound-pinned rungs stay listed with `at_bound: true` but are excluded from the spread)
 - TTO κ_ph: `kappa_ph_fit.ladder` + `n_spread`, plus `n_loglog`/`n_method_delta` (second method)
 - Hall: per point, `r_h_ladder` (rungs at |B| ≤ f·B_max, f = 1.00/0.75/0.50/0.25, each

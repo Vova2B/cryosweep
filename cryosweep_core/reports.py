@@ -33,10 +33,12 @@ def build_report(result) -> dict:
         model = fit.get("model", "")
         label = model.replace("_", " ").title() if model else ""
         lines += [f"## Fit — {label} (`{model}`)", "", "| param | value | ± σ | unit |", "|---|---|---|---|"]
-        for k, v in fit.get("params", {}).items():
-            s = fit.get("sigma", {}).get(k); u = fit.get("units", {}).get(k, "")
-            lines.append(f"| {k} | {v:.4g} | {('%.2g' % s) if s is not None else ''} | {u} |")
+        lines += _param_rows(fit)
         lines += ["", f"R² = {fit.get('r2'):.5f}, n = {fit.get('n_points')}"]
+        if d.get("probe") == "vsm" and fit.get("quality_flags"):
+            lines.append(f"Flags: {', '.join(fit['quality_flags'])}")
+    if d.get("probe") == "vsm":
+        lines += _vsm_report_extra(result, d)
     if result.gate:
         lines += ["", "## Gated outputs"] + [f"- `{g.need}`: {g.reason}" for g in result.gate]
     dj, dlines = _diagnostics_block(result)
@@ -44,6 +46,38 @@ def build_report(result) -> dict:
     if dlines:
         lines += dlines
     return {"json": j, "markdown": "\n".join(lines)}
+
+
+def _param_rows(fit):
+    out = []
+    for k, v in fit.get("params", {}).items():
+        s = fit.get("sigma", {}).get(k); u = fit.get("units", {}).get(k, "")
+        val = f"{v:.4g}" if v is not None else "declined"
+        out.append(f"| {k} | {val} | {('%.2g' % s) if s is not None else ''} | {u} |")
+    return out
+
+
+def _vsm_report_extra(result, d):
+    """The modified Curie-Weiss fit (with its flags; a declined parameter reads "declined")
+    and the analyzer's warnings -- which say, e.g., which fit window lost a fit and which
+    config key sets it."""
+    lines = []
+    fm = d.get("fit_modified")
+    if isinstance(fm, dict):
+        lines += ["", "## Fit — Modified Curie-Weiss (`curie_weiss_modified`)", "",
+                  "| param | value | ± σ | unit |", "|---|---|---|---|"]
+        lines += _param_rows(fm)
+        fr = fm.get("fit_range") or []
+        rng = f", fitted {fr[0]:.4g}–{fr[1]:.4g} K" if len(fr) == 2 else ""
+        lines += ["", f"R² = {fm.get('r2'):.5f}, n = {fm.get('n_points')}{rng}"]
+        if fm.get("quality_flags"):
+            lines.append(f"Flags: {', '.join(fm['quality_flags'])}")
+    elif "fit_modified_curve" in d:
+        lines += ["", "## Fit — Modified Curie-Weiss (`curie_weiss_modified`)", "",
+                  "Not fitted — see the warnings."]
+    if result.warnings:
+        lines += ["", "## Warnings", ""] + [f"- {w}" for w in result.warnings]
+    return lines
 
 
 def _resistivity_report(result) -> dict:

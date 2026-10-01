@@ -2,3 +2,8 @@ quantity,value,sigma,unit,model
 C,2.2238749695478046,0.010429564529212914,emu*K/(mol*Oe),curie_weiss
 theta,-50.266967623281055,0.9886712003439132,K,curie_weiss
 mu_eff,4.215809632977184,0.00988568584387491,mu_B,curie_weiss
+quality_flags,window_sensitive,,,curie_weiss
+C,4.646925145044738,0.44005683304404714,emu*K/(mol*Oe),curie_weiss_modified
+theta,-112.23975115171002,8.958088505530505,K,curie_weiss_modified
+chi0,-0.005866666863415925,0.0010307862733070637,emu/(mol*Oe),curie_weiss_modified
+mu_eff,6.094086956018289,0.28855044168509264,mu_B,curie_weiss_modified

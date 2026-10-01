@@ -5,10 +5,10 @@ Owner request 2026-09-05: "fits are not extrapolated to 0k on figures ... extrap
 already claims in text (gamma on cp_over_t, theta via the Curie-Weiss line on inverse_chi,
 rho0 on the resistivity kinds) — extending the fitted curve makes the claim visible.
 
-Where a separate continuation is drawn (Curie-Weiss, resistivity) it must never read as
-fit: dotted, thinner, half-alpha, gid="fit-extrap". Heat capacity no longer draws one — its
-curves are built over the whole drawn span (see test_hc_curve_span.py), so the fit line
-itself reaches 0 as one line. Kinds where 0 K is not on the abscissa (resistivity_arrhenius
+Where a separate continuation is drawn (resistivity) it must never read as fit: dotted,
+thinner, half-alpha, gid="fit-extrap". Heat capacity and Curie-Weiss no longer draw one —
+their curves are built over the whole drawn span (see test_hc_curve_span.py and
+test_cw_fit_window.py), so the fit line itself reaches 0 as one line. Kinds where 0 K is not on the abscissa (resistivity_arrhenius
 plots against 1000/T) get NO extrapolation.
 
 Also here: the fit-window shade becomes opt-in (PlotSpec.fit_window_shade, default OFF) —
@@ -87,8 +87,8 @@ def test_cp_vs_t_debye_einstein_line_spans_zero_to_the_highest_data_temperature(
 
 
 def test_extrapolation_is_visually_distinct_from_the_fit():
-    """Still true wherever a separate continuation is drawn (Curie-Weiss, resistivity)."""
-    fig = _fig("magnetization_vsm.dat", "inverse_chi")
+    """Still true wherever a separate continuation is drawn (resistivity)."""
+    fig = _fig("resistivity_superconductor.dat", "resistivity_rho_t")
     ax = fig.axes[0]
     fits, exts = _lines(ax, "fit"), _lines(ax, "fit-extrap")
     assert fits and exts
@@ -100,34 +100,32 @@ def test_extrapolation_is_visually_distinct_from_the_fit():
 
 # ---------------- inverse_chi: the Curie-Weiss theta crossing ----------------
 
-def test_inverse_chi_cw_extends_through_the_theta_crossing():
+def test_inverse_chi_cw_line_itself_reaches_the_theta_crossing():
+    """The Curie-Weiss curve is stored by the analyzer from 1/chi = 0 at theta to the top of
+    the data, so the fit line itself reaches theta — one line, no dotted continuation."""
     fig = _fig("magnetization_vsm.dat", "inverse_chi")
     ax = fig.axes[0]
-    ext = _lines(ax, "fit-extrap")
-    assert ext
-    d = _res("magnetization_vsm.dat").data
-    p = d["fit"]["params"]
-    ln = ext[0]
+    assert not _lines(ax, "fit-extrap")
+    p = _res("magnetization_vsm.dat").data["fit"]["params"]
+    ln = next(ln for ln in _lines(ax, "fit") if ln.get_label() == "Curie-Weiss fit")
     x = np.asarray(ln.get_xdata(), float); y = np.asarray(ln.get_ydata(), float)
-    assert x.min() == pytest.approx(min(0.0, p["theta"]))    # reaches theta (< 0 here)
-    i0 = int(np.argmin(np.abs(x)))                           # the T = 0 sample
-    assert y[i0] == pytest.approx(-p["theta"] / p["C"], rel=0.05)
-    # the crossing point itself: 1/chi = 0 at T = theta
-    assert y[np.argmin(x)] == pytest.approx(0.0, abs=1e-9)
+    assert x.min() == pytest.approx(p["theta"])               # reaches theta (< 0 here)
+    i0 = int(np.argmin(np.abs(x)))                            # the sample nearest T = 0
+    assert y[i0] == pytest.approx((x[i0] - p["theta"]) / p["C"])
+    assert y[np.argmin(x)] == 0.0                             # 1/chi = 0 at T = theta
 
 
-def test_inverse_chi_modified_cw_extension_stays_finite_above_its_pole():
+def test_inverse_chi_modified_cw_line_stays_finite():
     d = _res("magnetization_vsm.dat").data
     pm = (d.get("fit_modified") or {}).get("params") or {}
     if "theta" not in pm:
         pytest.skip("no modified CW fit on this file")
     fig = _fig("magnetization_vsm.dat", "inverse_chi")
     ax = fig.axes[0]
-    ext = _lines(ax, "fit-extrap")
-    assert len(ext) >= 2                     # CW and modified CW both continue
-    for ln in ext:
-        y = np.asarray(ln.get_ydata(), float)
-        assert np.isfinite(y).all()
+    fits = _lines(ax, "fit")
+    assert len(fits) == 2                    # CW and modified CW, each one line
+    for ln in fits:
+        assert np.isfinite(np.asarray(ln.get_ydata(), float)).all()
 
 
 # ---------------- resistivity: rho0 ----------------

@@ -300,12 +300,16 @@ def _connect_sort(x, y):
     return np.asarray(out_x, float), np.asarray(out_y, float)
 
 
-def _plot_data(ax, results, kind, spec, style, overlay=None):
-    """Plot the selected data series (markers only). Raises ValueError if nothing selected."""
+def _plot_data(ax, results, kind, spec, style, overlay=None, skip_roles=()):
+    """Plot the selected data series (markers only). Raises ValueError if nothing selected.
+    Series whose role is in `skip_roles` are never drawn here (a renderer that draws its fit
+    curves itself passes ("fit",))."""
     if overlay is None:
         plotted = []
         for r in results:
             for s in select_series(kind.series(r, field_unit=style.field_unit), spec):
+                if s.role in skip_roles:
+                    continue
                 plotted.append((r, s))
         if not plotted:
             raise NothingToPlot(f"no series selected for kind {kind.key}")
@@ -373,6 +377,8 @@ def _plot_data(ax, results, kind, spec, style, overlay=None):
     for fi, (r, of) in enumerate(zip(results, overlay)):
         j = 0
         for s in kind.series(r, field_unit=style.field_unit):
+            if s.role in skip_roles:
+                continue
             eff = f"{of.file_id}::{s.key}"
             if (want is None and s.default_on) or (want is not None and eff in want):
                 s_label = s.label + (s.label_suffix if (getattr(s, "label_suffix", "")
@@ -1731,19 +1737,44 @@ def _chi_labels(is_si):
     return "χ (emu/(mol·Oe))", "1/χ (mol·Oe/emu)"
 
 
-def _cw_annotation(ax, fit, fitmod, drew_mod, style, spec=None, kind=None):
+# A flagged Curie-Weiss fit says so on the figure, not only in the CSV: the legend label and
+# the annotation carry these tags (a number with a flag must never be printed bare).
+_CW_FLAG_TAGS = {"theta_out_of_range": "θ out of range", "C_nonpositive": "C ≤ 0",
+                 "theta_in_window": "θ inside the fit window",
+                 "chi0_unresolved": "χ₀ unresolved", "chi0_at_bound": "χ₀ unresolved"}
+
+
+def _cw_flag_tag(fit):
+    tags = []
+    for f in (fit or {}).get("quality_flags") or []:
+        t = _CW_FLAG_TAGS.get(f)
+        if t and t not in tags:
+            tags.append(t)
+    return f" ({', '.join(tags)})" if tags else ""
+
+
+def _cw_annotation(ax, fit, fitmod, drew_mod, style, spec=None, kind=None, mod_declined=None):
     """Frameless θ/C[/χ₀] text box, fontsize font_pt-1, placed by `_place_annotation`. Units come
-    from FitResult.units (never hardcoded). χ₀ line only when the modified line was drawn."""
+    from FitResult.units (never hardcoded). χ₀ line only when the modified line was drawn; a
+    declined χ₀ reads "χ₀ unresolved", and a flagged fit's line carries its flag tag."""
     p = (fit or {}).get("params") or {}
-    if "C" not in p or "theta" not in p:
+    if p.get("C") is None or p.get("theta") is None:
         return
     u = (fit or {}).get("units") or {}
     lines = [f"θ = {p['theta']:.3g} K, C = {p['C']:.3g} {u.get('C', '')}".rstrip()]
+    if _cw_flag_tag(fit):                    # own short line: the θ/C line is already long
+        lines.append("CW fit" + _cw_flag_tag(fit))
     if drew_mod:
         pm = (fitmod or {}).get("params") or {}
         um = (fitmod or {}).get("units") or {}
-        if "chi0" in pm:
-            lines.append(f"χ₀ = {pm['chi0']:.3g} {um.get('chi0', '')}".rstrip())
+        if "chi0" in pm and pm["chi0"] is None:
+            lines.append("χ₀ unresolved")
+        elif "chi0" in pm:
+            tag = _cw_flag_tag({"quality_flags": [f for f in fitmod.get("quality_flags") or []
+                                                  if not f.startswith("chi0")]})
+            lines.append(f"χ₀ = {pm['chi0']:.3g} {um.get('chi0', '')}".rstrip() + tag)
+    elif mod_declined:                       # its theta or C is not a measurement: say so
+        lines.append(f"modified CW declined ({mod_declined})")
     fam = {"fontfamily": style.font_family} if style.font_family else {}
     t = ax.text(0.02, 0.98, "\n".join(lines), transform=ax.transAxes, va="top", ha="left",
                 fontsize=style.font_pt - 1, gid=ANNOTATION_GID, **fam)
@@ -1751,11 +1782,33 @@ def _cw_annotation(ax, fit, fitmod, drew_mod, style, spec=None, kind=None):
     return t
 
 
+def _draw_stored_cw_curves(ax, d, want, style):
+    """Draw each fit from the curve the analyzer stored (theta -> top of the data) as ONE
+    line: no separate continuation, since the curve itself reaches 1/chi = 0 at its theta.
+    The modified fit keeps its dashed grey style -- that marks which model, not an
+    extrapolation. Returns (drew_any, drew_modified)."""
+    drew_any = drew_mod = False
+    cw = d.get("fit_curve") or {}
+    if "cw" in want and cw.get("t_grid") and len(cw.get("inv_chi_fit") or []) == len(cw["t_grid"]):
+        _fit_plot(ax, cw["t_grid"], cw["inv_chi_fit"], style,
+                  label="Curie-Weiss fit" + _cw_flag_tag(d.get("fit")))
+        drew_any = True
+    mc = d.get("fit_modified_curve") or {}
+    pm = (d.get("fit_modified") or {}).get("params") or {}
+    if ("cw_modified" in want and {"C", "theta", "chi0"} <= set(pm) and mc.get("t_grid")
+            and len(mc.get("inv_chi_fit") or []) == len(mc["t_grid"])):
+        _fit_plot(ax, mc["t_grid"], mc["inv_chi_fit"], style, series_color="0.45",
+                  label="modified CW" + _cw_flag_tag(d.get("fit_modified")), linestyle="--")
+        drew_any = drew_mod = True
+    return drew_any, drew_mod
+
+
 def render_inverse_chi(results, spec=None, style=None, overlay=None):
     results, kind, spec, style, fig, ax = _setup(results, "inverse_chi", spec, style)
-    _plot_data(ax, results, kind, spec, style, overlay)
+    _plot_data(ax, results, kind, spec, style, overlay, skip_roles=("fit",))
     _, inv_lbl = _chi_labels(_vsm_is_si(results))
     ann = None                               # the upper-left CW annotation, when one is drawn
+    framed = False                           # a stored curve was drawn -> frame y on the data
     if overlay is None and spec.fit_line:
         want = _fit_lines_wanted(spec, _INVCHI_FITS)
         annotated = False
@@ -1765,6 +1818,20 @@ def render_inverse_chi(results, spec=None, style=None, overlay=None):
             p = fit.get("params") or {}
             fitmod = d.get("fit_modified") or {}
             pm = fitmod.get("params") or {}
+            if "fit_curve" in d or "fit_modified_curve" in d:
+                drew, drew_mod = _draw_stored_cw_curves(ax, d, want, style)
+                framed = framed or drew
+                mc = d.get("fit_modified_curve") or {}
+                declined = (mc.get("reason") if "cw_modified" in want and not mc.get("t_grid")
+                            and str(mc.get("reason") or "").endswith(("_unresolved", "_at_bound"))
+                            else None)
+                if not annotated and "C" in p and "theta" in p:
+                    ann = _cw_annotation(ax, fit, fitmod, drew_mod, style, spec, kind,
+                                         mod_declined=declined)
+                    annotated = True
+                continue
+            # Results saved before the curves were stored (old JSON, overlays of them): the
+            # previous drawing -- fit over the data T plus a dotted continuation to theta.
             T = np.asarray(d.get("temperature") or [], float)
             if not (T.size and "C" in p and "theta" in p):
                 continue
@@ -1779,7 +1846,8 @@ def render_inverse_chi(results, spec=None, style=None, overlay=None):
                     _extrap_plot(ax, Tx, (Tx - p["theta"]) / p["C"], style,
                                  ln.get_color(), (T - p["theta"]) / p["C"])
             drew_mod = False
-            if "cw_modified" in want and {"C", "theta", "chi0"} <= set(pm):
+            if "cw_modified" in want and {"C", "theta", "chi0"} <= {k for k, v in pm.items()
+                                                                    if v is not None}:
                 with np.errstate(divide="ignore", invalid="ignore"):
                     y = 1.0 / (pm["chi0"] + pm["C"] / (T - pm["theta"]))
                 # dashed grey ("0.45") second model; gid='fit' -> excluded from robust view
@@ -1796,6 +1864,11 @@ def render_inverse_chi(results, spec=None, style=None, overlay=None):
             if not annotated:                    # one box (first fitted result) — avoid stacking
                 ann = _cw_annotation(ax, fit, fitmod, drew_mod, style, spec, kind)
                 annotated = True
+    if framed:
+        # A curve carried out to the top of the data can overshoot it, and its start at
+        # 1/chi = 0 lies below the data: frame y on the data AND zero (owner call 2026-10-01,
+        # as for Cp(T)); x keeps autoscaling so a negative theta stays in view.
+        _frame_y_on_data(ax, kind, spec, include_zero=True)
     _finish(ax, kind, spec, style, "Temperature (K)", inv_lbl)
     # The CW annotation is pinned at axes upper-left with ax.text, and matplotlib's legend
     # placement scores DATA artists only — text is invisible to it. On a real multi-field M(T)
@@ -2121,7 +2194,7 @@ def render_cp_over_t(results, spec=None, style=None, overlay=None):
     _finish(ax, kind, spec, style, "T² (K²)", "Cp/T (J/mol·K²)")
     return fig
 
-def _frame_y_on_data(ax, kind, spec):
+def _frame_y_on_data(ax, kind, spec, include_zero=False):
     """Frame the y-axis on the measured data (and reference lines), not on fit curves.
 
     A heat-capacity curve is drawn beyond its fit window (0 K to the highest data T), and a
@@ -2131,7 +2204,8 @@ def _frame_y_on_data(ax, kind, spec):
     BEFORE _finish, so a user ymin/ymax (applied there) and the robust view still win; with
     only one user limit, the other end is still framed on the data. Log y is framed the
     same way, in decades: there the curve's approach to Cp(0) = 0 would otherwise add
-    empty decades below the data."""
+    empty decades below the data. `include_zero` (linear y only) also keeps y = 0 on the
+    frame -- for 1/chi, where each fit curve starts at 1/chi = 0."""
     if spec.ymin is not None and spec.ymax is not None:
         return
     log = (spec.yscale if spec.yscale is not None else kind.default_yscale) == "log"
@@ -2149,6 +2223,8 @@ def _frame_y_on_data(ax, kind, spec):
     else:
         pad = _ROBUST_PAD * (dhi - dlo) if dhi > dlo else max(abs(dhi), 1e-12) * 0.1
         lo, hi = dlo - pad, dhi + pad
+        if include_zero:
+            lo, hi = min(0.0, lo), max(0.0, hi)
     # a lone user limit beyond the data's far end cannot be framed against: leave it alone
     if (spec.ymin is not None and spec.ymin >= hi) or (spec.ymax is not None and spec.ymax <= lo):
         return

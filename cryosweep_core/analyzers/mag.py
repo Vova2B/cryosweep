@@ -6,7 +6,8 @@ from cryosweep_core.io.columns import canonicalize_columns
 from cryosweep_core.io.header import sample_input_provenance
 from cryosweep_core.detect.sweeps import segment_sweeps
 from cryosweep_core.detect.vsm_blocks import classify_vsm_blocks, ramps_from_temps
-from cryosweep_core.fitting.models import CurieWeissModel, fit_cw_ladder
+from cryosweep_core.fitting.models import (CurieWeissModel, MOD_NO_CURVE_FLAGS, cw_curve,
+                                           decline_modified, fit_cw_ladder)
 from cryosweep_core.grouping import cluster_field_setpoints, setpoint_key
 from cryosweep_core.result import Result, Gate, Provenance, FitResult
 from cryosweep_core.registry import Need
@@ -73,6 +74,12 @@ class VSMData(BaseModel):
     cw_ladder: list[dict] | None = None
     theta_spread_k: float | None = None
     mu_eff_spread: float | None = None
+    # --- 2026-10-01 fit-window additive fields (declared LAST: append-only JSON key order).
+    # The drawn 1/chi curve of each fit, built by fitting.models.cw_curve: from 1/chi = 0 at
+    # its own theta to the top of the data. Dicts, never top-level numeric lists -- the
+    # generic exporter turns every top-level numeric list into a points.csv column. ---
+    fit_curve: dict | None = None
+    fit_modified_curve: dict | None = None
 
 def _cw_confidence(fit) -> float:
     """Closed O1 (spec §1.3): r2 clamped to [0,1] (fixes falsy-0.0 and negative-r2 defects),
@@ -138,6 +145,41 @@ def _compute_t_blocks(blocks, temp, field, moment_per_fu, chi_unit, inv_chi):
                               temperature=t_m[a:b].tolist(), moment=m_m[a:b].tolist(),
                               chi=c_m[a:b].tolist(), inv_chi=iv_m[a:b].tolist()))
     return out
+
+def _window(cfg, lo_key, hi_key, warnings):
+    """The user's (lo, hi) fit window from cfg.vsm, or None when no bound is set.
+
+    A bound that is not finite, or lo >= hi, is ignored with a warning naming the key
+    (same rule as the heat-capacity curve limit): a typo must not silently fit nothing."""
+    vcfg = getattr(cfg, "vsm", None)
+    lo = getattr(vcfg, lo_key, None); hi = getattr(vcfg, hi_key, None)
+    if lo is None and hi is None:
+        return None
+    if any(v is not None and not np.isfinite(v) for v in (lo, hi)) or (
+            lo is not None and hi is not None and lo >= hi):
+        warnings.append(f"vsm.{lo_key}={lo!r}, vsm.{hi_key}={hi!r} is not a valid "
+                        "temperature window; ignored (the fit uses every point)")
+        return None
+    return (lo, hi)
+
+
+def _in_window(T, win):
+    m = np.ones(T.shape, bool)
+    if win is not None:
+        if win[0] is not None:
+            m &= T >= win[0]
+        if win[1] is not None:
+            m &= T <= win[1]
+    return m
+
+
+def _window_failure(win, lo_key, hi_key, what, e):
+    """Warning for a fit that failed under a USER window -- names the window and its keys."""
+    lo = "" if win[0] is None else f"{win[0]:g}"
+    hi = "" if win[1] is None else f"{win[1]:g}"
+    return (f"{what} fit failed in the window [{lo}, {hi}] K (vsm.{lo_key} / "
+            f"vsm.{hi_key}): {e}")
+
 
 def _moment_notes(moment_source):
     """One warning when the moment came from the DC column instead of `Moment (emu)`.
@@ -313,30 +355,95 @@ class VSMAnalyzer:
                           warnings=["too few physical points for Curie-Weiss fit "
                                     "(field ~ 0 or non-finite susceptibility)"],
                           data={"probe": "vsm", "reason": "insufficient physical points"}, provenance=prov)
+        # User fit windows filter the points of the ramp chosen above; they take no part in
+        # choosing it. The exported arrays are the whole ramp either way.
+        warnings: list[str] = []
+        cw_win = _window(cfg, "cw_fit_min_k", "cw_fit_max_k", warnings)
+        mod_win = _window(cfg, "cw_mod_fit_min_k", "cw_mod_fit_max_k", warnings)
+        T_k, inv_k = temp[keep], inv_chi[keep]
+        cw_m, mod_m = _in_window(T_k, cw_win), _in_window(T_k, mod_win)
+        fit, ladder, th_spread, mu_spread = None, [], None, None
         try:
             fit, ladder, th_spread, mu_spread = fit_cw_ladder(
-                temp[keep], inv_chi[keep], unit_system=cfg.unit_system)
+                T_k[cw_m], inv_k[cw_m], unit_system=cfg.unit_system,
+                windowed=cw_win is not None)
         except (ValueError, ZeroDivisionError, np.linalg.LinAlgError) as e:
-            return Result(status="error", confidence=0.0, errors=[f"Curie-Weiss fit failed: {e}"],
-                          warnings=["Curie-Weiss fit failed"],
-                          data={"probe": "vsm", "reason": "fit failure"}, provenance=prov)
+            if cw_win is None:
+                return Result(status="error", confidence=0.0, errors=[f"Curie-Weiss fit failed: {e}"],
+                              warnings=["Curie-Weiss fit failed"],
+                              data={"probe": "vsm", "reason": "fit failure"}, provenance=prov)
+            # A fit that fails because of the USER's window keeps the data: arrays, loops,
+            # plots and export all survive, and the warning says which setting to change.
+            warnings.append(_window_failure(cw_win, "cw_fit_min_k", "cw_fit_max_k",
+                                            "Curie-Weiss", e))
         # PQ-3 Task 3: ALSO run the modified Curie-Weiss fit (chi = chi0 + C/(T-theta)) on the
-        # SAME kept rows. Additive/non-blocking: failure -> fit_modified=None + a warning, never
-        # errors the result. No new fitting code — the model already implements modified=True.
-        warnings: list[str] = []
+        # SAME kept rows (inside its own window). Additive/non-blocking: failure ->
+        # fit_modified=None + a warning, never errors the result.
         try:
-            fit_modified = CurieWeissModel().fit(temp[keep], inv_chi[keep],
+            fit_modified = CurieWeissModel().fit(T_k[mod_m], inv_k[mod_m],
                                                  unit_system=cfg.unit_system, modified=True)
         except (ValueError, RuntimeError, ZeroDivisionError, np.linalg.LinAlgError) as e:
             fit_modified = None
-            warnings.append(f"modified Curie-Weiss fit failed: {e}")
+            warnings.append(f"modified Curie-Weiss fit failed: {e}" if mod_win is None else
+                            _window_failure(mod_win, "cw_mod_fit_min_k", "cw_mod_fit_max_k",
+                                            "modified Curie-Weiss", e))
+        # Drawn curves: from 1/chi = 0 at each fit's own theta to the top of the data (or
+        # vsm.cw_curve_max_k), with the fitted range flagged inside them.
+        top = float(np.max(T_k))
+        curve_max = getattr(getattr(cfg, "vsm", None), "cw_curve_max_k", None)
+        if curve_max is not None:
+            if np.isfinite(curve_max) and curve_max > 0:
+                top = float(curve_max)
+            else:
+                warnings.append(f"vsm.cw_curve_max_k={curve_max!r} is not a positive finite "
+                                "temperature; the curves are drawn to the highest data "
+                                "temperature instead")
+
+        def _curve(fr, model, win):
+            c = cw_curve(fr.params, model, fr.fit_range[0], fr.fit_range[1], top)
+            c["window_k"] = list(win) if win is not None else [None, None]
+            return c
+
+        for fr, win in ((fit, cw_win), (fit_modified, mod_win)):
+            if fr is not None and top < fr.fit_range[1]:
+                where = "fit window" if win is not None else "fitted range"
+                warnings.append(f"vsm.cw_curve_max_k={curve_max:g} K is below the top of the "
+                                f"{fr.model} {where} ({fr.fit_range[1]:.4g} K); that curve "
+                                f"is drawn to the top of the {where} instead")
+        fit_curve = _curve(fit, "curie_weiss", cw_win) if fit is not None else None
+        # A plain CW line that is <= 0 on its own window (C <= 0, theta inside it) or whose
+        # theta lies below -T_max of it (T >> |theta| never reached) describes no Curie-Weiss
+        # regime: the curve already says so; the FIT must too, so the flag reaches the CSV,
+        # the GUI and the figure, and the result is not "ok".
+        cw_unphysical = bool(fit_curve and fit_curve["reason"])
+        if cw_unphysical:
+            fit = fit.model_copy(update={"quality_flags": [*fit.quality_flags,
+                                                           fit_curve["reason"]]})
+        fit_modified_curve = None
+        if fit_modified is not None:
+            # built from the fit's own numbers BEFORE unresolved ones are nulled: a curve with
+            # an unresolved chi0 is still the fit's prediction
+            fit_modified_curve = _curve(fit_modified, "curie_weiss_modified", mod_win)
+            no_curve = [f for f in fit_modified.quality_flags if f in MOD_NO_CURVE_FLAGS]
+            if no_curve:
+                # theta or C is not a measurement (owner call 2026-10-01): no curve at all
+                fit_modified_curve.update({"t_grid": [], "inv_chi_fit": [], "in_fit_window": [],
+                                           "zero_crossing": False, "reason": no_curve[0]})
+            elif fit_modified_curve["reason"] == "theta_out_of_range":
+                # theta far below -T_max: T >> |theta| is never reached, so these parameters
+                # do not describe a Curie-Weiss regime. Flag the fit, keep its record (owner
+                # call 2026-10-01), and draw only its window.
+                fit_modified = fit_modified.model_copy(update={"quality_flags": [
+                    *fit_modified.quality_flags, "theta_out_of_range"]})
+            fit_modified = decline_modified(fit_modified)
         # Paramagnetic-regime warning (spec §1.4): CW is asymptotic only for T >> |theta|.
-        tmin = float(np.min(temp[keep]))
-        abs_theta = abs(float(fit.params["theta"]))
-        if tmin < abs_theta:
-            warnings.append(
-                f"CW fit window extends below |theta| (T_min = {tmin:.1f} K < {abs_theta:.1f} K)"
-                " — low-T rows likely outside the paramagnetic regime; see cw_ladder")
+        if fit is not None:
+            tmin = float(fit.fit_range[0])
+            abs_theta = abs(float(fit.params["theta"]))
+            if tmin < abs_theta:
+                warnings.append(
+                    f"CW fit window extends below |theta| (T_min = {tmin:.1f} K < {abs_theta:.1f} K)"
+                    " — low-T rows likely outside the paramagnetic regime; see cw_ladder")
         # Ramp-direction tags index the POST-FILTER exported arrays (temp[keep]).
         ramps = [Ramp(**r) for r in ramps_from_temps(temp[keep].tolist())]
         vd = VSMData(probe="vsm",
@@ -350,7 +457,8 @@ class VSMAnalyzer:
                      fit=fit, loops=loops, ramps=ramps, fit_modified=fit_modified,
                      t_blocks=t_blocks,
                      cw_ladder=ladder or None, theta_spread_k=th_spread,
-                     mu_eff_spread=mu_spread)
+                     mu_eff_spread=mu_spread, fit_curve=fit_curve,
+                     fit_modified_curve=fit_modified_curve)
         data = vd.model_dump(mode="json")
         # Emitted ONLY on the fallback path, so a normal VSM file's JSON is unchanged
         # (these results are pinned byte-for-byte by the oracle tests).
@@ -361,8 +469,13 @@ class VSMAnalyzer:
         # them. Same idiom as moment_source above.
         data["sample_inputs"] = sample_input_provenance(header)
         warnings.extend(_moment_notes(moment_source))
+        if fit is None:                      # failed in the user's window (see above)
+            return Result(status="low_confidence", confidence=0.2,
+                          confidence_parts={"detector": 1.0, "segmentation": 1.0, "fit": None},
+                          warnings=warnings, data=data, provenance=prov)
         conf = _cw_confidence(fit)
-        status = "ok" if conf >= cfg.confidence_min else "low_confidence"
+        status = ("ok" if conf >= cfg.confidence_min and not cw_unphysical
+                  else "low_confidence")
         return Result(status=status, confidence=conf,
                       confidence_parts={"detector": 1.0, "segmentation": 1.0, "fit": fit.r2},
                       warnings=warnings, data=data, provenance=prov)
