@@ -139,6 +139,44 @@ def _kappa_ph_row(kf: dict) -> str:
     return head + joiner + "; ".join(parts)
 
 
+def _cw_window_text(curve) -> str:
+    """'full-window fit', or the user's Curie-Weiss window as the curve dict records it."""
+    lo, hi = ((curve or {}).get("window_k") or [None, None])[:2]
+    if lo is None and hi is None:
+        return "full-window fit"
+    if hi is None:
+        return f"fit window T ≥ {lo:g} K"
+    if lo is None:
+        return f"fit window T ≤ {hi:g} K"
+    return f"fit window {lo:g}–{hi:g} K"
+
+
+def _cw_modified_row(data: dict) -> str:
+    """The modified Curie-Weiss fit (chi = chi0 + C/(T - theta)): its parameters and fitted
+    range, every quality flag verbatim, or why there is no fit. Before this row the fit
+    reached the JSON only."""
+    fm = data.get("fit_modified")
+    if not isinstance(fm, dict):
+        return ("not fitted — the fit failed or its window left too few points; "
+                "see the warnings")
+    p = fm.get("params") or {}
+    u = fm.get("units") or {}
+    bits = [f"θ = {p['theta']:.3g} K, C = {p['C']:.3g} {u.get('C', '')}".rstrip(),
+            f"χ₀ = {p['chi0']:.3g} {u.get('chi0', '')}".rstrip()]
+    fr = fm.get("fit_range") or []
+    if len(fr) == 2:
+        bits.append(f"fitted {fr[0]:.3g}–{fr[1]:.3g} K")
+    if fm.get("r2") is not None:
+        bits.append(f"r² {float(fm['r2']):.3g}")
+    flags = list(fm.get("quality_flags") or [])
+    if flags:
+        bits.append("flags: " + ", ".join(flags))
+    curve = data.get("fit_modified_curve") or {}
+    if curve and curve.get("zero_crossing") is False:
+        bits.append("curve drawn over its fit window only")
+    return "; ".join(bits)
+
+
 def _cw_theta_row(data: dict) -> str:
     """The window-sensitive Curie-Weiss row (2026-08-10 spec §7, U3 idiom).
 
@@ -157,7 +195,7 @@ def _cw_theta_row(data: dict) -> str:
     full_theta = float((fit.get("params") or {}).get("theta"))
     sig = (fit.get("sigma") or {}).get("theta")
     first, last = ladder[0], ladder[-1]
-    head = f"θ = {full_theta:.1f} K (full-window fit — REPORTED)"
+    head = f"θ = {full_theta:.1f} K ({_cw_window_text(data.get('fit_curve'))} — REPORTED)"
     parts = [f"θ(full→{last['tmin_k']:g} K) = {full_theta:.1f}→{last['theta_k']:.1f}",
              f"T≥{first['tmin_k']:g} K rung gives {first['theta_k']:.1f}"]
     if data.get("theta_spread_k") is not None:
@@ -267,6 +305,22 @@ def flatten_rows(data: dict) -> list[tuple[str, str]]:
         # a clean fit keeps today's generic fit.* rows and NOTHING else (pinned by test).
         if "window_sensitive" in ((fit or {}).get("quality_flags") or []) and data.get("cw_ladder"):
             rows.append(("Curie-Weiss θ", _cw_theta_row(data)))
+        elif "fit_curve" in data and not isinstance(fit, dict):
+            # only a user window loses the fit without failing the result (the analyzer
+            # errors otherwise); the warning names the window and its config keys
+            rows.append(("Curie-Weiss θ", "not fitted — the Curie-Weiss fit window left too "
+                         "few points; see the warnings"))
+        win = ((data.get("fit_curve") or {}).get("window_k") or [None, None])
+        if isinstance(fit, dict) and any(v is not None for v in win):
+            fr = fit.get("fit_range") or []
+            rng = f"; fitted {fr[0]:.3g}–{fr[1]:.3g} K" if len(fr) == 2 else ""
+            npts = f" ({fit['n_points']} points)" if fit.get("n_points") is not None else ""
+            rows.append(("Curie-Weiss window",
+                         f"{_cw_window_text(data.get('fit_curve'))}{rng}{npts}"))
+        # Rows below exist only on results that carry the stored curves (2026-10-01): an
+        # older saved result keeps exactly its previous rows.
+        if "fit_modified_curve" in data:
+            rows.append(("Modified Curie-Weiss", _cw_modified_row(data)))
     if data.get("probe") == "hall":
         for p in data.get("points") or []:
             if not isinstance(p, dict):
