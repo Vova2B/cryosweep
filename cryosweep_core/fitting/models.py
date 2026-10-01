@@ -43,11 +43,21 @@ class CurieWeissModel:
                              fit_range=[float(T.min()), float(T.max())],
                              units={"C": _C_UNIT[unit_system], "theta": "K", "mu_eff": "mu_B"}, quality_flags=[])
         # modified: chi = chi0 + C/(T - theta)
+        # Fitted on chi / median|chi|, then C and chi0 (and their covariance) are scaled back.
+        # Without it the fit depended on the unit system: SI chi is ~1e-5 of CGS chi, the
+        # optimizer's steps were sized for O(1) parameters, and chi0 stuck at its 0.0 start
+        # (measured: theta -173 K in CGS vs -67 K in SI on one file).
         chi = 1.0 / inv_chi
-        lin = np.polyfit(T, inv_chi, 1)
+        s = float(np.median(np.abs(chi)))
+        s = s if np.isfinite(s) and s > 0 else 1.0
+        chi_n = chi / s
+        lin = np.polyfit(T, inv_chi * s, 1)
         p0 = [abs(1.0 / lin[0]) if lin[0] else 1.0, min(-lin[1] / lin[0] if lin[0] else 0.0, T.min() - 1.0), 0.0]
         lower = [1e-12, -np.inf, -np.inf]; upper = [np.inf, T.min() - 1e-6, np.inf]
-        popt, pcov = curve_fit(lambda t, C, th, c0: c0 + C / (t - th), T, chi, p0=p0, bounds=(lower, upper), maxfev=10000)
+        popt, pcov = curve_fit(lambda t, C, th, c0: c0 + C / (t - th), T, chi_n, p0=p0, bounds=(lower, upper), maxfev=10000)
+        scale = np.array([s, 1.0, s])
+        popt = popt * scale
+        pcov = pcov * np.outer(scale, scale)
         C, theta, chi0 = map(float, popt)
         mu_eff = k * np.sqrt(C)
         sig = np.sqrt(np.diag(pcov))
@@ -85,9 +95,15 @@ def fit_cw_ladder(T, inv_chi, unit_system="CGS", rungs=_CW_RUNGS):
     T = np.asarray(T, float); inv_chi = np.asarray(inv_chi, float)
     primary = CurieWeissModel().fit(T, inv_chi, unit_system=unit_system)
     tmax = float(np.nanmax(T))
+    tmin = float(np.nanmin(T))
     ladder: list[dict] = []
     for cutoff in sorted(rungs):
         if cutoff >= tmax - _CW_RUNG_MARGIN_K:
+            continue
+        # The points passed in ARE the fit window. A rung at or below its lower edge fits
+        # exactly the primary's points -- a copy, not a rung. Unwindowed data start near 2 K,
+        # below every rung, so this never fires without a window (measured on every file).
+        if cutoff <= tmin:
             continue
         m = np.isfinite(T) & np.isfinite(inv_chi) & (T >= cutoff)
         if int(m.sum()) < _CW_MIN_RUNG_PTS:
@@ -116,3 +132,86 @@ def fit_cw_ladder(T, inv_chi, unit_system="CGS", rungs=_CW_RUNGS):
     if flags != list(primary.quality_flags):  # FitResult is frozen: copy, don't mutate
         primary = primary.model_copy(update={"quality_flags": flags})
     return primary, ladder, theta_spread, mu_spread
+
+
+#: Samples across a drawn Curie-Weiss curve (before the exact window edges are inserted).
+_CW_CURVE_POINTS = 400
+
+
+def _positive_run(g, y, inside):
+    """The longest contiguous run of finite, positive 1/chi -- a window-only curve never
+    draws negative 1/chi and never joins two sides of a pole."""
+    ok = np.isfinite(y) & (y > 0)
+    best, i, n = (0, 0), 0, ok.size
+    while i < n:
+        if not ok[i]:
+            i += 1
+            continue
+        j = i
+        while j < n and ok[j]:
+            j += 1
+        if j - i > best[1] - best[0]:
+            best = (i, j)
+        i = j
+    a, b = best
+    return g[a:b], y[a:b], inside[a:b]
+
+
+def cw_curve(fit_params, model, fit_lo, fit_hi, top):
+    """The drawn Curie-Weiss curve, 1/chi against T, built once in the core.
+
+    `fit_lo`/`fit_hi` are the fit's `fit_range` (the fitted points), `top` the requested upper
+    end (never below `fit_hi`). The curve starts where it reaches 1/chi = 0 -- at its own
+    theta, which may be negative -- and runs to `top` as one line:
+
+      * curie_weiss: 1/chi = (T - theta)/C. Extended only when C > 0 and theta < fit_lo;
+        otherwise the line is <= 0 somewhere inside its own window, and drawing it out would
+        draw negative 1/chi ("C_nonpositive", "theta_in_window").
+      * curie_weiss_modified: 1/chi = (T - theta)/(chi0 (T - theta) + C), written so that
+        T = theta gives exactly 0. With chi0 < 0 the denominator vanishes at
+        T* = theta - C/chi0 > theta and 1/chi is negative beyond it, so the curve stops short
+        of T*; a pole inside the window declines the extension ("pole_in_window"). A theta
+        below -fit_hi means T >> |theta| is never reached, so the curve is not carried to its
+        theta either ("theta_out_of_range").
+
+    A declined extension leaves the window only, clipped to finite 1/chi > 0, with
+    `zero_crossing: False` and the `reason`. Both window edges are exact grid points, so
+    `in_fit_window` flips AT the bound. Non-finite values never reach the result."""
+    fit_lo, fit_hi = float(fit_lo), float(fit_hi)
+    top = max(float(top), fit_hi)
+    C = float(fit_params["C"]); th = float(fit_params["theta"])
+    if model == "curie_weiss":
+        def f(t):
+            return (t - th) / C
+        reason = ("C_nonpositive" if not C > 0 else
+                  "theta_in_window" if not th < fit_lo else None)
+    else:
+        c0 = float(fit_params["chi0"])
+
+        def f(t):
+            d = t - th
+            with np.errstate(divide="ignore", invalid="ignore"):
+                return d / (c0 * d + C)
+        tstar = th - C / c0 if c0 < 0 else np.inf
+        reason = ("C_nonpositive" if not C > 0 else
+                  "theta_in_window" if not th < fit_lo else
+                  "theta_out_of_range" if th < -fit_hi else
+                  "pole_in_window" if tstar <= fit_hi else None)
+    if reason is None:
+        g = np.unique(np.concatenate([np.linspace(th, top, _CW_CURVE_POINTS), [fit_lo, fit_hi]]))
+        if model != "curie_weiss" and np.isfinite(tstar):
+            g = g[g < tstar]                  # analytic cut: the pole is never sampled
+        y = np.asarray(f(g), float)
+        y[0] = 0.0 if g[0] == th else y[0]
+        inside = (g >= fit_lo) & (g <= fit_hi)
+        keep = np.isfinite(y) & ((y > 0) | (g == th))
+        g, y, inside = g[keep], y[keep], inside[keep]
+    else:
+        g = np.unique(np.concatenate([np.linspace(fit_lo, fit_hi, _CW_CURVE_POINTS),
+                                      [fit_lo, fit_hi]]))
+        y = np.asarray(f(g), float)
+        g, y, inside = _positive_run(g, y, np.ones_like(g, bool))
+    return {"t_grid": g.tolist(), "inv_chi_fit": y.tolist(),
+            "in_fit_window": [bool(v) for v in inside],
+            "zero_crossing": reason is None, "reason": reason,
+            "fit_range": [fit_lo, fit_hi]}

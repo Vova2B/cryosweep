@@ -129,6 +129,19 @@ class HeatCapacityCfg(BaseModel):
     entropy_rln_j: float | None = None           # override Rln(2J+1) plateau J (None/0 -> auto-suggest)
 
 
+class VSMCfg(BaseModel):
+    # Temperature windows (K) bounding the points each fit is judged on; None = unbounded.
+    # The Curie-Weiss window also bounds its window ladder. The modified CW fit
+    # (chi = chi0 + C/(T - theta)) has its own window.
+    cw_fit_min_k: float | None = None
+    cw_fit_max_k: float | None = None
+    cw_mod_fit_min_k: float | None = None
+    cw_mod_fit_max_k: float | None = None
+    # Upper end of both DRAWN/EXPORTED curves (each starts where it reaches 1/chi = 0, at its
+    # own theta). None = the highest data temperature. Does not change which points are fitted.
+    cw_curve_max_k: float | None = None
+
+
 class RunConfig(BaseModel):
     schema_version: int = 1
     unit_system: Literal["CGS", "SI"] = "CGS"
@@ -142,6 +155,7 @@ class RunConfig(BaseModel):
     hc_parsimony_r2: float = 0.99    # heat-capacity low-T parsimony threshold (simplest model with R2>=this)
     probe_override: str | None = None
     presets: dict[str, dict] = Field(default_factory=dict)
+    vsm: VSMCfg = Field(default_factory=VSMCfg)     # declared last: append-only key order
 
     @classmethod
     def load(cls, path=None, **overrides):
