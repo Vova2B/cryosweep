@@ -265,6 +265,13 @@ def test_mpms_zfc_fc_two_ramps_in_field_group(mpms_real_path):
 #   rows each, existing rows byte-identical). inverse_chi.png regenerated: the fits are now
 #   one solid line from 1/chi = 0 at theta (no dotted continuation) and the y-axis is framed
 #   on the data and 0. The other three PNG kinds stay byte-identical.
+# Decline amendment (2026-10-01, owner call, sanctioned): a modified-CW parameter with
+#   sigma >= |value| is declined. The synthetic fixture's chi0 is 5.9e-8 +- 7.5e-8, so
+#   vsm_synth.derived.golden blanks the chi0 value/sigma cells and appends a quality_flags row
+#   (chi0_unresolved); every other row is byte-identical. vsm_synth.report.md gains the
+#   modified-fit section and the warnings list (the existing lines are unchanged), and
+#   inverse_chi.png regenerated: annotation "χ₀ unresolved", legend "modified CW (χ₀
+#   unresolved)". The mpms goldens are unchanged (its chi0 is resolved).
 _NEW_KEYS = ("loops", "ramps", "fit_modified", "t_blocks",
              # 2026-08-10 uncertainty-honesty additive fields (CW ladder, spec §1.2):
              "cw_ladder", "theta_spread_k", "mu_eff_spread",

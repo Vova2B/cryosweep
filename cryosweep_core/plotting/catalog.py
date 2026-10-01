@@ -1533,5 +1533,6 @@ def overlay_series(kind, results, overlay, field_unit="Oe") -> list[Series]:
     for r, of in zip(results, overlay):
         for s in kind.series(r, field_unit=field_unit):
             out.append(Series(key=f"{of.file_id}::{s.key}", label=f"{of.label} · {s.label}",
-                              x=s.x, y=s.y, group=of.label, default_on=s.default_on))
+                              x=s.x, y=s.y, group=of.label, default_on=s.default_on,
+                              role=s.role))
     return out

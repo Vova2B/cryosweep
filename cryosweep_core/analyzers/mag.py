@@ -6,7 +6,8 @@ from cryosweep_core.io.columns import canonicalize_columns
 from cryosweep_core.io.header import sample_input_provenance
 from cryosweep_core.detect.sweeps import segment_sweeps
 from cryosweep_core.detect.vsm_blocks import classify_vsm_blocks, ramps_from_temps
-from cryosweep_core.fitting.models import CurieWeissModel, cw_curve, fit_cw_ladder
+from cryosweep_core.fitting.models import (CurieWeissModel, MOD_NO_CURVE_FLAGS, cw_curve,
+                                           decline_modified, fit_cw_ladder)
 from cryosweep_core.grouping import cluster_field_setpoints, setpoint_key
 from cryosweep_core.result import Result, Gate, Provenance, FitResult
 from cryosweep_core.registry import Need
@@ -364,7 +365,8 @@ class VSMAnalyzer:
         fit, ladder, th_spread, mu_spread = None, [], None, None
         try:
             fit, ladder, th_spread, mu_spread = fit_cw_ladder(
-                T_k[cw_m], inv_k[cw_m], unit_system=cfg.unit_system)
+                T_k[cw_m], inv_k[cw_m], unit_system=cfg.unit_system,
+                windowed=cw_win is not None)
         except (ValueError, ZeroDivisionError, np.linalg.LinAlgError) as e:
             if cw_win is None:
                 return Result(status="error", confidence=0.0, errors=[f"Curie-Weiss fit failed: {e}"],
@@ -402,16 +404,37 @@ class VSMAnalyzer:
             c["window_k"] = list(win) if win is not None else [None, None]
             return c
 
+        for fr in (fit, fit_modified):
+            if fr is not None and top < fr.fit_range[1]:
+                warnings.append(f"vsm.cw_curve_max_k={curve_max:g} K is below the top of the "
+                                f"{fr.model} fit window ({fr.fit_range[1]:.4g} K); that curve "
+                                "is drawn to the window top instead")
         fit_curve = _curve(fit, "curie_weiss", cw_win) if fit is not None else None
+        # A plain CW line that is <= 0 on its own window (C <= 0, theta inside it) or whose
+        # theta lies below -T_max of it (T >> |theta| never reached) describes no Curie-Weiss
+        # regime: the curve already says so; the FIT must too, so the flag reaches the CSV,
+        # the GUI and the figure, and the result is not "ok".
+        cw_unphysical = bool(fit_curve and fit_curve["reason"])
+        if cw_unphysical:
+            fit = fit.model_copy(update={"quality_flags": [*fit.quality_flags,
+                                                           fit_curve["reason"]]})
         fit_modified_curve = None
         if fit_modified is not None:
+            # built from the fit's own numbers BEFORE unresolved ones are nulled: a curve with
+            # an unresolved chi0 is still the fit's prediction
             fit_modified_curve = _curve(fit_modified, "curie_weiss_modified", mod_win)
-            # theta far below -T_max: T >> |theta| is never reached, so these parameters do
-            # not describe a Curie-Weiss regime. Flag the fit, keep its record (owner call
-            # 2026-10-01), and draw only its window.
-            if fit_modified_curve["reason"] == "theta_out_of_range":
+            no_curve = [f for f in fit_modified.quality_flags if f in MOD_NO_CURVE_FLAGS]
+            if no_curve:
+                # theta or C is not a measurement (owner call 2026-10-01): no curve at all
+                fit_modified_curve.update({"t_grid": [], "inv_chi_fit": [], "in_fit_window": [],
+                                           "zero_crossing": False, "reason": no_curve[0]})
+            elif fit_modified_curve["reason"] == "theta_out_of_range":
+                # theta far below -T_max: T >> |theta| is never reached, so these parameters
+                # do not describe a Curie-Weiss regime. Flag the fit, keep its record (owner
+                # call 2026-10-01), and draw only its window.
                 fit_modified = fit_modified.model_copy(update={"quality_flags": [
                     *fit_modified.quality_flags, "theta_out_of_range"]})
+            fit_modified = decline_modified(fit_modified)
         # Paramagnetic-regime warning (spec §1.4): CW is asymptotic only for T >> |theta|.
         if fit is not None:
             tmin = float(fit.fit_range[0])
@@ -450,7 +473,8 @@ class VSMAnalyzer:
                           confidence_parts={"detector": 1.0, "segmentation": 1.0, "fit": None},
                           warnings=warnings, data=data, provenance=prov)
         conf = _cw_confidence(fit)
-        status = "ok" if conf >= cfg.confidence_min else "low_confidence"
+        status = ("ok" if conf >= cfg.confidence_min and not cw_unphysical
+                  else "low_confidence")
         return Result(status=status, confidence=conf,
                       confidence_parts={"detector": 1.0, "segmentation": 1.0, "fit": fit.r2},
                       warnings=warnings, data=data, provenance=prov)

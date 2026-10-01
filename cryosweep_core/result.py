@@ -18,8 +18,10 @@ class Provenance(BaseModel):
 class FitResult(BaseModel):
     model_config = ConfigDict(frozen=True, protected_namespaces=())  # allow field named "model"
     model: str
-    params: dict[str, float]
-    sigma: dict[str, float] = Field(default_factory=dict)
+    # None = a parameter the fit DECLINES to report (pinned at a bound, or sigma >= |value|);
+    # quality_flags names why. Never NaN.
+    params: dict[str, float | None]
+    sigma: dict[str, float | None] = Field(default_factory=dict)
     covariance: list[list[float]] = Field(default_factory=list)
     r2: float | None = None
     chi2_red: float | None = None

@@ -1737,19 +1737,42 @@ def _chi_labels(is_si):
     return "χ (emu/(mol·Oe))", "1/χ (mol·Oe/emu)"
 
 
+# A flagged Curie-Weiss fit says so on the figure, not only in the CSV: the legend label and
+# the annotation carry these tags (a number with a flag must never be printed bare).
+_CW_FLAG_TAGS = {"theta_out_of_range": "θ out of range", "C_nonpositive": "C ≤ 0",
+                 "theta_in_window": "θ inside the fit window",
+                 "chi0_unresolved": "χ₀ unresolved", "chi0_at_bound": "χ₀ unresolved"}
+
+
+def _cw_flag_tag(fit):
+    tags = []
+    for f in (fit or {}).get("quality_flags") or []:
+        t = _CW_FLAG_TAGS.get(f)
+        if t and t not in tags:
+            tags.append(t)
+    return f" ({', '.join(tags)})" if tags else ""
+
+
 def _cw_annotation(ax, fit, fitmod, drew_mod, style, spec=None, kind=None):
     """Frameless θ/C[/χ₀] text box, fontsize font_pt-1, placed by `_place_annotation`. Units come
-    from FitResult.units (never hardcoded). χ₀ line only when the modified line was drawn."""
+    from FitResult.units (never hardcoded). χ₀ line only when the modified line was drawn; a
+    declined χ₀ reads "χ₀ unresolved", and a flagged fit's line carries its flag tag."""
     p = (fit or {}).get("params") or {}
-    if "C" not in p or "theta" not in p:
+    if p.get("C") is None or p.get("theta") is None:
         return
     u = (fit or {}).get("units") or {}
     lines = [f"θ = {p['theta']:.3g} K, C = {p['C']:.3g} {u.get('C', '')}".rstrip()]
+    if _cw_flag_tag(fit):                    # own short line: the θ/C line is already long
+        lines.append("CW fit" + _cw_flag_tag(fit))
     if drew_mod:
         pm = (fitmod or {}).get("params") or {}
         um = (fitmod or {}).get("units") or {}
-        if "chi0" in pm:
-            lines.append(f"χ₀ = {pm['chi0']:.3g} {um.get('chi0', '')}".rstrip())
+        if "chi0" in pm and pm["chi0"] is None:
+            lines.append("χ₀ unresolved")
+        elif "chi0" in pm:
+            tag = _cw_flag_tag({"quality_flags": [f for f in fitmod.get("quality_flags") or []
+                                                  if not f.startswith("chi0")]})
+            lines.append(f"χ₀ = {pm['chi0']:.3g} {um.get('chi0', '')}".rstrip() + tag)
     fam = {"fontfamily": style.font_family} if style.font_family else {}
     t = ax.text(0.02, 0.98, "\n".join(lines), transform=ax.transAxes, va="top", ha="left",
                 fontsize=style.font_pt - 1, gid=ANNOTATION_GID, **fam)
@@ -1765,14 +1788,15 @@ def _draw_stored_cw_curves(ax, d, want, style):
     drew_any = drew_mod = False
     cw = d.get("fit_curve") or {}
     if "cw" in want and cw.get("t_grid") and len(cw.get("inv_chi_fit") or []) == len(cw["t_grid"]):
-        _fit_plot(ax, cw["t_grid"], cw["inv_chi_fit"], style, label="Curie-Weiss fit")
+        _fit_plot(ax, cw["t_grid"], cw["inv_chi_fit"], style,
+                  label="Curie-Weiss fit" + _cw_flag_tag(d.get("fit")))
         drew_any = True
     mc = d.get("fit_modified_curve") or {}
     pm = (d.get("fit_modified") or {}).get("params") or {}
     if ("cw_modified" in want and {"C", "theta", "chi0"} <= set(pm) and mc.get("t_grid")
             and len(mc.get("inv_chi_fit") or []) == len(mc["t_grid"])):
         _fit_plot(ax, mc["t_grid"], mc["inv_chi_fit"], style, series_color="0.45",
-                  label="modified CW", linestyle="--")
+                  label="modified CW" + _cw_flag_tag(d.get("fit_modified")), linestyle="--")
         drew_any = drew_mod = True
     return drew_any, drew_mod
 
@@ -1815,7 +1839,8 @@ def render_inverse_chi(results, spec=None, style=None, overlay=None):
                     _extrap_plot(ax, Tx, (Tx - p["theta"]) / p["C"], style,
                                  ln.get_color(), (T - p["theta"]) / p["C"])
             drew_mod = False
-            if "cw_modified" in want and {"C", "theta", "chi0"} <= set(pm):
+            if "cw_modified" in want and {"C", "theta", "chi0"} <= {k for k, v in pm.items()
+                                                                    if v is not None}:
                 with np.errstate(divide="ignore", invalid="ignore"):
                     y = 1.0 / (pm["chi0"] + pm["C"] / (T - pm["theta"]))
                 # dashed grey ("0.45") second model; gid='fit' -> excluded from robust view

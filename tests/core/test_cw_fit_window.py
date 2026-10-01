@@ -143,19 +143,38 @@ def test_curve_values_are_json_safe():
 
 # ------------------------------------------------------------------ ladder inside a window
 
-def test_ladder_skips_rungs_at_or_below_the_window_minimum():
+def test_ladder_inside_a_window_skips_copies_and_spreads_over_one_rung():
     T, inv = _cw()
     w = T >= 150.0
-    _, ladder, spread, _ = fit_cw_ladder(T[w], inv[w])
+    _, ladder, spread, _ = fit_cw_ladder(T[w], inv[w], windowed=True)
     # 25/50/100/150 K would all be exact copies of the primary fit
     assert [e["tmin_k"] for e in ladder] == [200.0]
-    assert spread is None                        # < 2 rungs: no spread, never 0.0
+    assert spread is not None                    # primary + one rung = two fits
+
+
+def test_ladder_inside_a_narrow_window_has_no_spread():
+    T, inv = _cw()
+    w = T >= 250.0
+    _, ladder, spread, _ = fit_cw_ladder(T[w], inv[w], windowed=True)
+    assert ladder == [] and spread is None       # never 0.0
 
 
 def test_ladder_without_a_window_keeps_every_rung():
     T, inv = _cw()
     _, ladder, _, _ = fit_cw_ladder(T, inv)
     assert [e["tmin_k"] for e in ladder] == [25.0, 50.0, 100.0, 150.0, 200.0]
+
+
+@pytest.mark.parametrize("tmin", [40.0, 160.0])
+def test_ladder_without_a_window_is_unchanged_on_data_starting_high(tmin):
+    """No user window = the previous ladder exactly, even when the data start above some
+    rungs (those rungs refit the full data; the spread needs >= 2 rungs, as before)."""
+    T, inv = _cw(tmin=tmin)
+    inv = inv * (1 + 0.01 * np.sin(T / 7.0))     # some window dependence
+    _, ladder, spread, _ = fit_cw_ladder(T, inv)
+    cut = [c for c in (25.0, 50.0, 100.0, 150.0, 200.0) if c < T.max() - 20.0]
+    assert [e["tmin_k"] for e in ladder] == cut
+    assert spread is not None
 
 
 # ------------------------------------------------------------------ modified fit unit invariance
@@ -284,19 +303,113 @@ def test_si_curve_is_in_si_units():
     assert c["inv_chi_fit"][-1] == pytest.approx(y[i], rel=1e-2)
 
 
-def test_real_file_far_negative_modified_theta_is_flagged_and_kept():
-    """No window: theta_mod = -2.5e5 K. Params stay (decline the curve, not the record)."""
+def _real(key, vsm=None, unit_system="CGS"):
     import dataclasses
-    rt = load_dat(str(require_real("vsm_mt")))
-    rt = dataclasses.replace(rt, header=dataclasses.replace(rt.header, molar_mass=200.0,
-                                                            mass_mg=5.0))
-    d = VSMAnalyzer().analyze(rt, RunConfig.load()).data
+    rt = load_dat(str(require_real(key)))
+    if rt.header.molar_mass is None or key == "vsm_mt":
+        mm, ms = {"mpms": (683.22, 12.0), "vsm": (300.0, 1.1)}.get(key, (200.0, 5.0))
+        rt = dataclasses.replace(rt, header=dataclasses.replace(rt.header, molar_mass=mm,
+                                                                mass_mg=ms))
+    return VSMAnalyzer().analyze(rt, RunConfig.load(unit_system=unit_system, vsm=vsm or {}))
+
+
+def test_real_file_unresolved_modified_fit_is_declined():
+    """No window: theta_mod ~ -2.5e5 K with sigma ~ 4e8 K. Not a measurement: C, theta, chi0
+    and mu_eff are null, flagged, and no curve is drawn or exported."""
+    d = _real("vsm_mt").data
     fm = d["fit_modified"]
-    assert "theta_out_of_range" in fm["quality_flags"]
-    assert fm["params"]["theta"] < -max(d["temperature"])
+    for k in ("C", "theta", "chi0", "mu_eff"):
+        assert fm["params"][k] is None and fm["sigma"][k] is None, k
+    assert {"C_unresolved", "theta_unresolved", "chi0_unresolved"} <= set(fm["quality_flags"])
     c = d["fit_modified_curve"]
-    assert c["zero_crossing"] is False and c["reason"] == "theta_out_of_range"
-    assert min(c["t_grid"]) >= fm["fit_range"][0]
+    assert c["t_grid"] == [] and c["zero_crossing"] is False
+    assert c["reason"] in ("C_unresolved", "theta_unresolved")
+
+
+def test_modified_parameter_pinned_at_its_bound_is_declined():
+    """mpms 2-20 K: C sits at its positive lower bound and theta = -3781 K with sigma 0."""
+    d = _real("mpms", {"cw_mod_fit_min_k": 2.0, "cw_mod_fit_max_k": 20.0}).data
+    fm = d["fit_modified"]
+    assert "C_at_bound" in fm["quality_flags"] and "theta_unresolved" in fm["quality_flags"]
+    assert fm["params"]["C"] is None and fm["params"]["theta"] is None
+    assert fm["params"]["mu_eff"] is None
+    assert d["fit_modified_curve"]["t_grid"] == []
+
+
+def test_unresolved_chi0_alone_keeps_the_curve():
+    """The examples' exact data put chi0 at ~0 with sigma >= |chi0|: chi0 is blanked, but the
+    curve (the fit's own prediction) is still drawn."""
+    d = _an().data
+    fm = d["fit_modified"]
+    assert fm["quality_flags"] == ["chi0_unresolved"]
+    assert fm["params"]["chi0"] is None and fm["params"]["theta"] is not None
+    c = d["fit_modified_curve"]
+    assert c["zero_crossing"] is True and c["t_grid"][0] == fm["params"]["theta"]
+
+
+def test_resolved_far_negative_modified_theta_is_flagged_and_kept(tmp_path):
+    """theta_mod below -T_max, but resolved: kept, flagged, drawn over its window only."""
+    T = np.linspace(2.0, 300.0, 150)
+    chi = 1e-3 + 40.0 / (T + 600.0)
+    p = tmp_path / "far.dat"
+    _write_dat(p, T, chi)
+    d = VSMAnalyzer().analyze(load_dat(str(p)), RunConfig.load()).data
+    fm = d["fit_modified"]
+    assert fm["params"]["theta"] == pytest.approx(-600.0, rel=1e-3)
+    assert fm["quality_flags"] == ["theta_out_of_range"]
+    c = d["fit_modified_curve"]
+    assert c["reason"] == "theta_out_of_range" and min(c["t_grid"]) >= fm["fit_range"][0]
+
+
+def _write_dat(path, T, chi, H=1000.0, mass_mg=5.0, mol=200.0):
+    mom = np.asarray(chi) * H * (mass_mg / 1000.0) / mol
+    path.write_text(
+        "[Header]\nTITLE,synthetic\nBYAPP,VSM,1.0,1.0\n"
+        f"INFO,{mass_mg},MASS:Sample Mass (mg)\nINFO,{mol},MOLWGHT:Formula Weight (g/mole)\n"
+        "[Data]\nTemperature (K),Magnetic Field (Oe),Moment (emu),M. Std. Err. (emu)\n"
+        + "".join(f"{t:.6f},{H:.4f},{v:.10e},1e-9\n" for t, v in zip(T, mom)))
+
+
+# ------------------------------------------------------------------ plain CW honesty
+
+def test_unphysical_plain_cw_is_flagged_and_not_ok():
+    """mpms 2-20 K: C = -2.2, theta = +103 K. It used to report status ok with no flag."""
+    r = _real("mpms", {"cw_fit_min_k": 2.0, "cw_fit_max_k": 20.0})
+    f = r.data["fit"]
+    assert f["params"]["C"] < 0
+    assert "C_nonpositive" in f["quality_flags"]
+    assert r.status == "low_confidence"
+    assert f["params"]["mu_eff"] is None             # sqrt(C < 0): not a number, never NaN
+
+
+def test_plain_cw_theta_far_below_the_window_is_flagged_and_window_only():
+    """vsm 10-20 K: theta = -344 K; the axis used to run to -344."""
+    r = _real("vsm", {"cw_fit_min_k": 10.0, "cw_fit_max_k": 20.0})
+    f, c = r.data["fit"], r.data["fit_curve"]
+    assert f["params"]["theta"] < -f["fit_range"][1]
+    assert "theta_out_of_range" in f["quality_flags"]
+    assert c["reason"] == "theta_out_of_range" and min(c["t_grid"]) >= f["fit_range"][0]
+    assert r.status == "low_confidence"
+
+
+def test_cw_curve_plain_theta_out_of_range():
+    c = cw_curve({"C": 0.5, "theta": -400.0}, "curie_weiss", 10.0, 20.0, 300.0)
+    assert c["reason"] == "theta_out_of_range" and min(c["t_grid"]) >= 10.0
+
+
+def test_curve_limit_below_the_window_top_warns():
+    r = _an({"cw_curve_max_k": 100.0})
+    assert r.data["fit_curve"]["t_grid"][-1] == max(r.data["temperature"])
+    assert any("vsm.cw_curve_max_k" in w and "below" in w for w in r.warnings)
+
+
+def test_report_names_the_modified_fit_flags_and_the_warnings():
+    from cryosweep_core.reports import build_report
+    md = build_report(_an()).get("markdown")
+    assert "curie_weiss_modified" in md and "chi0_unresolved" in md
+    assert "## Warnings" in md
+    lost = build_report(_an({"cw_fit_min_k": 299.5}))["markdown"]
+    assert "vsm.cw_fit_min_k" in lost
 
 
 # ------------------------------------------------------------------ export
@@ -333,7 +446,7 @@ def test_model_curves_csv_runs_from_theta_to_the_top_with_window_flags(tmp_path)
 
 
 def test_derived_csv_carries_the_modified_fit(tmp_path):
-    r = _an()
+    r = _an(name="magnetization_vsm_multifield.dat")
     rows = _rows(export_result(r, str(tmp_path / "e"))["derived"])
     assert rows[0] == ["quantity", "value", "sigma", "unit", "model"]
     mod = {x[0]: x for x in rows[1:] if x[4] == "curie_weiss_modified"}
@@ -359,15 +472,17 @@ def test_model_curves_csv_is_header_only_without_curves(tmp_path):
     assert rows == [["model", "x", "y", "in_fit_window"]]
 
 
-def test_derived_csv_names_a_flagged_modified_fit(tmp_path):
-    import dataclasses
-    rt = load_dat(str(require_real("vsm_mt")))
-    rt = dataclasses.replace(rt, header=dataclasses.replace(rt.header, molar_mass=200.0,
-                                                            mass_mg=5.0))
-    r = VSMAnalyzer().analyze(rt, RunConfig.load())
-    rows = _rows(export_result(r, str(tmp_path / "e"))["derived"])
-    flags = [x for x in rows[1:] if x[0] == "quality_flags" and x[4] == "curie_weiss_modified"]
-    assert flags and "theta_out_of_range" in flags[0][1]
+def test_derived_csv_blanks_and_names_a_declined_parameter(tmp_path):
+    rows = _rows(export_result(_an(), str(tmp_path / "e"))["derived"])
+    mod = {x[0]: x for x in rows[1:] if x[4] == "curie_weiss_modified"}
+    assert mod["chi0"][1] == "" and mod["chi0"][2] == ""
+    assert mod["theta"][1] != ""
+    assert "chi0_unresolved" in mod["quality_flags"][1]
+
+
+def test_declined_curve_is_not_exported(tmp_path):
+    rows = _rows(export_result(_real("vsm_mt"), str(tmp_path / "e"))["model_curves"])
+    assert {x[0] for x in rows[1:]} == {"curie_weiss"}
 
 
 # ------------------------------------------------------------------ figure
@@ -460,9 +575,53 @@ def test_window_only_modified_curve_draws_only_its_window():
     r.data["fit_modified_curve"] = cw_curve(
         {"C": 0.8, "theta": -20.0, "chi0": -5e-3}, "curie_weiss_modified", lo, hi, hi)
     ax = _fig(r).axes[0]
-    mod = [ln for ln in _gid(ax, "fit") if ln.get_label() == "modified CW"]
+    mod = [ln for ln in _gid(ax, "fit") if ln.get_label().startswith("modified CW")]
     x = np.asarray(mod[0].get_xdata(), float)
     assert x.min() >= lo
+    plt.close("all")
+
+
+def _annotation(ax):
+    return next(t.get_text() for t in ax.texts if "θ" in t.get_text())
+
+
+def test_flags_reach_the_figure_unresolved_chi0():
+    ax = _fig(_an()).axes[0]
+    labels = [ln.get_label() for ln in _gid(ax, "fit")]
+    assert "modified CW (χ₀ unresolved)" in labels
+    txt = _annotation(ax)
+    assert "χ₀ unresolved" in txt and "χ₀ = " not in txt
+    plt.close("all")
+
+
+def test_flags_reach_the_figure_theta_out_of_range(tmp_path):
+    T = np.linspace(2.0, 300.0, 150)
+    pth = tmp_path / "far.dat"
+    _write_dat(pth, T, 1e-3 + 40.0 / (T + 600.0))
+    r = VSMAnalyzer().analyze(load_dat(str(pth)), RunConfig.load())
+    ax = _fig(r).axes[0]
+    labels = [ln.get_label() for ln in _gid(ax, "fit")]
+    assert "modified CW (θ out of range)" in labels
+    txt = _annotation(ax)
+    assert "χ₀ = " in txt and "(θ out of range)" in txt.split("χ₀")[1]
+    plt.close("all")
+
+
+def test_flags_reach_the_figure_plain_cw():
+    r = _real("vsm", {"cw_fit_min_k": 10.0, "cw_fit_max_k": 20.0})
+    ax = _fig(r).axes[0]
+    labels = [ln.get_label() for ln in _gid(ax, "fit")]
+    assert "Curie-Weiss fit (θ out of range)" in labels
+    assert _annotation(ax).splitlines()[1] == "CW fit (θ out of range)"
+    cw = next(ln for ln in _gid(ax, "fit") if ln.get_label().startswith("Curie-Weiss"))
+    assert min(cw.get_xdata()) >= r.data["fit"]["fit_range"][0]   # no run out to -344 K
+    plt.close("all")
+
+
+def test_declined_modified_curve_is_not_drawn():
+    ax = _fig(_real("vsm_mt")).axes[0]
+    assert not [ln for ln in _gid(ax, "fit") if ln.get_label().startswith("modified CW")]
+    assert "χ₀" not in _annotation(ax)
     plt.close("all")
 
 
