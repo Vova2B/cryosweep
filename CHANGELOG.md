@@ -4,6 +4,25 @@
 
 ### Changed
 
+- **Curie-Weiss fits are drawn as one line from 1/χ = 0 to the top of the data.** On
+  `inverse_chi` each fit (Curie-Weiss, and the dashed grey modified Curie-Weiss) now starts
+  where it reaches 1/χ = 0 — at its own θ, which may be negative — and runs to the highest data
+  temperature as one solid line; the dotted continuation is gone. The y-axis is framed on the
+  data and on 0, so the start point stays visible and an overshooting curve runs off the
+  frame instead of squeezing the data (user limits still win). Every VSM `inverse_chi` figure
+  changes accordingly. Results saved before this change keep the previous drawing.
+- **The modified Curie-Weiss fit is unit-invariant.** It is now fitted on χ / median|χ| and
+  rescaled. Before, in SI χ₀ stayed at its 0.0 starting value: on the multi-field example θ
+  came out −67.0 K in SI against −173.3 K in CGS; both now give −173.3 K. CGS values move in
+  the 5th–6th significant digit on well-conditioned files.
+- **The Curie-Weiss window ladder skips rungs at or below the lower edge of the fitted
+  window** — inside a window they are copies of the primary fit. Without a window no rung
+  changes (data start near 2 K). A narrow window can therefore carry no spread at all.
+- **The `vsm` config section appears in every result's `provenance.config` and every
+  `meta.json`**, whatever the probe.
+- Pipeline steps that set `unit_system` now keep the rest of the base config; they used to
+  rebuild it from scratch and drop every `--config` key.
+
 - **Heat-capacity model curves no longer stop at the fit window.** The fit still runs only on
   the points inside the window; the curve that is drawn and exported now runs from 0 K to the
   highest data temperature for the Debye-Einstein fit, and from T² = 0 to the top of the
@@ -30,6 +49,27 @@
 
 ### Added
 
+- **Curie-Weiss fit windows.** `vsm.cw_fit_min_k` / `cw_fit_max_k` (CLI `--cw-tmin` /
+  `--cw-tmax`) bound the points the Curie-Weiss fit and its window ladder use;
+  `vsm.cw_mod_fit_min_k` / `cw_mod_fit_max_k` (`--cw-mod-tmin` / `--cw-mod-tmax`) do the same,
+  separately, for the modified fit; `vsm.cw_curve_max_k` (`--cw-curve-max`) sets the upper end
+  of both drawn curves. The GUI's VSM panel has a box for each. The windows filter points of
+  the chosen ramp; the exported arrays stay the whole ramp. A window that leaves fewer than 3
+  points loses that fit but keeps the data (`status: low_confidence`, a warning naming the
+  config key); an invalid window (not finite, or min ≥ max) is ignored with a warning.
+- **`fit_curve` / `fit_modified_curve`** in the VSM result (appended last): each fit's 1/χ
+  curve with `t_grid`, `inv_chi_fit`, `in_fit_window`, `fit_range`, `window_k`,
+  `zero_crossing` and `reason`. Where carrying a curve beyond its window would draw negative
+  1/χ or cross a pole (C ≤ 0, θ inside the window, a modified-CW pole inside the window) the
+  curve is the window only, `zero_crossing: false`, with the reason.
+- **`theta_out_of_range` flag on the modified fit** when θ lies below −T_max of its window —
+  T ≫ |θ| is never reached, so there is no Curie-Weiss regime. The parameters are kept and
+  flagged; the curve is drawn over the window only.
+- **`<stem>.model_curves.csv` for VSM** (header `model,x,y,in_fit_window`, as heat capacity;
+  `curie_weiss` and `curie_weiss_modified` rows; units in `meta.json`), and the modified fit's
+  parameters as appended rows in `derived.csv` (plus a `quality_flags` row when flagged).
+- The GUI output table gains a "Modified Curie-Weiss" row and a "Curie-Weiss window" row, and
+  the window-sensitive θ headline names the window when one is set.
 - **`heatcapacity.full_curve_max_k`** — upper end of the drawn and exported Debye-Einstein
   curve (default: the highest data temperature), with a "Curve to" box in the GUI's
   full-range fit group. It never cuts into the fitted window, and a value that is not a
