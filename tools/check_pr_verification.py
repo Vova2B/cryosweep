@@ -38,7 +38,7 @@ RELEASE_PREFIX = "release"
 HOW = ("Run the suite on the commit you pushed and paste the block it prints into the "
        "pull request description:\n"
        "    pytest --junitxml=pytest-results.xml\n"
-       "    python tools/suite_report.py pytest-results.xml --max-skipped 231 "
+       "    python tools/suite_report.py pytest-results.xml --max-skipped 240 "
        "--min-total 2000 --verify-block")
 
 

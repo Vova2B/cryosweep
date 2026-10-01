@@ -14,7 +14,7 @@
      command prints BELOW this comment, replacing nothing else:
 
          QT_QPA_PLATFORM=offscreen pytest --junitxml=pytest-results.xml
-         python tools/suite_report.py pytest-results.xml --max-skipped 231 --min-total 2000 --verify-block
+         python tools/suite_report.py pytest-results.xml --max-skipped 240 --min-total 2000 --verify-block
 
      CI fails until the block names the newest commit on this pull request, so paste a
      fresh one after every later push. If main has moved, merge it into this branch

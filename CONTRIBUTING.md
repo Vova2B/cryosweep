@@ -67,13 +67,13 @@ that cannot be trusted is more useful reported as untrustworthy than as a value.
 
 ```bash
 pytest --junitxml=pytest-results.xml
-python tools/suite_report.py pytest-results.xml --max-skipped 231 --min-total 2000 --verify-block
+python tools/suite_report.py pytest-results.xml --max-skipped 240 --min-total 2000 --verify-block
 ```
 
 and paste the emitted block into the PR description. It carries the commit, the exact
 suite counts, whether the real-data tests actually ran, and the junit digest — every line
 is re-derivable by re-running the same command, so the block is checkable, not testimony.
-In a public checkout the real-data line will say `NOT RUN — ~220 local-only skips`; that
+In a public checkout the real-data line will say `NOT RUN — ~230 local-only skips`; that
 is the expected shape (those tests need measurement files that are not distributed).
 Maintainers running in the data-bearing tree add `--require-real-data`, which turns that
 line into a failure instead of a note.

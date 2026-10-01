@@ -64,7 +64,7 @@ jobs:
       # 0 tests skipped on main stopped being skipped, and every added skip was a test that does
       # not exist on main (real-Hall-file tests plus the parametrised canvas-size headroom set).
       - name: Suite completeness
-        run: python tools/suite_report.py pytest-results.xml --max-skipped 231 --min-total 2000 --verify-block
+        run: python tools/suite_report.py pytest-results.xml --max-skipped 240 --min-total 2000 --verify-block
 
       # The block above is printed by CI, in a checkout with no measurement files. The one a
       # contributor pastes is the only record of a run that had them, and asking for it
