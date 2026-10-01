@@ -750,6 +750,10 @@ def export_result(result, stem, fmt="csv") -> dict:
         header = ["param", "value", "sigma", "unit"]
         if ladder:
             header += ["rung_tmin_k", "r2", "n_points", "sigma_kind", "flags"]
+        elif fit_flags:
+            # no ladder but a flagged fit (e.g. C_nonpositive in a narrow window): the flags
+            # must not be lost, so a `flags` column; an unflagged file keeps its 4 columns
+            header += ["flags"]
         # F9 (final-review): pad every short row to the header width. The regenerated
         # goldens were ragged ({7: 11, 4: 5} fields) — pandas/DictReader cope, but
         # numpy.genfromtxt and fixed-width importers do not.
@@ -759,7 +763,8 @@ def export_result(result, stem, fmt="csv") -> dict:
         for k, v in fit.get("params", {}).items():
             _row([k, v, fit.get("sigma", {}).get(k, ""), fit.get("units", {}).get(k, ""),
                   "", "", "", "fit_scatter_stat", fit_flags] if ladder else
-                 [k, v, fit.get("sigma", {}).get(k, ""), fit.get("units", {}).get(k, "")])
+                 [k, v, fit.get("sigma", {}).get(k, ""), fit.get("units", {}).get(k, ""),
+                  *([fit_flags] if fit_flags else [])])
         for e in ladder:
             tag = f"(T>={e['tmin_k']:g}K)"
             _row([f"theta{tag}", e.get("theta_k"), e.get("sigma_theta_k"), "K",
@@ -779,6 +784,8 @@ def export_result(result, stem, fmt="csv") -> dict:
         w = csv.writer(f); w.writerow(["quantity", "value", "sigma", "unit", "model"])
         for k, v in fit.get("params", {}).items():
             w.writerow([k, v, fit.get("sigma", {}).get(k, ""), fit.get("units", {}).get(k, ""), fit.get("model", "")])
+        if fit.get("quality_flags"):         # a flagged number never travels without its flag
+            w.writerow(["quality_flags", ";".join(fit["quality_flags"]), "", "", fit.get("model", "")])
         # The modified Curie-Weiss fit (chi = chi0 + C/(T - theta)) used to reach JSON only.
         # Appended rows, so fit_params.csv (pinned layout, ladder columns) is untouched. Its
         # quality flags ride on one extra row: a theta_out_of_range fit keeps its numbers,

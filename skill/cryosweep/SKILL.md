@@ -115,7 +115,10 @@ never substitute a plausible one.
   modified-fit parameter pinned at a fit bound or with σ ≥ |value| (or σ = 0) is `null` in JSON
   and blank in CSV, flagged `<param>_at_bound` / `<param>_unresolved` (C, theta, chi0; μ_eff
   goes with C). With C or θ declined the modified curve is empty (`reason` = that flag) and is
-  neither drawn nor exported; a declined chi0 alone leaves the curve.
+  neither drawn nor exported; a declined chi0 alone leaves the curve. **Any FitResult
+  `params`/`sigma` value may be `null`** (schema: number or null, every probe) — handle it
+  before formatting. A flagged plain fit adds a `quality_flags` row (model `curie_weiss`) to
+  `derived.csv`.
   A window that leaves < 3 points: that fit is `null`, the status `low_confidence`, and a warning
   names the config key; widen the window. `<stem>.model_curves.csv` carries the curves
   (`model,x,y,in_fit_window`); `derived.csv` carries the modified fit's parameters as rows with

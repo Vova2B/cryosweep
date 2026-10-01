@@ -272,6 +272,10 @@ def test_mpms_zfc_fc_two_ramps_in_field_group(mpms_real_path):
 #   modified-fit section and the warnings list (the existing lines are unchanged), and
 #   inverse_chi.png regenerated: annotation "χ₀ unresolved", legend "modified CW (χ₀
 #   unresolved)". The mpms goldens are unchanged (its chi0 is resolved).
+# Plain-flags amendment (2026-10-01, sanctioned): derived.csv appends a `curie_weiss`
+#   quality_flags row whenever the plain fit carries flags -- mpms.derived.golden gains
+#   "quality_flags,window_sensitive,,,curie_weiss" after its three CW rows; every other row is
+#   byte-identical. vsm_synth's fit is unflagged, so its goldens are unchanged.
 _NEW_KEYS = ("loops", "ramps", "fit_modified", "t_blocks",
              # 2026-08-10 uncertainty-honesty additive fields (CW ladder, spec §1.2):
              "cw_ladder", "theta_spread_k", "mu_eff_spread",

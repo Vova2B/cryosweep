@@ -1753,7 +1753,7 @@ def _cw_flag_tag(fit):
     return f" ({', '.join(tags)})" if tags else ""
 
 
-def _cw_annotation(ax, fit, fitmod, drew_mod, style, spec=None, kind=None):
+def _cw_annotation(ax, fit, fitmod, drew_mod, style, spec=None, kind=None, mod_declined=None):
     """Frameless θ/C[/χ₀] text box, fontsize font_pt-1, placed by `_place_annotation`. Units come
     from FitResult.units (never hardcoded). χ₀ line only when the modified line was drawn; a
     declined χ₀ reads "χ₀ unresolved", and a flagged fit's line carries its flag tag."""
@@ -1773,6 +1773,8 @@ def _cw_annotation(ax, fit, fitmod, drew_mod, style, spec=None, kind=None):
             tag = _cw_flag_tag({"quality_flags": [f for f in fitmod.get("quality_flags") or []
                                                   if not f.startswith("chi0")]})
             lines.append(f"χ₀ = {pm['chi0']:.3g} {um.get('chi0', '')}".rstrip() + tag)
+    elif mod_declined:                       # its theta or C is not a measurement: say so
+        lines.append(f"modified CW declined ({mod_declined})")
     fam = {"fontfamily": style.font_family} if style.font_family else {}
     t = ax.text(0.02, 0.98, "\n".join(lines), transform=ax.transAxes, va="top", ha="left",
                 fontsize=style.font_pt - 1, gid=ANNOTATION_GID, **fam)
@@ -1819,8 +1821,13 @@ def render_inverse_chi(results, spec=None, style=None, overlay=None):
             if "fit_curve" in d or "fit_modified_curve" in d:
                 drew, drew_mod = _draw_stored_cw_curves(ax, d, want, style)
                 framed = framed or drew
+                mc = d.get("fit_modified_curve") or {}
+                declined = (mc.get("reason") if "cw_modified" in want and not mc.get("t_grid")
+                            and str(mc.get("reason") or "").endswith(("_unresolved", "_at_bound"))
+                            else None)
                 if not annotated and "C" in p and "theta" in p:
-                    ann = _cw_annotation(ax, fit, fitmod, drew_mod, style, spec, kind)
+                    ann = _cw_annotation(ax, fit, fitmod, drew_mod, style, spec, kind,
+                                         mod_declined=declined)
                     annotated = True
                 continue
             # Results saved before the curves were stored (old JSON, overlays of them): the

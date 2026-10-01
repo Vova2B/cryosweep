@@ -191,3 +191,12 @@ def test_overlay_checklist_lists_no_fit_entries(qapp):
                                                        "1::cw_fit", "1::cw_modified_fit"}
     from cryosweep_gui.output_panel import _CHECKLIST_HIDES_FIT
     assert "inverse_chi" in _CHECKLIST_HIDES_FIT
+
+
+def test_plain_fit_flags_get_their_own_row():
+    d = _data(sensitive=False)
+    d["fit"]["quality_flags"] = ["C_nonpositive"]
+    assert dict(flatten_rows(d))["Curie-Weiss flags"] == "C_nonpositive"
+    d["fit"]["quality_flags"] = ["window_sensitive", "theta_out_of_range"]
+    assert dict(flatten_rows(d))["Curie-Weiss flags"] == "window_sensitive, theta_out_of_range"
+    assert "Curie-Weiss flags" not in dict(flatten_rows(_data(sensitive=False)))

@@ -325,6 +325,9 @@ def flatten_rows(data: dict) -> list[tuple[str, str]]:
             # errors otherwise); the warning names the window and its config keys
             rows.append(("Curie-Weiss θ", "not fitted — the Curie-Weiss fit window left too "
                          "few points; see the warnings"))
+        if isinstance(fit, dict) and fit.get("quality_flags"):
+            # every flag, verbatim -- the window-sensitive headline shows only that one
+            rows.append(("Curie-Weiss flags", ", ".join(fit["quality_flags"])))
         win = ((data.get("fit_curve") or {}).get("window_k") or [None, None])
         if isinstance(fit, dict) and any(v is not None for v in win):
             fr = fit.get("fit_range") or []

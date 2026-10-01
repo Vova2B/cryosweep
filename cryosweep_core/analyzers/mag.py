@@ -404,11 +404,12 @@ class VSMAnalyzer:
             c["window_k"] = list(win) if win is not None else [None, None]
             return c
 
-        for fr in (fit, fit_modified):
+        for fr, win in ((fit, cw_win), (fit_modified, mod_win)):
             if fr is not None and top < fr.fit_range[1]:
+                where = "fit window" if win is not None else "fitted range"
                 warnings.append(f"vsm.cw_curve_max_k={curve_max:g} K is below the top of the "
-                                f"{fr.model} fit window ({fr.fit_range[1]:.4g} K); that curve "
-                                "is drawn to the window top instead")
+                                f"{fr.model} {where} ({fr.fit_range[1]:.4g} K); that curve "
+                                f"is drawn to the top of the {where} instead")
         fit_curve = _curve(fit, "curie_weiss", cw_win) if fit is not None else None
         # A plain CW line that is <= 0 on its own window (C <= 0, theta inside it) or whose
         # theta lies below -T_max of it (T >> |theta| never reached) describes no Curie-Weiss

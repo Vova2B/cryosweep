@@ -674,3 +674,42 @@ def test_pipeline_unit_system_option_keeps_the_base_config(tmp_path):
     d = out["results"][0]["data"]
     assert d["inv_chi_unit"] == "mol/m^3"
     assert d["fit"]["fit_range"][0] >= 150.0
+
+
+# ------------------------------------------------------------------ plain-fit flags everywhere
+
+def test_plain_fit_flags_reach_derived_and_fit_params_without_a_ladder(tmp_path):
+    r = _real("vsm_mt", {"cw_fit_min_k": 2.0, "cw_fit_max_k": 20.0})
+    assert not r.data["cw_ladder"] and r.data["fit"]["quality_flags"]
+    out = export_result(r, str(tmp_path / "e"))
+    flags = ";".join(r.data["fit"]["quality_flags"])
+    der = [x for x in _rows(out["derived"])[1:] if x[0] == "quality_flags" and x[4] == "curie_weiss"]
+    assert der and der[0][1] == flags
+    fp = _rows(out["fit_params"])
+    assert fp[0] == ["param", "value", "sigma", "unit", "flags"]
+    assert all(row[4] == flags for row in fp[1:])
+
+
+def test_fit_params_layout_unchanged_without_flags(tmp_path):
+    r = _an({"cw_fit_min_k": 250.0})                      # no ladder, clean fit
+    assert not r.data["cw_ladder"] and not r.data["fit"]["quality_flags"]
+    out = export_result(r, str(tmp_path / "e"))
+    assert _rows(out["fit_params"])[0] == ["param", "value", "sigma", "unit"]
+    assert not [x for x in _rows(out["derived"]) if x[4:] == ["curie_weiss"] and x[0] == "quality_flags"]
+
+
+def test_curve_limit_warning_says_fitted_range_without_a_window():
+    w = [x for x in _an({"cw_curve_max_k": 100.0}).warnings if "cw_curve_max_k" in x]
+    assert w and all("fitted range" in x and "fit window" not in x for x in w)
+    w = [x for x in _an({"cw_curve_max_k": 100.0, "cw_mod_fit_max_k": 200.0}).warnings
+         if "curie_weiss_modified" in x]
+    assert w and "fit window" in w[0]
+
+
+def test_fully_declined_modified_fit_is_named_on_the_figure():
+    ax = _fig(_real("vsm_mt")).axes[0]
+    assert "modified CW declined (C_unresolved)" in _annotation(ax)
+    plt.close("all")
+    ax = _fig(_real("vsm_mt"), fit_lines=("cw",)).axes[0]
+    assert "declined" not in _annotation(ax)
+    plt.close("all")

@@ -28,9 +28,17 @@
   the status is `low_confidence`, and the curve is drawn over the window only. μ_eff is null
   for C ≤ 0 (it used to be NaN). None of these fires on any example or real file without a
   window.
+- **`FitResult.params` / `sigma` values are number-or-null in the JSON schema, for every
+  probe.** Only the VSM modified Curie-Weiss fit produces null today (a declined parameter);
+  anything that formats fit values must handle null.
+- **A flagged plain Curie-Weiss fit carries its flags on every surface**: a `quality_flags`
+  row (model `curie_weiss`) in `derived.csv`, a `flags` column in `fit_params.csv` when it has
+  no ladder columns (an unflagged file keeps its four columns), and a "Curie-Weiss flags" row
+  in the GUI table.
 - **Flags reach the figure and the report**: the legend label and the annotation of a flagged
   Curie-Weiss or modified fit carry the flag (e.g. "modified CW (θ out of range)"); the VSM
-  report adds the modified fit with its flags and lists the warnings.
+  report adds the modified fit with its flags and lists the warnings. A modified fit declined
+  for θ or C reads "modified CW declined (<flag>)" in the annotation.
 - **Inside a user window the Curie-Weiss ladder skips rungs at or below the fitted T_min** —
   copies of the primary fit — and one surviving rung gives a spread. Without a user window
   the ladder is unchanged.
