@@ -261,16 +261,30 @@ def _mask_reciprocal_noise(inv_values, chi_values, floor):
             for c, v in zip(chi_values, inv_values)]
 
 
+_INVCHI_FIT_SERIES = (("cw_fit", "Curie-Weiss fit", "fit_curve"),
+                      ("cw_modified_fit", "modified CW", "fit_modified_curve"))
+
+
 def series_inverse_chi(result, field_unit="Oe"):
     floor = _chi_noise_floor(result)
     d = result.data or {}
     is_si = d.get("inv_chi_unit") == "mol/m^3"
     flat_chi = d.get("chi_molar_si" if is_si else "chi_molar_cgs") or []
-    return _vsm_series(
+    out = _vsm_series(
         result, "inv_chi", "1/χ",
         lambda b: _mask_reciprocal_noise(b.get("inv_chi") or [], b.get("chi") or [], floor),
         field_unit=field_unit,
         flat_y=lambda y: _mask_reciprocal_noise(y, flat_chi, floor))
+    # The stored fit curves (theta -> top of the data), role="fit" as heat capacity's de_fit,
+    # so a consumer of the series sees the same curves the figure and model_curves.csv carry.
+    # render_inverse_chi draws its fit lines from the result and never plots these as data.
+    if out:
+        for key, label, ckey in _INVCHI_FIT_SERIES:
+            c = d.get(ckey) or {}
+            x, y = c.get("t_grid") or [], c.get("inv_chi_fit") or []
+            if x and len(y) == len(x):
+                out.append(Series(key=key, label=label, x=list(x), y=list(y), role="fit"))
+    return out
 def series_vsm_moment_t(result, field_unit="Oe"):
     return _vsm_series(result, "moment_per_fu", "Moment", lambda b: b.get("moment") or [], field_unit=field_unit)
 

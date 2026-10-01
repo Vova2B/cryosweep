@@ -254,6 +254,26 @@ def _cw_data(theta=-10.0, C=0.5, chi0=0.0, n=60, tmin=12.0, tmax=300.0,
     return types.SimpleNamespace(data=d)
 
 
+def _cw_data_curves(**kw):
+    """_cw_data plus the stored fit curves a current analyzer result carries
+    (fit_curve / fit_modified_curve). _cw_data alone stands for an older saved result and
+    keeps covering the renderer's fallback drawing."""
+    from cryosweep_core.fitting.models import cw_curve
+    r = _cw_data(**kw)
+    d = r.data
+    T = d["temperature"]
+    lo, hi = min(T), max(T)
+    d["fit_curve"] = cw_curve(d["fit"]["params"], "curie_weiss", lo, hi, hi)
+    if "fit_modified" in d:
+        d["fit_modified_curve"] = cw_curve(d["fit_modified"]["params"],
+                                           "curie_weiss_modified", lo, hi, hi)
+    return r
+
+
+_CW_BUILDERS = pytest.mark.parametrize("build", [_cw_data, _cw_data_curves],
+                                       ids=["saved_result", "stored_curves"])
+
+
 def _fit_lines(ax):
     return [ln for ln in ax.lines if ln.get_gid() == "fit"]
 
@@ -374,8 +394,9 @@ def test_chi_t_double_save_and_exact_mm(tmp_path):
 
 # ---- Item 3: inverse_chi CW journal upgrade -----------------------------
 
-def test_inverse_chi_two_models_solid_and_dashed_gray():
-    fig = render_kind(_cw_data(), "inverse_chi")
+@_CW_BUILDERS
+def test_inverse_chi_two_models_solid_and_dashed_gray(build):
+    fig = render_kind(build(), "inverse_chi")
     ax = fig.axes[0]
     fits = _fit_lines(ax)
     assert len(fits) == 2
@@ -385,8 +406,9 @@ def test_inverse_chi_two_models_solid_and_dashed_gray():
     assert dashed[0].get_color() == "0.45"       # dashed grey modified CW
 
 
-def test_inverse_chi_fit_lines_subset_cw_only():
-    fig = render_kind(_cw_data(), "inverse_chi", spec=PlotSpec(fit_lines=("cw",)))
+@_CW_BUILDERS
+def test_inverse_chi_fit_lines_subset_cw_only(build):
+    fig = render_kind(build(), "inverse_chi", spec=PlotSpec(fit_lines=("cw",)))
     fits = _fit_lines(fig.axes[0])
     assert len(fits) == 1 and fits[0].get_linestyle() == "-"
     # annotation present but WITHOUT the χ₀ line (modified not drawn)
@@ -394,28 +416,32 @@ def test_inverse_chi_fit_lines_subset_cw_only():
     assert "θ" in txt and "χ₀" not in txt
 
 
-def test_inverse_chi_fit_lines_empty_hides_both():
-    fig = render_kind(_cw_data(), "inverse_chi", spec=PlotSpec(fit_lines=()))
+@_CW_BUILDERS
+def test_inverse_chi_fit_lines_empty_hides_both(build):
+    fig = render_kind(build(), "inverse_chi", spec=PlotSpec(fit_lines=()))
     assert len(_fit_lines(fig.axes[0])) == 0
     # box still shown (fit_line True) — θ/C only
     assert _annot_texts(fig.axes[0])
 
 
-def test_inverse_chi_fit_line_false_hides_annotation_and_lines():
-    fig = render_kind(_cw_data(), "inverse_chi", spec=PlotSpec(fit_line=False))
+@_CW_BUILDERS
+def test_inverse_chi_fit_line_false_hides_annotation_and_lines(build):
+    fig = render_kind(build(), "inverse_chi", spec=PlotSpec(fit_line=False))
     assert len(_fit_lines(fig.axes[0])) == 0
     assert _annot_texts(fig.axes[0]) == []
 
 
-def test_inverse_chi_annotation_content_units_and_chi0():
-    txt = _annot_texts(render_kind(_cw_data(), "inverse_chi").axes[0])[0].get_text()
+@_CW_BUILDERS
+def test_inverse_chi_annotation_content_units_and_chi0(build):
+    txt = _annot_texts(render_kind(build(), "inverse_chi").axes[0])[0].get_text()
     assert "θ =" in txt and "C =" in txt
     assert "emu*K/(mol*Oe)" in txt              # unit from FitResult.units, not hardcoded
     assert "χ₀ =" in txt and "emu/(mol*Oe)" in txt
 
 
-def test_inverse_chi_unit_true_label_si():
-    fig = render_kind(_cw_data(unit="mol/m^3"), "inverse_chi")
+@_CW_BUILDERS
+def test_inverse_chi_unit_true_label_si(build):
+    fig = render_kind(build(unit="mol/m^3"), "inverse_chi")
     assert fig.axes[0].get_ylabel() == "1/χ (mol/m³)"
 
 
@@ -429,9 +455,10 @@ def test_inverse_chi_reference_line_tn_vertical_renders():
     assert len(vlines) == 1 and vlines[0].get_linestyle() == "--"
 
 
-def test_inverse_chi_double_save_identity(tmp_path):
+@_CW_BUILDERS
+def test_inverse_chi_double_save_identity(tmp_path, build):
     style = GlobalStyle()
-    blobs = [save_figure(render_kind(_cw_data(), "inverse_chi", style=style),
+    blobs = [save_figure(render_kind(build(), "inverse_chi", style=style),
                          tmp_path / f"i{i}.png", style).read_bytes() for i in range(2)]
     assert blobs[0] == blobs[1]
 

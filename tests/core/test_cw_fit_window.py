@@ -368,3 +368,99 @@ def test_derived_csv_names_a_flagged_modified_fit(tmp_path):
     rows = _rows(export_result(r, str(tmp_path / "e"))["derived"])
     flags = [x for x in rows[1:] if x[0] == "quality_flags" and x[4] == "curie_weiss_modified"]
     assert flags and "theta_out_of_range" in flags[0][1]
+
+
+# ------------------------------------------------------------------ figure
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+from cryosweep_core.plotting.catalog import OverlayFile, series_inverse_chi
+from cryosweep_core.plotting.render import render_kind
+from cryosweep_core.plotting.spec import GlobalStyle, PlotSpec
+
+
+def _fig(r, **kw):
+    return render_kind([r], "inverse_chi", PlotSpec(**kw), GlobalStyle())
+
+
+def _gid(ax, gid):
+    return [ln for ln in ax.lines if ln.get_gid() == gid]
+
+
+def test_each_fit_is_one_solid_line_from_zero_at_theta_to_the_top():
+    r = _an({"cw_fit_min_k": 150.0})
+    ax = _fig(r).axes[0]
+    assert not _gid(ax, "fit-extrap")                  # no dotted continuation
+    fits = _gid(ax, "fit")
+    assert len(fits) == 2
+    for ln, key in zip(fits, ("fit_curve", "fit_modified_curve")):
+        c = r.data[key]
+        x = np.asarray(ln.get_xdata(), float); y = np.asarray(ln.get_ydata(), float)
+        assert x[0] == c["t_grid"][0] and y[0] == 0.0
+        assert x[-1] == pytest.approx(max(r.data["temperature"]))
+    assert fits[0].get_linestyle() != fits[1].get_linestyle()   # which model, by style
+    plt.close("all")
+
+
+def test_y_axis_is_framed_on_the_data_and_zero():
+    r = _an({"cw_curve_max_k": 900.0})                 # the curve overshoots the data 3x
+    ax = _fig(r).axes[0]
+    lo, hi = ax.get_ylim()
+    y = np.asarray(r.data["inv_chi"])
+    assert lo <= 0.0 < y.min()                         # 1/chi = 0 at theta is on the frame
+    assert hi < 1.2 * y.max()                          # framed on the data, not the curve
+    assert ax.get_xlim()[0] <= r.data["fit"]["params"]["theta"]   # negative theta visible
+    plt.close("all")
+
+
+def test_user_y_limits_still_win():
+    ax = _fig(_an(), ymin=10.0, ymax=50.0).axes[0]
+    assert ax.get_ylim() == pytest.approx((10.0, 50.0))
+    plt.close("all")
+
+
+def test_old_results_without_curves_keep_the_old_drawing():
+    r = _an()
+    old = r.model_copy(deep=True)
+    for k in ("fit_curve", "fit_modified_curve"):
+        old.data.pop(k)
+    ax = _fig(old).axes[0]
+    assert _gid(ax, "fit-extrap")                      # the dotted continuation, as before
+    plt.close("all")
+
+
+def test_fit_series_are_cataloged_but_never_drawn_as_data():
+    r = _an()
+    fits = [s for s in series_inverse_chi(r) if s.role == "fit"]
+    assert {s.key for s in fits} == {"cw_fit", "cw_modified_fit"}
+    c = r.data["fit_curve"]
+    s = next(s for s in fits if s.key == "cw_fit")
+    assert s.x == c["t_grid"] and s.y == c["inv_chi_fit"]
+    ax = _fig(r).axes[0]
+    marked = [ln for ln in ax.lines if ln.get_marker() not in (None, "None", "", " ")]
+    assert all(len(ln.get_xdata()) != len(c["t_grid"]) for ln in marked)
+    plt.close("all")
+
+
+def test_overlay_draws_no_fit_lines():
+    a, b = _an(), _an({"cw_fit_min_k": 150.0})
+    ov = [OverlayFile(file_id=0, label="a"), OverlayFile(file_id=1, label="b")]
+    ax = render_kind([a, b], "inverse_chi", PlotSpec(), GlobalStyle(), overlay=ov).axes[0]
+    assert not _gid(ax, "fit") and not _gid(ax, "fit-extrap")
+    assert len(ax.lines) == 2                          # one data series per file
+    plt.close("all")
+
+
+def test_window_only_modified_curve_draws_only_its_window():
+    r = _an()
+    r = r.model_copy(deep=True)
+    lo, hi = r.data["fit_modified"]["fit_range"]
+    r.data["fit_modified_curve"] = cw_curve(
+        {"C": 0.8, "theta": -20.0, "chi0": -5e-3}, "curie_weiss_modified", lo, hi, hi)
+    ax = _fig(r).axes[0]
+    mod = [ln for ln in _gid(ax, "fit") if ln.get_label() == "modified CW"]
+    x = np.asarray(mod[0].get_xdata(), float)
+    assert x.min() >= lo
+    plt.close("all")
